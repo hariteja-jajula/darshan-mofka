@@ -26,6 +26,43 @@ You point the harness at these; it does not build or vendor them.
 | built darshan | `DARSHAN_PREFIX` | dir with `lib/libdarshan.so` (from `../darshan/build.sh`) |
 | C compiler | `module load` / `CC` | on Improv: `module load gcc/13.2.0` (match diaspora-c's toolchain) |
 
+## Installation flow (dependency order)
+
+Each layer needs the one above it:
+`mochi/mofka stack → diaspora-c → darshan → harness`.
+
+**0. Clone the three repos side by side**
+```bash
+git clone https://github.com/hariteja-jajula/diaspora-stream-api.git
+git clone https://github.com/hariteja-jajula/darshan.git
+git clone <this-harness> darshan-mofka
+```
+
+**1. mochi/mofka stack (spack) — one-time, heaviest.** Provides `bedrock`/`mofkactl`/python
+*and* the deps to build diaspora-c.
+```bash
+spack -e spack-env install          # → a view: $MOFKA_SPACK_VIEW
+```
+*Skip if you already have a `mofka-view` — just point `MOFKA_SPACK_VIEW` at it.*
+
+**2. diaspora-c (from `diaspora-stream-api`)**
+```bash
+cd diaspora-stream-api
+cmake -S . -B _build -DENABLE_C_API=ON \
+      -DCMAKE_PREFIX_PATH="$MOFKA_SPACK_VIEW" -DCMAKE_INSTALL_PREFIX=$PWD/install
+cmake --build _build -j && cmake --install _build     # → $DIASPORA_C = ./install
+```
+*Skip if you already have a diaspora-c install — point `DIASPORA_C` at it.*
+
+**3. darshan** — build against diaspora-c (see *Build darshan* below; needs `$DIASPORA_C`).
+
+**4. harness** — configure + run (see *Configure* and *Run* below; points at
+`$DARSHAN_PREFIX`, `$MOFKA_SPACK_VIEW`, `$DIASPORA_C`).
+
+> Nothing here rebuilds a dependency you already have — steps 1–2 are skippable by
+> re-pointing the env vars. On a machine where the stack + diaspora-c already exist,
+> installation is just steps 3–4.
+
 ## Configure — `server/env.local.sh` (machine-specific, git-ignored)
 
 Copy `server/env.local.sh.example` → `server/env.local.sh` and set the pointers:
