@@ -1,5 +1,4 @@
 # symlink to the fork clone (added below) — never track it
-/darshan
 
 # build outputs & logs created under this root
 /darshan-install/

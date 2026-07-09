@@ -4,16 +4,20 @@ Test harness for the **darshan → mofka** connector. This repo **builds nothing
 it *points at* an already-available darshan build and diaspora-c install, brings up a
 mofka broker, and runs workloads under darshan so I/O records stream to mofka.
 
-## Workspace layout (three sibling repos)
+## Layout (harness umbrella + submodules)
 
 ```
-<workspace>/
-├── darshan/               connector fork — build with its own ./build.sh
-│                          (branches: darshan-mofka = per-op firehose,
-│                                     darshan-aggregate = aggregate/reconstructor)
-├── darshan-mofka/         this harness (server / jobs / workloads)
-└── diaspora-stream-api/   diaspora-c source (its built install lives elsewhere)
+darshan-mofka/            this harness (umbrella repo)
+├── darshan/              submodule — connector fork
+│                         (branches: darshan-mofka = per-op firehose,
+│                                    darshan-aggregate = aggregate/reconstructor)
+├── diaspora-stream-api/  submodule — diaspora-c source
+└── server/ jobs/ workloads/
 ```
+
+Clone with `git clone --recursive` (or `git submodule update --init --recursive` if
+already cloned). The submodules pin the darshan + diaspora-c source commits; their
+built *installs* still live outside git and are pointed at by env vars (below).
 
 ## Prerequisites — provided, NOT built here
 
@@ -23,7 +27,7 @@ You point the harness at these; it does not build or vendor them.
 |---|---|---|
 | diaspora-c install | `DIASPORA_C` | dir with `include/diaspora/diaspora_c.h` + `lib/libdiaspora-c.so` |
 | mofka / mochi stack | `MOFKA_SPACK_VIEW` | spack view providing `bedrock`, `mofkactl`, python w/ `mochi.mofka` |
-| built darshan | `DARSHAN_PREFIX` | dir with `lib/libdarshan.so` (from `../darshan/build.sh`) |
+| built darshan | `DARSHAN_PREFIX` | dir with `lib/libdarshan.so` (from `darshan/build.sh`) |
 | C compiler | `module load` / `CC` | on Improv: `module load gcc/13.2.0` (match diaspora-c's toolchain) |
 
 ## Installation flow (dependency order)
@@ -31,11 +35,10 @@ You point the harness at these; it does not build or vendor them.
 Each layer needs the one above it:
 `mochi/mofka stack → diaspora-c → darshan → harness`.
 
-**0. Clone the three repos side by side**
+**0. Clone the harness with its submodules**
 ```bash
-git clone https://github.com/hariteja-jajula/diaspora-stream-api.git
-git clone https://github.com/hariteja-jajula/darshan.git
-git clone <this-harness> darshan-mofka
+git clone --recursive <this-harness>        # brings darshan/ + diaspora-stream-api/
+# already cloned non-recursively? git submodule update --init --recursive
 ```
 
 **1. mochi/mofka stack (spack) — one-time, heaviest.** Provides `bedrock`/`mofkactl`/python
@@ -78,12 +81,12 @@ export MOFKA_PROTOCOL=ofi+verbs       # or ofi+tcp
 
 ## Build darshan (points at the available diaspora-c)
 
-The build lives in the darshan repo, not here:
+The build lives in the darshan submodule:
 
 ```bash
-cd ../darshan && git checkout darshan-mofka          # pick the version
-DIASPORA_C=$DIASPORA_C ./build.sh                    # -> ../darshan/install
-export DARSHAN_PREFIX=$PWD/install
+cd darshan && git checkout darshan-mofka             # pick the version (darshan-mofka / darshan-aggregate)
+DIASPORA_C=$DIASPORA_C ./build.sh                    # -> darshan/install
+cd ..
 ```
 Already have a darshan install elsewhere? Skip this and just set `DARSHAN_PREFIX`.
 
@@ -107,8 +110,7 @@ cd jobs && bash multinode-percore.pbs                 # per-core; also singlenod
 |---|---|---|
 | `DIASPORA_C` | diaspora-c install | (required, in env.local.sh) |
 | `MOFKA_SPACK_VIEW` | mofka/mochi spack view | (in env.local.sh) |
-| `DARSHAN_PREFIX` | built darshan install | `$ROOT/darshan-install` |
-| `DARSHAN_SRC` | darshan source (for `../darshan/build.sh`) | `../darshan/darshan-runtime` |
+| `DARSHAN_PREFIX` | built darshan install | set to `$ROOT/darshan/install` |
 | `DARSHAN_LOGPATH` | where native `.darshan` logs go | `$ROOT/darshan-logs` |
 | `MOFKA_PROTOCOL` | transport | `ofi+verbs` |
 

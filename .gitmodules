@@ -1,0 +1,6 @@
+[submodule "darshan"]
+	path = darshan
+	url = https://github.com/hariteja-jajula/darshan.git
+[submodule "diaspora-stream-api"]
+	path = diaspora-stream-api
+	url = https://github.com/hariteja-jajula/diaspora-stream-api.git
