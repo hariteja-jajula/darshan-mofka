@@ -76,7 +76,7 @@ export DIASPORA_C=/home/hjajula/internship/diaspora-c-install-fork
 export MOFKA_SPACK_VIEW=/home/hjajula/internship/mofka-view
 export PY="$MOFKA_SPACK_VIEW/bin/python"
 export DARSHAN_PREFIX=$HOME/internship/darshan-mofka/darshan/install
-export MOFKA_PROTOCOL=ofi+verbs       # or ofi+tcp
+export MOFKA_PROTOCOL=verbs           # native verbs; NOT ofi+verbs (times out). ofi+tcp = fallback
 ```
 
 ## Build darshan (points at the available diaspora-c)
@@ -112,7 +112,7 @@ cd jobs && bash multinode-percore.pbs                 # per-core; also singlenod
 | `MOFKA_SPACK_VIEW` | mofka/mochi spack view | (in env.local.sh) |
 | `DARSHAN_PREFIX` | built darshan install | set to `$ROOT/darshan/install` |
 | `DARSHAN_LOGPATH` | where native `.darshan` logs go | `$ROOT/darshan-logs` |
-| `MOFKA_PROTOCOL` | transport | `ofi+verbs` |
+| `MOFKA_PROTOCOL` | transport | `verbs` (IB fabric); `ofi+tcp` fallback. NOT `ofi+verbs` (times out) |
 
 Nothing here clones or compiles a dependency — swap in a different darshan branch,
 diaspora-c, or mofka stack purely by re-pointing these variables.
