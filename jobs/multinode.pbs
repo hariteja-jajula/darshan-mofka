@@ -1,0 +1,63 @@
+#!/bin/bash
+#PBS -N mofka_mn
+# Multi-node, co-located broker (minimal): the bedrock broker runs unpinned on
+# the mother-superior node (idle in-memory service, ~0 CPU when quiet), and
+# EVERY node -- including node 0 -- runs the darshan-instrumented io_test,
+# streaming its POSIX events to that one broker. Nodes 1..N-1 exercise the real
+# cross-node HSN (ofi+tcp) path; no node is wasted on an idle service.
+#
+# Scale the node count at submit time, e.g.:  qsub -l select=4:ncpus=128 multinode.pbs
+#PBS -l select=2:ncpus=128
+#PBS -l place=scatter
+#PBS -l walltime=00:20:00
+#PBS -j oe
+# --- SITE-SPECIFIC (override per cluster): qsub -A <account> -q <queue> ... -----
+#PBS -A radix-io
+#PBS -q debug
+set -uo pipefail
+
+# --- repo layout: derived (batch: PBS_O_WORKDIR is the submit dir) ------------
+# Submit from <repo>/jobs so PBS_O_WORKDIR/.. is the repo root, or override:
+#   qsub -v INTERNSHIP_ROOT=/path/to/internship multinode.pbs
+ROOT="${INTERNSHIP_ROOT:-$(cd "${PBS_O_WORKDIR:-$PWD}/.." && pwd)}"
+export INTERNSHIP_ROOT="$ROOT"
+JOBS="$ROOT/jobs"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_DIR="$JOBS/runs/$STAMP"
+mkdir -p "$RUN_DIR"
+source "$ROOT/server/env.sh"
+
+mapfile -t NODES < <(sort -u "${PBS_NODEFILE:?PBS_NODEFILE unset -- run this under qsub}")
+NN=${#NODES[@]}
+ALL_HOSTS=$(IFS=,; echo "${NODES[*]}")
+EXPECT=$((NN * 51))     # io_test emits 51 POSIX events per node
+echo "[mn] $NN nodes: ${NODES[*]}"
+echo "[mn] broker co-located on $(hostname -s) (unpinned); all $NN nodes are clients"
+echo "[mn] launcher=${MPIEXEC:-<none>}  expect=$EXPECT events  run_dir=$RUN_DIR"
+[[ $NN -lt 2 ]] && { echo "[mn] need >=2 nodes (qsub -l select=N:ncpus=128)"; exit 1; }
+
+echo "=== SECTION 1: bedrock broker on mother-superior (unpinned) ==="
+bash "$JOBS/server-node.sh" "$RUN_DIR" "$ROOT" > "$RUN_DIR/server.out" 2>&1 &
+SVC_PID=$!
+
+echo "=== SECTION 2: wait for SERVER_READY ==="
+for i in $(seq 1 60); do
+    [[ -f "$RUN_DIR/SERVER_READY" ]] && { echo "[mn] server ready ~$((i*2))s"; break; }
+    kill -0 $SVC_PID 2>/dev/null || { echo "[mn] server died"; cat "$RUN_DIR/server.out"; exit 1; }
+    sleep 2
+done
+[[ -f "$RUN_DIR/SERVER_READY" ]] || { echo "[mn] server not ready"; cat "$RUN_DIR/server.out"; touch "$RUN_DIR/SHUTDOWN"; exit 1; }
+
+echo "=== SECTION 3: darshan io_test on ALL $NN nodes (one rank per node) ==="
+mpi_per_node "$ALL_HOSTS" "$NN" -- \
+    bash "$JOBS/client-node.sh" "$RUN_DIR" "$ROOT" > "$RUN_DIR/clients.out" 2>&1
+echo "[mn] clients rc=$?"; sed 's/^/    /' "$RUN_DIR/clients.out"
+
+echo "=== SECTION 4: verify events landed, per host (expect $EXPECT) ==="
+timeout 90 "$PY" "$JOBS/verify_multinode.py" "$RUN_DIR/mofka.json" darshan "$EXPECT" \
+    2>&1 | tee "$RUN_DIR/verify.out" | sed 's/^/    /'
+
+echo "=== SECTION 5: shutdown ==="
+touch "$RUN_DIR/SHUTDOWN"
+wait "$SVC_PID" 2>/dev/null || true
+echo "[mn] DONE. run_dir=$RUN_DIR"

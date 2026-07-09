@@ -1,0 +1,30 @@
+# symlink to the fork clone (added below) — never track it
+/darshan
+
+# build outputs & logs created under this root
+/darshan-install/
+/darshan-install-*/
+/darshan-logs/
+
+# run outputs & compiled artifacts
+jobs/runs/
+jobs/*.o[0-9]*
+jobs/verify-consumer
+workloads/io_test
+workloads/io_mpi
+workloads/timing-*.log
+server/mofka.json
+server/bedrock.log
+server/bedrock.pid
+server/consume
+server/test-push
+
+# machine-specific
+server/env.local.sh
+
+# misc
+*.o
+core
+core.*
+*.pyc
+__pycache__/
