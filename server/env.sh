@@ -24,18 +24,28 @@ if [[ -f "$SERVER_DIR/env.local.sh" ]]; then
     source "$SERVER_DIR/env.local.sh"
 fi
 
-# --- software stack locations (all optional; set them in env.local.sh) --------
-# A spack "view" (or any prefix) that provides bin/ (e.g. bedrock) and lib/.
-: "${MOFKA_SPACK_VIEW:=}"
-# diaspora-c install prefix (libdiaspora-c / libdiaspora-stream-api + headers).
-: "${DIASPORA_C:=}"
-# Extra python prefix that provides the interpreter used for mofkactl.
+# --- software stack locations -------------------------------------------------
+# env.local.sh may set these explicitly; otherwise AUTO-DISCOVER them in
+# conventional spots (built into the workspace, or one/two levels up). On a
+# standard layout env.local.sh then only carries the machine's `module load`s --
+# no hardcoded paths.
+_discover() {   # _discover MARKER cand...  -> abs path of first cand containing MARKER
+    local m="$1"; shift; local d
+    for d in "$@"; do [[ -e "$d/$m" ]] && { (cd "$d" && pwd); return; }; done
+}
+# spack view providing bin/bedrock, mofkactl, python
+: "${MOFKA_SPACK_VIEW:=$(_discover bin/bedrock \
+        "$ROOT/mofka-view" "$ROOT/../mofka-view" "$ROOT/../../mofka-view")}"
+# diaspora-c install (headers + libdiaspora-c / libdiaspora-stream-api)
+: "${DIASPORA_C:=$(_discover include/diaspora/diaspora_c.h \
+        "$ROOT/diaspora-stream-api/install" \
+        "$ROOT/../diaspora-c-install-fork" "$ROOT/../../diaspora-c-install-fork")}"
+# darshan-runtime install (libdarshan.so); prefer the submodule build output
+: "${DARSHAN_PREFIX:=$(_discover lib/libdarshan.so "$ROOT/darshan/install" "$ROOT/darshan-install")}"
+: "${DARSHAN_PREFIX:=$ROOT/darshan/install}"   # default target if not built yet
 : "${PYPREFIX:=}"
-# Extra colon-separated entries to prepend to PYTHONPATH (mofka bindings, etc).
 : "${MOFKA_PYTHONPATH:=}"
-# darshan-runtime install; ships in-repo by default.
-: "${DARSHAN_PREFIX:=$ROOT/darshan-install}"
-export DARSHAN_PREFIX
+export MOFKA_SPACK_VIEW DIASPORA_C DARSHAN_PREFIX
 
 # darshan native-log path. Matches build-darshan.sh's --with-log-path=$ROOT/darshan-logs.
 # On exit darshan writes <logpath>/<YYYY>/<M>/<D>/<name>.darshan and does NOT create
@@ -77,7 +87,10 @@ fi
 export MOFKA_PROTOCOL="${MOFKA_PROTOCOL:-ofi+tcp}"
 
 # --- python + mofkactl --------------------------------------------------------
-# Prefer an explicit $PY (set in env.local.sh); else whatever python is on PATH.
+# Prefer explicit $PY; else the discovered spack view's python; else PATH.
+if [[ -z "${PY:-}" && -n "$MOFKA_SPACK_VIEW" && -x "$MOFKA_SPACK_VIEW/bin/python" ]]; then
+    PY="$MOFKA_SPACK_VIEW/bin/python"
+fi
 : "${PY:=$(command -v python3 || command -v python || true)}"
 export PY
 mofkactl() { "$PY" -m mochi.mofka.mofkactl "$@"; }
