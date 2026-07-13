@@ -4,7 +4,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/env.sh"
 
 cd "$HERE"
-[ -f bedrock.pid ] && kill "$(cat bedrock.pid)" 2>/dev/null
+if [ -f bedrock.pid ]; then kill "$(cat bedrock.pid)" 2>/dev/null || true; fi
 sleep 1
 rm -f mofka.json bedrock.pid
 
@@ -18,4 +18,4 @@ for i in $(seq 1 60); do [ -f mofka.json ] && break; sleep 0.5; done
 mofkactl topic create darshan --groupfile mofka.json 2>/dev/null || true
 mofkactl partition add darshan --rank 0 --type memory --groupfile mofka.json 2>/dev/null || true
 
-echo "mofka up: $(grep -oE 'ofi\+tcp://[0-9.]+:[0-9]+' "$HERE/mofka.json") | topic 'darshan' | groupfile $HERE/mofka.json (pid $(cat bedrock.pid))"
+echo "mofka up: $(grep -oE '[a-z0-9+;_]+://[0-9.]+:[0-9]+' "$HERE/mofka.json" | head -1) | topic 'darshan' | groupfile $HERE/mofka.json (pid $(cat bedrock.pid))"

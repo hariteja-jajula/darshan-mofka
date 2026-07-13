@@ -8,9 +8,13 @@
 # run outputs & compiled artifacts
 jobs/runs/
 jobs/*.o[0-9]*
+*.o[0-9]*
+jobs/*.log
+jobs/.*_jobid
 jobs/verify-consumer
 workloads/io_test
 workloads/io_mpi
+workloads/mpiio_test
 workloads/timing-*.log
 server/mofka.json
 server/bedrock.log

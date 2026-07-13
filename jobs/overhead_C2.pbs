@@ -1,0 +1,112 @@
+#!/bin/bash
+#PBS -N ohd_C2
+#PBS -l select=1:ncpus=128
+#PBS -l walltime=01:00:00
+#PBS -j oe
+#PBS -A radix-io
+#PBS -q debug
+# ============================================================================
+# darshan -> mofka overhead study, C workload -- v2 "cost model".
+# 2-D sweep: EVENT VOLUME x BATCH (rpc fixed; it didn't matter for serial in v1).
+#   - volume axis  -> shows how overhead scales with I/O (init flat, sends linear,
+#                     finalize grows with RPC count = events/batch).
+#   - small volumes -> reveal the TRUE finalize for small batches (v1 hit the 5s cap).
+# Single node, verbs, in-memory partition, ONE broker for the whole run.
+#   qsub jobs/overhead_C2.pbs   (from Improv login, in jobs/)   or   bash jobs/overhead_C2.pbs
+# ============================================================================
+set -uo pipefail
+
+# resolve repo root robustly -- validate each candidate actually has server/env.sh
+# (interactive `bash jobs/..` -> script dir; qsub-from-jobs -> PBS_O_WORKDIR/..; qsub-from-root -> PBS_O_WORKDIR)
+ROOT=""
+for _cand in "${INTERNSHIP_ROOT:-}" \
+             "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
+             "${PBS_O_WORKDIR:-}" \
+             "$(cd "${PBS_O_WORKDIR:-/nonexistent}/.." 2>/dev/null && pwd)"; do
+    [ -n "$_cand" ] && [ -f "$_cand/server/env.sh" ] && { ROOT="$_cand"; break; }
+done
+[ -n "$ROOT" ] || { echo "cannot locate repo root (no server/env.sh found)"; exit 1; }
+export INTERNSHIP_ROOT="$ROOT"
+source "$ROOT/server/env.sh"
+
+# -------------------------- study matrix (edit here) ------------------------
+NFILES_LIST="${NFILES_LIST:-16 64 256}"  # x34 ops/file => ~544, ~2176, ~8704 events
+NWRITES="${NWRITES:-20}"; NREADS="${NREADS:-10}"
+BATCHES="${BATCHES:-0}"  # connector is now hard-fixed to adaptive (MOFKA_BATCH_ADAPTIVE); batch env is inert -> sweep adaptive only
+REPEAT="${REPEAT:-3}"
+RPC="${RPC:-4}"                          # fixed (v1 showed rpc doesn't matter for serial)
+MAXB="${MAXB:-16384}"                    # >= max events (~8704) so no deadlock for any batch
+TIMEOUT="${TIMEOUT:-60}"
+# ----------------------------------------------------------------------------
+
+LIB="$(darshan_lib)"; [ -n "$LIB" ] || { echo "no libdarshan -- build it"; exit 1; }
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"; RUN="$ROOT/jobs/runs/$STAMP"; mkdir -p "$RUN"
+echo "$RUN" > "$ROOT/jobs/runs/.current_C"
+CSV="$RUN/results.csv"; PROG="$RUN/progress.log"
+WL="/tmp/ohd_C2_$$"; mkdir -p "$WL"
+log(){ echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$PROG"; }
+echo "mode,nfiles,batch,rep,events,init_ms,send_avg_us,send_p50_us,send_p99_us,finalize_ms,wall_s,rss_mb,rc" > "$CSV"
+log "study v2 start: node=$(hostname -s) volumes(NFILES)={$NFILES_LIST} batch={$BATCHES} rpc=$RPC maxb=$MAXB repeat=$REPEAT"
+
+cc "$ROOT/workloads/io_test.c" -o "$ROOT/workloads/io_test" || { echo "io_test build failed"; exit 1; }
+pkill -u "$USER" -x bedrock 2>/dev/null || true; sleep 1
+
+# one broker (rpc fixed) for the whole study
+sed "s/\"rpc_thread_count\"[ ]*:[ ]*[0-9]*/\"rpc_thread_count\": $RPC/" "$ROOT/server/bedrock-config.json" > "$RUN/bedrock.json"
+rm -f "$RUN/mofka.json"
+( cd "$RUN" && exec bedrock "$MOFKA_PROTOCOL" -c "$RUN/bedrock.json" -v info > "$RUN/bedrock.log" 2>&1 ) &
+echo $! > "$RUN/bedrock.pid"
+for i in $(seq 1 60); do [ -f "$RUN/mofka.json" ] && break; sleep 0.5; done
+[ -f "$RUN/mofka.json" ] || { log "broker never came up; see $RUN/bedrock.log"; exit 1; }
+GF="$RUN/mofka.json"
+mofkactl topic create darshan --groupfile "$GF" 2>/dev/null || true
+mofkactl partition add darshan --rank 0 --type memory --groupfile "$GF" 2>/dev/null || true
+trap 'kill "$(cat "$RUN/bedrock.pid" 2>/dev/null)" 2>/dev/null || true; rm -rf "$WL"' EXIT
+broker_rss_mb(){ awk '/VmRSS/{print int($2/1024)}' "/proc/$(cat "$RUN/bedrock.pid" 2>/dev/null)/status" 2>/dev/null || echo -1; }
+
+run_cell(){ # mode batch nfiles rep
+    local mode="$1" B="$2" NF="$3" rep="$4"
+    local o="$RUN/${mode}_nf${NF}_b${B}_r${rep}.out" t0 t1 wall rc rss=-1
+    darshan_ensure_logdir >/dev/null
+    t0=$(date +%s.%N)
+    if [ "$mode" = none ]; then
+        timeout "$TIMEOUT" env IO_NFILES=$NF IO_NWRITES=$NWRITES IO_NREADS=$NREADS \
+            "$ROOT/workloads/io_test" "$WL" > "$o" 2>&1; rc=$?
+    elif [ "$mode" = native ]; then
+        timeout "$TIMEOUT" env IO_NFILES=$NF IO_NWRITES=$NWRITES IO_NREADS=$NREADS \
+            DARSHAN_ENABLE_NONMPI=1 DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
+            LD_PRELOAD="$LIB" "$ROOT/workloads/io_test" "$WL" > "$o" 2>&1; rc=$?
+    else
+        timeout "$TIMEOUT" env IO_NFILES=$NF IO_NWRITES=$NWRITES IO_NREADS=$NREADS \
+            DARSHAN_ENABLE_NONMPI=1 DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_ENABLE_POSIX=1 DARSHAN_MOFKA_TIMING=1 \
+            DARSHAN_MOFKA_GROUP_FILE="$GF" DARSHAN_MOFKA_TOPIC=darshan \
+            DARSHAN_MOFKA_BATCH="$B" DARSHAN_MOFKA_MAX_BATCHES="$MAXB" DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
+            LD_PRELOAD="$LIB" "$ROOT/workloads/io_test" "$WL" > "$o" 2>&1; rc=$?
+        rss=$(broker_rss_mb)
+    fi
+    t1=$(date +%s.%N); wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f", b-a}')
+    local ev init fin; ev=$(grep -c 'timing\] send' "$o" 2>/dev/null || true); ev=${ev:-0}
+    init=$(awk '/timing\] initialize/{print $3; exit}' "$o" 2>/dev/null); init=${init:-0}
+    fin=$(awk '/timing\] finalize/{print $3; exit}' "$o" 2>/dev/null); fin=${fin:-0}
+    grep 'timing\] send' "$o" 2>/dev/null | awk '{print $3}' | sort -n > "$o.snd"
+    local n savg sp50 sp99; n=$(wc -l < "$o.snd")
+    if [ "$n" -gt 0 ]; then
+        savg=$(awk '{s+=$1}END{printf "%.3f", s/NR}' "$o.snd")
+        sp50=$(awk -v n="$n" 'NR==int((n-1)*0.50)+1{printf "%.3f",$1}' "$o.snd")
+        sp99=$(awk -v n="$n" 'NR==int((n-1)*0.99)+1{printf "%.3f",$1}' "$o.snd")
+    else savg=0; sp50=0; sp99=0; fi
+    local init_ms fin_ms; init_ms=$(awk -v x="$init" 'BEGIN{printf "%.3f", x/1000}'); fin_ms=$(awk -v x="$fin" 'BEGIN{printf "%.3f", x/1000}')
+    echo "$mode,$NF,$B,$rep,$ev,$init_ms,$savg,$sp50,$sp99,$fin_ms,$wall,$rss,$rc" >> "$CSV"
+    log "  $mode nf=$NF b=$B r=$rep -> ev=$ev init=${init_ms}ms send_avg=${savg}us fin=${fin_ms}ms wall=${wall}s rc=$rc"
+}
+
+for NF in $NFILES_LIST; do
+    log "=== volume NFILES=$NF (~$((NF*(4+NWRITES+NREADS))) events) ==="
+    for rep in $(seq 1 "$REPEAT"); do run_cell none   - "$NF" "$rep"; done
+    for rep in $(seq 1 "$REPEAT"); do run_cell native - "$NF" "$rep"; done
+    for B in $BATCHES; do for rep in $(seq 1 "$REPEAT"); do run_cell mofka "$B" "$NF" "$rep"; done; done
+done
+got=$(timeout 40 "$PY" "$ROOT/server/consume.py" "$GF" darshan 50 2>/dev/null | grep -c '^\[' || true)
+log "delivery check: consumer pulled $got events"
+log "=== DONE. results: $CSV ==="
+column -s, -t "$CSV" > "$RUN/results.txt" 2>/dev/null || cp "$CSV" "$RUN/results.txt"

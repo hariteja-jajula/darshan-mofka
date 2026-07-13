@@ -1,0 +1,138 @@
+#!/bin/bash
+#PBS -N ohd_MPI
+#PBS -l select=2:ncpus=128:mpiprocs=128
+#PBS -l place=scatter
+#PBS -l walltime=00:45:00
+#PBS -j oe
+#PBS -A radix-io
+#PBS -q debug
+# ============================================================================
+# darshan -> mofka MULTI-NODE overhead study (io_mpi, one rank per core, ALL nodes).
+#
+# The broker is CO-LOCATED + UNPINNED on the mother-superior via server-node.sh --
+# NO node is sacrificed; it floats on whatever core has slack. Compares
+# none / native / mofka(adaptive) at full density, and sweeps broker
+# rpc_thread_count (which finally matters under N x 128 concurrent producers).
+#
+# Reuses: server-node.sh (broker), client-mpi.sh (per-rank, MODE-aware),
+#         verify_multinode.py, and launch_per_core (copied from multinode-percore.pbs).
+#
+# Run on a MULTI-NODE allocation (mpiprocs=<cores> is required for real scatter):
+#   qsub -I -A radix-io -q debug -l select=2:ncpus=128:mpiprocs=128 -l place=scatter -l walltime=00:45:00
+#   cd ~/internship/darshan-mofka/darshan-mofka && source server/env.sh && bash jobs/overhead_MPI.pbs
+# Knobs:  RPCS="1 4 16"   REPEAT=5   PPN=128
+# ============================================================================
+set -uo pipefail
+
+# --- repo root (validated; robust for bash-interactive and qsub) --------------
+ROOT=""
+for _c in "${INTERNSHIP_ROOT:-}" \
+          "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
+          "${PBS_O_WORKDIR:-}" \
+          "$(cd "${PBS_O_WORKDIR:-/nonexistent}/.." 2>/dev/null && pwd)"; do
+    [ -n "$_c" ] && [ -f "$_c/server/env.sh" ] && { ROOT="$_c"; break; }
+done
+[ -n "$ROOT" ] || { echo "cannot locate repo root (no server/env.sh)"; exit 1; }
+export INTERNSHIP_ROOT="$ROOT"; JOBS="$ROOT/jobs"
+source "$ROOT/server/env.sh"
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"; RUN="$JOBS/runs/$STAMP"; mkdir -p "$RUN"
+echo "$RUN" > "$JOBS/runs/.current_MPI"
+CSV="$RUN/results.csv"; PROG="$RUN/progress.log"
+log(){ echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$PROG"; }
+
+mapfile -t NODES < <(sort -u "${PBS_NODEFILE:?run under a PBS allocation}")
+NN=${#NODES[@]}; ALL=$(IFS=,; echo "${NODES[*]}")
+PPN="${PPN:-128}"; FULL=$((NN*PPN))
+RPCS="${RPCS:-1 4 16}"; REPEAT="${REPEAT:-5}"   # 5 reps/cell to match overhead_C (REPEAT parity)
+BATCHES="${BATCHES:-0 64 512}"                   # producer batch_size sweep (0=adaptive). NO batch=1: at
+                                                 #   256 producers a single-event drain risks the 2h ceiling /
+                                                 #   backpressure-deadlock (overhead_C covers the batch=1 case).
+MAXBS="${MAXBS:-4096}"                            # max_num_batches per rank; MUST exceed per-rank events
+FLUSH_MS="${FLUSH_MS:-550000}"                    # connector finalize flush budget (ms)
+IO_PAD_SEC="${IO_PAD_SEC:-0}"                      # compute pad (s) per rank: wall≈PAD, events unchanged (0=off)
+LIB="$(darshan_lib)"; [ -n "$LIB" ] || { echo "no libdarshan -- (cd $ROOT/darshan && ./build.sh)"; exit 1; }
+MPIEXEC="${MPIEXEC:-$(command -v mpiexec)}"
+[ "$NN" -ge 2 ] || log "WARN: only $NN node in allocation -- multi-node wants select>=2"
+
+echo "mode,rpc,batch,ranks,rep,events,send_avg_us,init_ms,finalize_ms,wall_s" > "$CSV"
+log "MPI study: $NN nodes (${NODES[*]}) | $PPN ranks/node -> $FULL total | rpc={$RPCS} batch={$BATCHES} reps=$REPEAT"
+log "broker: co-located + unpinned on $(hostname -s) (no dedicated node)"
+mpicc "$ROOT/workloads/io_mpi.c" -o "$ROOT/workloads/io_mpi" || { echo "io_mpi build failed"; exit 1; }
+
+# --- per-core scatter launcher (copied verbatim from multinode-percore.pbs) ---
+launch_per_core() {
+    local hosts="$1" ppn="$2" total="$3"; shift 3
+    [[ "${1:-}" == "--" ]] && shift
+    local slots; slots=$(wc -l < "${PBS_NODEFILE:-/dev/null}" 2>/dev/null || echo 0)
+    local ver; ver="$("$MPIEXEC" --version 2>&1 | tr 'A-Z' 'a-z')"
+    local ompi=0
+    [[ "$ver" == *"open mpi"* || "$ver" == *"open-mpi"* || "$ver" == *openmpi* || "$ver" == *"(ompi)"* ]] && ompi=1
+    if [[ "$slots" -ge "$total" ]]; then
+        if [[ $ompi -eq 1 ]]; then "$MPIEXEC" -n "$total" --map-by node --bind-to none -- "$@"
+        else "$MPIEXEC" -n "$total" -- "$@"; fi
+    else
+        echo "[mpi] WARN: allocation advertises $slots slots for $total ranks -> packing onto $(hostname -s)" >&2
+        local hostspec="${hosts//,/:$ppn,}:$ppn"
+        if [[ $ompi -eq 1 ]]; then
+            "$MPIEXEC" --host "$hostspec" -n "$total" --map-by node --bind-to none --oversubscribe -- "$@"
+        else "$MPIEXEC" --hosts "$hosts" -n "$total" --ppn "$ppn" -- "$@"; fi
+    fi
+}
+
+summarize(){ # mode rpc batch ranks rep wall out
+    local mode=$1 rpc=$2 batch=$3 ranks=$4 rep=$5 wall=$6 o=$7 ev sa init fin
+    ev=$(grep -c 'timing\] send' "$o" 2>/dev/null || true); ev=${ev:-0}
+    sa=$(grep   'timing\] send'       "$o" 2>/dev/null | awk '{s+=$3;n++}END{printf "%.3f",(n?s/n:0)}'); sa=${sa:-0}
+    init=$(grep 'timing\] initialize' "$o" 2>/dev/null | awk '{s+=$3;n++}END{printf "%.3f",(n?s/n/1000:0)}'); init=${init:-0}
+    fin=$(grep  'timing\] finalize'   "$o" 2>/dev/null | awk '{s+=$3;n++}END{printf "%.3f",(n?s/n/1000:0)}'); fin=${fin:-0}
+    echo "$mode,$rpc,$batch,$ranks,$rep,$ev,$sa,$init,$fin,$wall" >> "$CSV"
+    log "  $mode rpc=$rpc b=$batch ranks=$ranks rep=$rep -> ev=$ev send_avg=${sa}us init=${init}ms fin=${fin}ms wall=${wall}s"
+}
+
+run_cell(){ # mode rpc batch ranks rep
+    local mode=$1 rpc=$2 batch=$3 ranks=$4 rep=$5 o t0 t1 wall
+    o="$RUN/${mode}_rpc${rpc}_b${batch}_n${ranks}_r${rep}.out"
+    t0=$(date +%s.%N)
+    launch_per_core "$ALL" "$PPN" "$ranks" -- bash "$JOBS/client-mpi.sh" "$RUN" "$ROOT" "$mode" "$batch" "$MAXBS" "$FLUSH_MS" "$IO_PAD_SEC" > "$o" 2>&1
+    t1=$(date +%s.%N); wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')
+    summarize "$mode" "$rpc" "$batch" "$ranks" "$rep" "$wall" "$o"
+}
+
+# --- baselines (no broker needed) --------------------------------------------
+log "=== baselines at $FULL ranks: none (no darshan), native (darshan, no stream) ==="
+for rep in $(seq 1 "$REPEAT"); do run_cell none   - - "$FULL" "$rep"; done
+for rep in $(seq 1 "$REPEAT"); do run_cell native - - "$FULL" "$rep"; done
+
+# --- firehose (adaptive): co-located broker per rpc_thread, full density ------
+for RPC in $RPCS; do
+    log "=== broker rpc_thread_count=$RPC ==="
+    sed "s/\"rpc_thread_count\"[ ]*:[ ]*[0-9]*/\"rpc_thread_count\": $RPC/" \
+        "$ROOT/server/bedrock-config.json" > "$RUN/bedrock-rpc$RPC.json"
+    rm -f "$RUN/SERVER_READY" "$RUN/SHUTDOWN" "$RUN/mofka.json"
+    bash "$JOBS/server-node.sh" "$RUN" "$ROOT" "$RUN/bedrock-rpc$RPC.json" > "$RUN/server-rpc$RPC.out" 2>&1 &
+    SVC=$!
+    for i in $(seq 1 60); do [ -f "$RUN/SERVER_READY" ] && break; kill -0 "$SVC" 2>/dev/null || break; sleep 2; done
+    if [ ! -f "$RUN/SERVER_READY" ]; then
+        log "  broker(rpc=$RPC) never became ready; see server-rpc$RPC.out"; sed 's/^/    /' "$RUN/server-rpc$RPC.out"
+        touch "$RUN/SHUTDOWN"; wait "$SVC" 2>/dev/null || true; continue
+    fi
+    for B in $BATCHES; do for rep in $(seq 1 "$REPEAT"); do run_cell mofka "$RPC" "$B" "$FULL" "$rep"; done; done
+    # reliability capture: drain this broker's events to a durable per-run log dir
+    mkdir -p "$RUN/events"
+    # target = this rpc's total sent events over ALL batches (MPI events col is $6) so a
+    # lossless drain exits at once; capture.py also self-stops on idle.
+    sent=$(awk -F, -v r="$RPC" 'NR>1&&$1=="mofka"&&$2==r{s+=$6} END{print s+0}' "$CSV")
+    timeout 600 "$PY" "$ROOT/server/capture.py" "$RUN/mofka.json" darshan "$sent" > "$RUN/events/rpc$RPC.jsonl" 2> "$RUN/events/rpc$RPC.count" || true
+    cap=$(awk '{print $2}' "$RUN/events/rpc$RPC.count" 2>/dev/null)
+    log "  rpc=$RPC capture: consumed ${cap:-0} events -> events/rpc$RPC.jsonl (sent=$sent)"
+    touch "$RUN/SHUTDOWN"; wait "$SVC" 2>/dev/null || true
+done
+
+log "=== DONE. results: $CSV ==="
+column -s, -t "$CSV" > "$RUN/results.txt" 2>/dev/null || cp "$CSV" "$RUN/results.txt"
+tail -40 "$RUN/results.txt" | tee -a "$PROG"
+
+# computed OVERHEAD table (averaged over reps + mofka-vs-native deltas) -> overhead_summary.csv
+log "=== overhead summary (analyze_overhead.py) ==="
+"$PY" "$ROOT/jobs/analyze_overhead.py" "$RUN" --md 2>&1 | tee -a "$PROG" || true

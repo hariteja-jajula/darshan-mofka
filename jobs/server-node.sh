@@ -7,6 +7,7 @@ RUN_DIR="$1"
 # ROOT is passed by multinode.pbs so we don't depend on env-forwarding or on
 # knowing an absolute path. Fall back to deriving it from this script's location.
 ROOT="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+CONFIG="${3:-$ROOT/server/bedrock-config.json}"   # 3rd arg: per-run bedrock config (e.g. rpc_thread sweep)
 source "$ROOT/server/env.sh"
 
 SVC_HOST=$(hostname -s)
@@ -23,7 +24,7 @@ rm -f mofka.json SHUTDOWN
 # node to it; pinning to a fixed core set would just constrain the broker without
 # reserving anything, so we keep the overhead minimal and don't pin.
 echo "[svc] launching bedrock (unpinned)"
-bedrock "$MOFKA_PROTOCOL" -c "$ROOT/server/bedrock-config.json" \
+bedrock "$MOFKA_PROTOCOL" -c "$CONFIG" \
         -v info > "$RUN_DIR/bedrock.log" 2>&1 &
 BEDROCK_PID=$!
 

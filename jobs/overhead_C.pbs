@@ -1,0 +1,156 @@
+#!/bin/bash
+#PBS -N ohd_C
+#PBS -l select=1:ncpus=128
+#PBS -l walltime=01:00:00
+#PBS -j oe
+#PBS -A radix-io
+#PBS -q debug
+# ============================================================================
+# darshan -> mofka OVERHEAD STUDY, C workload (io_test, single-proc POSIX).
+#
+# Measures the STREAMING overhead (mofka firehose) relative to native darshan,
+# across producer batch_size, max_num_batches (backpressure), and broker
+# rpc_thread_count. Single node, verbs, in-memory partition.
+#
+# Because per-op send() is fire-and-forget, batch_size does NOT move send_avg;
+# its effect shows in wall time, finalize (drain), the backpressure regime
+# (small max_batches), and broker RSS. So we capture all of those + a baseline.
+#
+# Run as a batch job:   qsub jobs/overhead_C.pbs        (from an Improv login node)
+# Or directly on a node: bash jobs/overhead_C.pbs        (PBS lines are ignored)
+# ============================================================================
+set -uo pipefail
+
+# resolve repo root robustly -- validate each candidate actually has server/env.sh
+ROOT=""
+for _cand in "${INTERNSHIP_ROOT:-}" \
+             "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
+             "${PBS_O_WORKDIR:-}" \
+             "$(cd "${PBS_O_WORKDIR:-/nonexistent}/.." 2>/dev/null && pwd)"; do
+    [ -n "$_cand" ] && [ -f "$_cand/server/env.sh" ] && { ROOT="$_cand"; break; }
+done
+[ -n "$ROOT" ] || { echo "cannot locate repo root (no server/env.sh found)"; exit 1; }
+export INTERNSHIP_ROOT="$ROOT"
+source "$ROOT/server/env.sh"
+
+# -------------------------- study matrix (edit here) ------------------------
+IO_NFILES="${IO_NFILES:-60}"; IO_NWRITES="${IO_NWRITES:-20}"; IO_NREADS="${IO_NREADS:-10}"  # ~60*32 = 1920 events/run
+IO_PAD_SEC="${IO_PAD_SEC:-0}"          # compute pad (s): busy-spin after I/O to model a ~PAD-second app (0=off).
+                                        #   Makes wall≈PAD so overhead % is realistic; events unchanged, delta unchanged.
+BATCHES="${BATCHES:-0 1 64}"           # producer batch_size (0 = adaptive)
+MAXBS="${MAXBS:-4096}"                  # max_num_batches. MUST be >= events/run: the connector has no
+                                        #   dedicated producer progress thread, so if push() ever blocks on a
+                                        #   full in-flight ring it DEADLOCKS. 4096 > ~1920 events => fixed
+                                        #   batches complete; adaptive(0) always completes. (Bounded backpressure
+                                        #   deadlock is a separate documented finding, not swept here.)
+RPCS="${RPCS:-1 4 16}"                  # broker rpc_thread_count (server-side; broker restart per value)
+REPEAT="${REPEAT:-5}"                   # repeats per cell
+TIMEOUT="${TIMEOUT:-600}"              # per-cell wall cap (s); long enough for batch=1 to fully DRAIN
+FLUSH_MS="${FLUSH_MS:-550000}"         # connector finalize flush budget (ms) < TIMEOUT: fixed batch drains, no 5s censor
+CAP_EVENTS="${CAP_EVENTS:-100000}"     # max events the reliability capturer drains per broker
+# ----------------------------------------------------------------------------
+
+LIB="$(darshan_lib)"; [ -n "$LIB" ] || { echo "no libdarshan -- build it: (cd $ROOT/darshan && ./build.sh)"; exit 1; }
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"; RUN="$ROOT/jobs/runs/$STAMP"; mkdir -p "$RUN"
+echo "$RUN" > "$ROOT/jobs/runs/.current_C"     # so a watcher can find this run
+CSV="$RUN/results.csv"; PROG="$RUN/progress.log"
+WL="/tmp/ohd_C_$$"; mkdir -p "$WL"             # workload output on a REAL fs (darshan skips tmpfs)
+
+log(){ echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$PROG"; }
+echo "mode,rpc_threads,batch,max_batches,rep,events,init_ms,send_avg_us,send_p50_us,send_p99_us,finalize_ms,wall_s,broker_rss_mb,rc" > "$CSV"
+
+log "study start: node=$(hostname -s) proto=$MOFKA_PROTOCOL lib=$LIB"
+log "workload io_test: NFILES=$IO_NFILES NWRITES=$IO_NWRITES NREADS=$IO_NREADS (~$((IO_NFILES*(2+IO_NWRITES+IO_NREADS))) events/run)"
+log "matrix: modes={none,native,mofka} batch={$BATCHES} max_batches={$MAXBS} rpc={$RPCS} repeat=$REPEAT"
+
+cc "$ROOT/workloads/io_test.c" -o "$ROOT/workloads/io_test" || { echo "io_test build failed"; exit 1; }
+pkill -u "$USER" -x bedrock 2>/dev/null || true; sleep 1
+
+start_broker(){ # $1 = rpc_thread_count
+    sed "s/\"rpc_thread_count\"[ ]*:[ ]*[0-9]*/\"rpc_thread_count\": $1/" \
+        "$ROOT/server/bedrock-config.json" > "$RUN/bedrock-$1.json"
+    rm -f "$RUN/mofka.json"
+    # cd into $RUN so flock's relative "file":"mofka.json" lands here (batch CWD != $RUN)
+    ( cd "$RUN" && exec bedrock "$MOFKA_PROTOCOL" -c "$RUN/bedrock-$1.json" -v info > "$RUN/bedrock-$1.log" 2>&1 ) &
+    echo $! > "$RUN/bedrock.pid"
+    for i in $(seq 1 60); do [ -f "$RUN/mofka.json" ] && break; sleep 0.5; done
+    [ -f "$RUN/mofka.json" ] || { log "  broker(rpc=$1) never wrote mofka.json"; return 1; }
+    mofkactl topic create darshan --groupfile "$RUN/mofka.json" 2>/dev/null || true
+    mofkactl partition add darshan --rank 0 --type memory --groupfile "$RUN/mofka.json" 2>/dev/null || true
+    return 0
+}
+stop_broker(){ kill "$(cat "$RUN/bedrock.pid" 2>/dev/null)" 2>/dev/null || true; sleep 1; }
+broker_rss_mb(){ awk '/VmRSS/{print int($2/1024)}' "/proc/$(cat "$RUN/bedrock.pid" 2>/dev/null)/status" 2>/dev/null || echo -1; }
+
+run_cell(){ # mode rpc batch maxb rep groupfile
+    local mode="$1" rpc="$2" B="$3" M="$4" rep="$5" GF="$6"
+    local o="$RUN/${mode}_rpc${rpc}_b${B}_m${M}_r${rep}.out"
+    local t0 t1 wall rc rss=-1
+    darshan_ensure_logdir >/dev/null
+    t0=$(date +%s.%N)
+    if [ "$mode" = none ]; then
+        timeout "$TIMEOUT" env IO_NFILES=$IO_NFILES IO_NWRITES=$IO_NWRITES IO_NREADS=$IO_NREADS IO_PAD_SEC=$IO_PAD_SEC \
+            "$ROOT/workloads/io_test" "$WL" > "$o" 2>&1; rc=$?
+    elif [ "$mode" = native ]; then
+        timeout "$TIMEOUT" env IO_NFILES=$IO_NFILES IO_NWRITES=$IO_NWRITES IO_NREADS=$IO_NREADS IO_PAD_SEC=$IO_PAD_SEC \
+            DARSHAN_ENABLE_NONMPI=1 DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
+            LD_PRELOAD="$LIB" "$ROOT/workloads/io_test" "$WL" > "$o" 2>&1; rc=$?
+    else
+        timeout "$TIMEOUT" env IO_NFILES=$IO_NFILES IO_NWRITES=$IO_NWRITES IO_NREADS=$IO_NREADS IO_PAD_SEC=$IO_PAD_SEC \
+            DARSHAN_ENABLE_NONMPI=1 DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_ENABLE_POSIX=1 DARSHAN_MOFKA_TIMING=1 \
+            DARSHAN_MOFKA_GROUP_FILE="$GF" DARSHAN_MOFKA_TOPIC=darshan \
+            DARSHAN_MOFKA_BATCH="$B" DARSHAN_MOFKA_MAX_BATCHES="$M" DARSHAN_MOFKA_FLUSH_MS="$FLUSH_MS" DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
+            LD_PRELOAD="$LIB" "$ROOT/workloads/io_test" "$WL" > "$o" 2>&1; rc=$?
+        rss=$(broker_rss_mb)
+    fi
+    t1=$(date +%s.%N); wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f", b-a}')
+    local ev init fin
+    ev=$(grep -c 'timing\] send' "$o" 2>/dev/null || true); ev=${ev:-0}
+    init=$(awk '/timing\] initialize/{print $3; exit}' "$o" 2>/dev/null); init=${init:-0}
+    fin=$(awk '/timing\] finalize/{print $3; exit}' "$o" 2>/dev/null); fin=${fin:-0}
+    grep 'timing\] send' "$o" 2>/dev/null | awk '{print $3}' | sort -n > "$o.snd"
+    local n savg sp50 sp99; n=$(wc -l < "$o.snd")
+    if [ "$n" -gt 0 ]; then
+        savg=$(awk '{s+=$1}END{printf "%.3f", s/NR}' "$o.snd")
+        sp50=$(awk -v n="$n" 'NR==int((n-1)*0.50)+1{printf "%.3f",$1}' "$o.snd")
+        sp99=$(awk -v n="$n" 'NR==int((n-1)*0.99)+1{printf "%.3f",$1}' "$o.snd")
+    else savg=0; sp50=0; sp99=0; fi
+    local init_ms fin_ms
+    init_ms=$(awk -v x="$init" 'BEGIN{printf "%.3f", x/1000}')
+    fin_ms=$(awk -v x="$fin" 'BEGIN{printf "%.3f", x/1000}')
+    echo "$mode,$rpc,$B,$M,$rep,$ev,$init_ms,$savg,$sp50,$sp99,$fin_ms,$wall,$rss,$rc" >> "$CSV"
+    log "  $mode rpc=$rpc b=$B m=$M r=$rep -> ev=$ev wall=${wall}s send_avg=${savg}us fin=${fin_ms}ms rss=${rss}MB rc=$rc"
+}
+
+trap 'stop_broker; rm -rf "$WL"' EXIT
+
+log "=== baselines (no-darshan, then darshan-native) ==="
+for rep in $(seq 1 "$REPEAT"); do run_cell none   - - - "$rep" -; done
+for rep in $(seq 1 "$REPEAT"); do run_cell native - - - "$rep" -; done
+
+for RPC in $RPCS; do
+    log "=== broker rpc_thread_count=$RPC ==="
+    start_broker "$RPC" || { log "  skip rpc=$RPC (broker failed)"; continue; }
+    GF="$RUN/mofka.json"
+    for B in $BATCHES; do for M in $MAXBS; do for rep in $(seq 1 "$REPEAT"); do
+        run_cell mofka "$RPC" "$B" "$M" "$rep" "$GF"
+    done; done; done
+    # reliability capture: drain this broker's events to a durable per-run log dir so
+    # consumed-vs-sent is verifiable after the fact (not just a sampled delivery count).
+    mkdir -p "$RUN/events"
+    # target = this rpc's total sent events, so a lossless drain exits at once (capture.py
+    # also self-stops on idle). events col ($6) summed over this rpc's mofka rows.
+    sent=$(awk -F, -v r="$RPC" 'NR>1&&$1=="mofka"&&$2==r{s+=$6} END{print s+0}' "$CSV")
+    timeout 300 "$PY" "$ROOT/server/capture.py" "$GF" darshan "$sent" > "$RUN/events/rpc$RPC.jsonl" 2> "$RUN/events/rpc$RPC.count" || true
+    got=$(awk '{print $2}' "$RUN/events/rpc$RPC.count" 2>/dev/null); got=${got:-0}
+    log "  rpc=$RPC capture: consumed $got -> events/rpc$RPC.jsonl (sent=$sent)"
+    stop_broker
+done
+
+log "=== DONE. results: $CSV ==="
+column -s, -t "$CSV" > "$RUN/results.txt" 2>/dev/null || cp "$CSV" "$RUN/results.txt"
+tail -30 "$RUN/results.txt" | tee -a "$PROG"
+
+# computed OVERHEAD table (averaged over reps + mofka-vs-native deltas) -> overhead_summary.csv
+log "=== overhead summary (analyze_overhead.py) ==="
+"$PY" "$ROOT/jobs/analyze_overhead.py" "$RUN" --md 2>&1 | tee -a "$PROG" || true

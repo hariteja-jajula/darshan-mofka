@@ -29,6 +29,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
 #include <mpi.h>
 
 #define NFILES  3
@@ -92,6 +93,20 @@ int main(int argc, char** argv)
     if (rank == 0)
         printf("io_mpi done: %d ranks, %d events/rank, %d expected POSIX events total\n",
                nranks, local_events, total_events);
+
+    /* optional compute pad: each rank busy-spins ~IO_PAD_SEC (compute-bound-app model)
+       so wall≈pad without adding I/O events -> realistic overhead %, delta unchanged. */
+    double pad = getenv("IO_PAD_SEC") ? atof(getenv("IO_PAD_SEC")) : 0.0;
+    if (pad > 0) {
+        struct timespec a, b; clock_gettime(CLOCK_MONOTONIC, &a);
+        volatile double acc = 0.0;
+        for (;;) {
+            for (int k = 0; k < 200000; k++) acc += k * 1.0000001;
+            clock_gettime(CLOCK_MONOTONIC, &b);
+            if ((b.tv_sec - a.tv_sec) + (b.tv_nsec - a.tv_nsec) / 1e9 >= pad) break;
+        }
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
 
     MPI_Finalize();
     return 0;
