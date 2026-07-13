@@ -1,0 +1,54 @@
+#!/bin/bash
+#PBS -N smoke_trim
+#PBS -l select=1:ncpus=128
+#PBS -l walltime=00:20:00
+#PBS -j oe
+#PBS -A radix-io
+#PBS -q debug
+# ============================================================================
+# Post-trim validation: rebuild libdarshan from the committed (trimmed) source
+# on a compute node, then run the end-to-end smoke test. This proves the macro
+# hoist (DARSHAN_MOFKA_SEND moved into darshan-mofka.h) did NOT silently turn
+# sends into no-ops -- that failure compiles fine and only shows as a wrong
+# event count, so we exercise the real broker->io_test->consume path.
+#   qsub jobs/smoke_trim.pbs
+# ============================================================================
+set -uo pipefail
+
+ROOT=""
+for _c in "${PBS_O_WORKDIR:-}" \
+          "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
+          "$(cd "${PBS_O_WORKDIR:-/nonexistent}/.." 2>/dev/null && pwd)"; do
+    [ -n "$_c" ] && [ -f "$_c/server/env.sh" ] && { ROOT="$_c"; break; }
+done
+[ -n "$ROOT" ] || { echo "cannot locate repo root (no server/env.sh)"; exit 1; }
+cd "$ROOT"
+source "$ROOT/server/env.sh"
+
+echo "############################################################"
+echo "# node   : $(hostname -s)"
+echo "# commit : $(cd "$ROOT/darshan" && git rev-parse --short HEAD) ($(cd "$ROOT/darshan" && git branch --show-current))"
+echo "# proto  : ${MOFKA_PROTOCOL:-?}"
+echo "############################################################"
+
+echo; echo "### [1/3] rebuild libdarshan from committed (trimmed) source"
+BLOG="$ROOT/jobs/smoke_trim.build.log"
+( cd "$ROOT/darshan" && ./build.sh ) > "$BLOG" 2>&1 && echo "build.sh: exit OK" || echo "build.sh: exit NONZERO"
+tail -30 "$BLOG"
+LIB="$(darshan_lib)"
+[ -n "$LIB" ] && [ -f "$LIB" ] || { echo ">>> BUILD FAIL: no libdarshan produced (full log: $BLOG)"; exit 1; }
+echo "built: $LIB"
+nsym="$(nm "$LIB" | grep -c mofka_connector || true)"
+echo "mofka connector symbols: $nsym (expect 3: initialize/send/finalize)"
+
+echo; echo "### [2/3] end-to-end smoke test (want>=51 of the 57 io_test POSIX events)"
+bash "$ROOT/server/smoke-test.sh" 51
+rc=$?
+
+echo; echo "### [3/3] SMOKE rc=$rc"
+if [ "$rc" -eq 0 ]; then
+    echo ">>> TRIMMED BUILD STREAMS OK -- clear to submit the study."
+else
+    echo ">>> SMOKE FAILED -- do NOT submit the study; inspect above."
+fi
+exit "$rc"

@@ -17,32 +17,44 @@ CLI_IP=$(hostname -i 2>/dev/null | awk '{print $1}')
 FI_IFACE=$(ip -4 -o addr show 2>/dev/null | awk -v ip="$CLI_IP" '$4 ~ ip"/" {print $2; exit}')
 [[ -n "$FI_IFACE" ]] && export FI_TCP_IFACE="$FI_IFACE"
 
-# every rank waits for the broker; polling the shared run dir is cheap
-for i in $(seq 1 120); do [[ -f "$RUN_DIR/SERVER_READY" ]] && break; sleep 1; done
-[[ -f "$RUN_DIR/SERVER_READY" ]] || { echo "[cli-mpi $HOST] FAIL: server never ready"; exit 1; }
+# MODE (3rd arg): mofka (default) = stream to broker; native = darshan, no streaming;
+# none = no darshan at all (pure app baseline). Default keeps multinode-percore.pbs unchanged.
+# 4th+ args (mofka only): batch_size, max_num_batches, flush_ms -- absent = adaptive default,
+# so the 2/3-arg callers (multinode-percore.pbs) are unaffected.
+MODE="${3:-mofka}"
+# compute pad (7th arg) applies to ALL modes -> export before the none-mode exec below
+PAD="${7:-}"; [[ -n "$PAD" && "$PAD" != "-" ]] && export IO_PAD_SEC="$PAD"
+WORKDIR="$RUN_DIR/wl_${MODE}_$HOST"; mkdir -p "$WORKDIR"   # per-mode dir; all ranks on a host share it
 
-export DARSHAN_MOFKA_ENABLE=1
-export DARSHAN_MOFKA_GROUP_FILE="$RUN_DIR/mofka.json"
-export DARSHAN_MOFKA_TOPIC=darshan
-export DARSHAN_MOFKA_ENABLE_POSIX=1
-# REQUIRED: this darshan is a --without-mpi build (see server/build-darshan.sh),
-# so it does NOT hook MPI_Init. Every rank is instrumented as an independent
-# process via the library constructor, which only fires when this is set. Without
-# it darshan never initializes, the mofka producer is never created, and every
-# connector_send early-returns -> zero events (with no error). io_mpi still uses
-# MPI for launch/placement; darshan just can't stamp the MPI rank (rank stays -1).
-export DARSHAN_ENABLE_NONMPI=1
-# timing study: each rank prints init/finalize + one line per op to stderr, which
-# the PBS captures in the run dir's clients.out (~59 lines/rank). Comment out to silence.
-export DARSHAN_MOFKA_TIMING=1
-# NOTE: DARSHAN_MOFKA_VERBOSE is intentionally OFF -- with hundreds of ranks its
-# per-rank "producer connected" line would flood clients.out. Set it via
-# `qsub -v ...` only when debugging a single small run.
+# MODE=none: pure application, no darshan
+if [[ "$MODE" == none ]]; then
+    exec "$ROOT/workloads/io_mpi" "$WORKDIR"
+fi
 
-WORKDIR="$RUN_DIR/wl_$HOST"; mkdir -p "$WORKDIR"   # idempotent; all ranks share it
+# darshan modes need the lib + a dated log dir; --without-mpi build needs NONMPI=1
+# (else the constructor never fires, the producer is never made, sends early-return)
 DARSHAN_LIB="$(darshan_lib)"
 [[ -n "$DARSHAN_LIB" ]] || { echo "[cli-mpi $HOST] FAIL: no libdarshan under $DARSHAN_PREFIX/lib"; exit 1; }
 darshan_ensure_logdir >/dev/null
+export DARSHAN_ENABLE_NONMPI=1
+
+# MODE=mofka: also stream -- wait for the broker, then enable the connector + timers
+if [[ "$MODE" == mofka ]]; then
+    for i in $(seq 1 120); do [[ -f "$RUN_DIR/SERVER_READY" ]] && break; sleep 1; done
+    [[ -f "$RUN_DIR/SERVER_READY" ]] || { echo "[cli-mpi $HOST] FAIL: server never ready"; exit 1; }
+    export DARSHAN_MOFKA_ENABLE=1
+    export DARSHAN_MOFKA_GROUP_FILE="$RUN_DIR/mofka.json"
+    export DARSHAN_MOFKA_TOPIC=darshan
+    export DARSHAN_MOFKA_ENABLE_POSIX=1
+    export DARSHAN_MOFKA_TIMING=1   # per-rank init/send/finalize -> clients.out (DARSHAN_MOFKA_VERBOSE stays off)
+    # optional producer batch knobs (4th+ args). Absent -> connector default (adaptive).
+    BATCH="${4:-}"
+    if [[ -n "$BATCH" && "$BATCH" != "-" ]]; then
+        export DARSHAN_MOFKA_BATCH="$BATCH"
+        [[ -n "${5:-}" ]] && export DARSHAN_MOFKA_MAX_BATCHES="$5"
+        [[ -n "${6:-}" ]] && export DARSHAN_MOFKA_FLUSH_MS="$6"
+    fi
+fi
 
 export LD_PRELOAD="$DARSHAN_LIB"
 exec "$ROOT/workloads/io_mpi" "$WORKDIR"

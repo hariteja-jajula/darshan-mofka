@@ -18,15 +18,17 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
 
-#define NFILES  3
-#define NWRITES 10
-#define NREADS  5
-#define BUFSZ   4096
+#define BUFSZ   4096   /* NFILES/NWRITES/NREADS are env-configurable (see main) */
 
 int main(int argc, char** argv)
 {
     const char* dir = (argc > 1) ? argv[1] : "/tmp";
+    /* event volume is env-tunable for the overhead study; defaults = original 3/10/5 */
+    int NFILES  = getenv("IO_NFILES")  ? atoi(getenv("IO_NFILES"))  : 3;
+    int NWRITES = getenv("IO_NWRITES") ? atoi(getenv("IO_NWRITES")) : 10;
+    int NREADS  = getenv("IO_NREADS")  ? atoi(getenv("IO_NREADS"))  : 5;
     char buf[BUFSZ];
     memset(buf, 'x', sizeof(buf));
 
@@ -54,5 +56,19 @@ int main(int argc, char** argv)
     }
 
     printf("io_test done: %d files, %d expected POSIX events\n", NFILES, total);
+
+    /* optional compute pad: busy-spin ~IO_PAD_SEC to model a compute-bound app doing
+       periodic I/O, so wall≈pad while the event set stays fixed (overhead % becomes
+       realistic; the delta vs native is unchanged). No I/O here -> no new events. */
+    double pad = getenv("IO_PAD_SEC") ? atof(getenv("IO_PAD_SEC")) : 0.0;
+    if (pad > 0) {
+        struct timespec a, b; clock_gettime(CLOCK_MONOTONIC, &a);
+        volatile double acc = 0.0;
+        for (;;) {
+            for (int k = 0; k < 200000; k++) acc += k * 1.0000001;
+            clock_gettime(CLOCK_MONOTONIC, &b);
+            if ((b.tv_sec - a.tv_sec) + (b.tv_nsec - a.tv_nsec) / 1e9 >= pad) break;
+        }
+    }
     return 0;
 }

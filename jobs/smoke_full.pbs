@@ -1,0 +1,142 @@
+#!/bin/bash
+#PBS -N smoke_full
+#PBS -l select=2:ncpus=128:mpiprocs=128
+#PBS -l place=scatter
+#PBS -l walltime=00:45:00
+#PBS -j oe
+#PBS -A radix-io
+#PBS -q debug
+# ============================================================================
+# COMPREHENSIVE pre-flight for the overhead study. Exercises EVERY path the
+# long (2h/4h) run will use, at reduced scale, and ASSERTS each works:
+#   [1] rebuild libdarshan from source (trimmed + batch-env re-wire)
+#   [2] batch knob is LIVE (producer honors DARSHAN_MOFKA_BATCH)
+#   [3] single-node C study (modes x batch x rpc) -> capture / event-invariance /
+#       no-deadlock / native-silent / broker delivery
+#   [4] multi-node MPI study (256 producers, modes x rpc) -> capture / scale
+# Prints [PASS]/[FAIL] per check + a final tally; nonzero exit if anything fails.
+# Scale is TUNABLE via env (defaults = fast "1 rep" pre-flight):
+#   SMOKE_REPEAT=1  SMOKE_C_BATCHES="0 1 512"  SMOKE_C_RPCS="1 4"  SMOKE_MPI_RPCS="1 4"
+#   qsub jobs/smoke_full.pbs                    # 2 nodes -> clears BOTH 2h jobs
+#   ...on a 1-node alloc it validates the C path only (MPI -> WARN, not FAIL)
+# ============================================================================
+set -uo pipefail
+
+ROOT=""
+for _c in "${PBS_O_WORKDIR:-}" \
+          "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
+          "$(cd "${PBS_O_WORKDIR:-/nonexistent}/.." 2>/dev/null && pwd)"; do
+    [ -n "$_c" ] && [ -f "$_c/server/env.sh" ] && { ROOT="$_c"; break; }
+done
+[ -n "$ROOT" ] || { echo "cannot locate repo root (no server/env.sh)"; exit 1; }
+cd "$ROOT"; source "$ROOT/server/env.sh"
+
+P=0; F=0; W=0
+ok(){   echo "   [PASS] $*"; P=$((P+1)); }
+no(){   echo "   [FAIL] $*"; F=$((F+1)); }
+warn(){ echo "   [WARN] $*"; W=$((W+1)); }
+hdr(){ echo; echo "======== $* ========"; }
+
+# ---- smoke scale (tunable; defaults = fast "1 rep / 1 epoch" pre-flight) -----
+# These size the SMOKE only -- the real 2h jobs keep their own REPEAT/BATCHES/RPCS.
+# The overhead study is a FIXED matrix that runs then EXITS; walltime is only a
+# ceiling, nothing runs "until 2h". Bump SMOKE_REPEAT for a repeatability check.
+SMOKE_REPEAT="${SMOKE_REPEAT:-1}"                 # reps per matrix cell
+SMOKE_C_BATCHES="${SMOKE_C_BATCHES:-0 1 512}"     # keep batch=1: proves the slow-drain path never deadlocks
+SMOKE_C_RPCS="${SMOKE_C_RPCS:-1 4}"
+SMOKE_MPI_RPCS="${SMOKE_MPI_RPCS:-1 4}"
+SMOKE_MPI_BATCHES="${SMOKE_MPI_BATCHES:-0 64}"    # MPI batch sweep for the smoke (safe set; no batch=1)
+SMOKE_NFILES="${SMOKE_NFILES:-20}"; SMOKE_NWRITES="${SMOKE_NWRITES:-10}"; SMOKE_NREADS="${SMOKE_NREADS:-5}"
+MPI_RAN=0
+
+NODES=$(sort -u "${PBS_NODEFILE:-/dev/null}" 2>/dev/null | wc -l)
+echo "############################################################"
+echo "# node=$(hostname -s)  nodes_in_alloc=$NODES  proto=${MOFKA_PROTOCOL:-?}"
+echo "# darshan: $(cd "$ROOT/darshan" && git rev-parse --short HEAD) ($(cd "$ROOT/darshan" && git branch --show-current))"
+echo "############################################################"
+
+# ------------------------------------------------------------------ [1] build
+hdr "[1] rebuild libdarshan (study build, from committed + re-wired source)"
+BLOG="$ROOT/jobs/smoke_full.build.log"
+( cd "$ROOT/darshan" && ./build.sh ) > "$BLOG" 2>&1 && echo "build.sh: OK" || echo "build.sh: NONZERO"
+LIB="$(darshan_lib)"
+if [ -n "$LIB" ] && [ -f "$LIB" ]; then ok "libdarshan built: $LIB"
+else no "no libdarshan produced (see $BLOG)"; tail -20 "$BLOG"; echo "ABORT"; exit 1; fi
+nsym=$(nm "$LIB" | grep -c mofka_connector || true)
+[ "$nsym" -eq 3 ] && ok "3 mofka connector symbols present" || no "expected 3 mofka symbols, got $nsym"
+
+# ------------------------------------------------------------- [2] batch live
+hdr "[2] batch knob is LIVE (producer honors DARSHAN_MOFKA_BATCH)"
+bash "$ROOT/server/start-server.sh" >/dev/null 2>&1 || true
+GF="$ROOT/server/mofka.json"
+if [ -f "$GF" ]; then
+    WLB="/tmp/smk_batch_$$"; mkdir -p "$WLB"
+    CENV="DARSHAN_ENABLE_NONMPI=1 DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_ENABLE_POSIX=1 DARSHAN_MOFKA_VERBOSE=1 DARSHAN_MOFKA_GROUP_FILE=$GF DARSHAN_MOFKA_TOPIC=darshan"
+    o512=$(env $CENV DARSHAN_MOFKA_BATCH=512 LD_PRELOAD="$LIB" "$ROOT/workloads/io_test" "$WLB" 2>&1)
+    o0=$( env $CENV DARSHAN_MOFKA_BATCH=0   LD_PRELOAD="$LIB" "$ROOT/workloads/io_test" "$WLB" 2>&1)
+    echo "$o512" | grep -q 'batch_size=512' && ok "DARSHAN_MOFKA_BATCH=512 -> producer batch_size=512" \
+        || { no "batch env NOT honored (re-wire failed)"; echo "$o512" | grep -i 'batch_size' || true; }
+    echo "$o0"   | grep -q 'batch_size=0'   && ok "DARSHAN_MOFKA_BATCH=0 -> batch_size=0 (adaptive)" || no "adaptive path unexpected"
+    rm -rf "$WLB"
+else
+    no "broker for batch check did not start (see server/bedrock.log)"
+fi
+bash "$ROOT/server/stop-server.sh" >/dev/null 2>&1 || true
+
+# --------------------------------------------------------------- [3] C study
+hdr "[3] single-node C study (modes x batch{$SMOKE_C_BATCHES} x rpc{$SMOKE_C_RPCS}, $SMOKE_REPEAT rep(s))"
+env REPEAT="$SMOKE_REPEAT" BATCHES="$SMOKE_C_BATCHES" MAXBS=4096 RPCS="$SMOKE_C_RPCS" \
+    IO_NFILES="$SMOKE_NFILES" IO_NWRITES="$SMOKE_NWRITES" IO_NREADS="$SMOKE_NREADS" TIMEOUT=60 \
+    bash "$ROOT/jobs/overhead_C.pbs" > "$ROOT/jobs/smoke_full.C.log" 2>&1 || true
+RC="$(cat "$ROOT/jobs/runs/.current_C" 2>/dev/null)"; CSV="$RC/results.csv"
+if [ -f "$CSV" ]; then
+    echo "   results: $CSV"; column -s, -t "$CSV" | sed 's/^/     /'
+    awk -F, 'NR>1&&$1=="mofka"&&$6>0&&$8>0&&$11>0{c++} END{exit !(c>0)}' "$CSV" \
+        && ok "capture integrity (events + send_avg + finalize populated)" || no "mofka rows missing metrics (CSV path broken)"
+    nuniq=$(awk -F, 'NR>1&&$1=="mofka"{print $6}' "$CSV" | sort -un | wc -l)
+    [ "${nuniq:-0}" -eq 1 ] && ok "event count INVARIANT across batch ('same #events' rule)" || no "event count varies across batch ($nuniq distinct)"
+    awk -F, 'NR>1&&$1=="mofka"&&$14!=0{c++} END{exit !(c>0)}' "$CSV" \
+        && no "some mofka cells rc!=0 (deadlock/timeout)" || ok "all mofka cells completed rc=0 (no deadlock)"
+    awk -F, 'NR>1&&($1=="native"||$1=="none")&&$6>0{c++} END{exit !(c>0)}' "$CSV" \
+        && no "native/none produced events (should be 0)" || ok "native/none stream nothing (clean baselines)"
+    got=$(grep -oE 'consumed [0-9]+' "$RC/progress.log" 2>/dev/null | awk '{print $2}' | sort -rn | head -1)
+    snt=$(grep -oE 'sent=[0-9]+' "$RC/progress.log" 2>/dev/null | grep -oE '[0-9]+' | sort -rn | head -1)
+    { [ -n "$got" ] && [ "$got" -gt 0 ]; } && ok "broker delivery confirmed (consumed $got / sent ${snt:-?})" || no "no delivery confirmation (consumed 0)"
+    echo "   COMPUTED overhead table (mofka vs native, averaged over reps):"
+    "$PY" "$ROOT/jobs/analyze_overhead.py" "$RC" 2>/dev/null | sed -n '/== baselines/,/delta is streaming/p' | sed 's/^/     /' || true
+else
+    no "C study produced no results.csv (see jobs/smoke_full.C.log)"; tail -25 "$ROOT/jobs/smoke_full.C.log"
+fi
+
+# ------------------------------------------------------------- [4] MPI study
+hdr "[4] multi-node MPI study (2 nodes x 128 = 256 producers, modes x rpc{$SMOKE_MPI_RPCS} x batch{$SMOKE_MPI_BATCHES}, $SMOKE_REPEAT rep(s))"
+if [ "$NODES" -ge 2 ]; then
+    MPI_RAN=1
+    env REPEAT="$SMOKE_REPEAT" RPCS="$SMOKE_MPI_RPCS" BATCHES="$SMOKE_MPI_BATCHES" PPN=128 \
+        bash "$ROOT/jobs/overhead_MPI.pbs" > "$ROOT/jobs/smoke_full.MPI.log" 2>&1 || true
+    RM="$(cat "$ROOT/jobs/runs/.current_MPI" 2>/dev/null)"; CSVM="$RM/results.csv"
+    if [ -f "$CSVM" ]; then
+        echo "   results: $CSVM"; column -s, -t "$CSVM" | sed 's/^/     /'
+        awk -F, 'NR>1&&$1=="mofka"&&$6>0&&$7>0{c++} END{exit !(c>0)}' "$CSVM" \
+            && ok "MPI capture (events + send_avg populated)" || no "MPI mofka rows missing metrics"
+        maxev=$(awk -F, 'NR>1&&$1=="mofka"{print $6}' "$CSVM" | sort -rn | head -1)
+        { [ -n "$maxev" ] && [ "$maxev" -gt 256 ]; } && ok "multi-rank streaming (max events=$maxev > 256 ranks, ~$((maxev/256))/rank)" \
+            || no "MPI events too low (max=${maxev:-0}) -- ranks not streaming?"
+        echo "   COMPUTED overhead table (mofka vs native, averaged over reps):"
+        "$PY" "$ROOT/jobs/analyze_overhead.py" "$RM" 2>/dev/null | sed -n '/== baselines/,/delta is streaming/p' | sed 's/^/     /' || true
+    else
+        no "MPI study produced no results.csv (see jobs/smoke_full.MPI.log)"; tail -25 "$ROOT/jobs/smoke_full.MPI.log"
+    fi
+else
+    warn "only $NODES node -- MPI check SKIPPED (C path validated; run on select>=2 to clear the MPI 2h job)"
+fi
+
+# ------------------------------------------------------------------- summary
+hdr "SMOKE SUMMARY: $P passed, $F failed, $W warned"
+if [ "$F" -ne 0 ]; then
+    echo ">>> $F CHECK(S) FAILED -- fix before the long run (details above)."; exit 1
+elif [ "$MPI_RAN" -eq 1 ]; then
+    echo ">>> ALL CHECKS PASSED -- cleared to submit BOTH 2h jobs (overhead_C + overhead_MPI)."; exit 0
+else
+    echo ">>> C PATH PASSED -- overhead_C cleared. MPI NOT validated -- smoke on select>=2 to clear overhead_MPI."; exit 0
+fi
