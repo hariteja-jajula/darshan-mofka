@@ -1,33 +1,27 @@
-# symlink to the fork clone (added below) — never track it
-
-# build outputs & logs created under this root
+# local builds and installs
 /darshan-install/
 /darshan-install-*/
 /darshan-logs/
+/darshan/_build*/
+/darshan/install*/
+/diaspora-stream-api/_build*/
+/diaspora-stream-api/install/
 
-# run outputs & compiled artifacts
-jobs/runs/
-jobs/*.o[0-9]*
-*.o[0-9]*
-jobs/*.log
-jobs/.*_jobid
-jobs/verify-consumer
-workloads/io_test
-workloads/io_mpi
-workloads/mpiio_test
-workloads/timing-*.log
-server/mofka.json
-server/bedrock.log
-server/bedrock.pid
-server/consume
-server/test-push
+# demo build outputs
+/workloads/mofka_forward_smoke
 
-# machine-specific
-server/env.local.sh
+# broker runtime outputs
+/server/mofka.json
+/server/bedrock.log
+/server/bedrock.pid
 
-# misc
+# machine-specific environment
+/server/env.local.sh
+
+# generated files and crashes
 *.o
+*.log
+*.pyc
 core
 core.*
-*.pyc
 __pycache__/
