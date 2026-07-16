@@ -1,0 +1,110 @@
+# flowcept_settings.template.yaml -- FlowCept ingest settings for the
+# Darshan -> Mofka -> FlowCept -> MongoDB "scale mode" of this demo.
+#
+# This is a TEMPLATE. server/capture_flowcept.sh renders it per-run into the run
+# dir, sed-substituting the placeholders below, because the mofka group_file is
+# created fresh by bedrock on each broker start and its absolute path is per-run.
+#
+# Placeholders (substituted at run time by capture_flowcept.sh):
+#   __MOFKA_GROUP__ : absolute path to this run's mofka.json (bedrock group file)
+#   __MONGO_DB__    : mongo db name to ingest into
+#   __TOPIC__       : mofka topic/channel to subscribe to -- MUST equal the
+#                     producer's DARSHAN_MOFKA_TOPIC (default "darshan") or the
+#                     consumer subscribes to the wrong topic and lands 0 docs.
+#   __ENV_ID__      : sys_metadata environment id (host/run tag)
+#
+# Why these toggles (see server/INSTRUCTIONS.md for the full rationale):
+#  - mq.type=mofka + channel=__TOPIC__ : consume darshan's own topic. The DAO
+#    (mq_dao_mofka) opens this topic at import time.
+#  - kv_db.enabled=false : no Redis on HPC compute nodes. The pinned FlowCept
+#    fork (see .gitmodules) null-guards every key-value path so it runs headless.
+#  - databases.mongodb.enabled=true : the ingest sink. lmdb disabled.
+#  - instrumentation / telemetry_capture / agent all OFF : FlowCept captures
+#    NOTHING itself here -- darshan is the sole external producer; FlowCept's
+#    DocumentInserter just drains the channel into mongo.
+
+flowcept_version: 0.10.6
+
+project:
+  debug: true                       # tags docs debug:true -> easy to find/drop
+  json_serializer: default
+  replace_non_json_serializable: true
+  performance_logging: false
+  enrich_messages: false            # darshan records carry no telemetry_at_*; skip
+  db_flush_mode: online             # flush to mongo before teardown
+  dump_buffer:
+    enabled: false
+
+log:
+  log_path: "default"
+  log_file_level: info              # info so ingest flushes show in consumer.log
+  log_stream_level: info
+
+telemetry_capture:
+  gpu: ~
+  cpu: false
+  per_cpu: false
+  process_info: false
+  mem: false
+  disk: false
+  network: false
+  machine_info: false
+
+instrumentation:
+  enabled: false                    # flowcept instruments nothing; darshan is the producer
+
+experiment:
+  user: darshan-mofka
+
+mq:
+  enabled: true
+  type: mofka
+  channel: __TOPIC__                 # MUST match the producer's DARSHAN_MOFKA_TOPIC
+  group_file: __MOFKA_GROUP__
+  host: localhost                   # unused by mofka driver (group_file carries the address)
+  port: 6379
+  buffer_size: 50
+  insertion_buffer_time_secs: 5
+  timing: false
+  chunk_size: -1
+  same_as_kvdb: false
+
+kv_db:
+  enabled: false                    # no Redis; the pinned fork null-guards this path
+  host: localhost
+  port: 6379
+
+web_server:
+  host: 0.0.0.0
+  port: 5000
+
+sys_metadata:
+  environment_id: "__ENV_ID__"
+
+extra_metadata:
+  pipeline: "darshan-mofka-flowcept-ingest"
+
+db_buffer:
+  insertion_buffer_time_secs: 5
+  buffer_size: 50
+  remove_empty_fields: false
+  stop_max_trials: 300
+  stop_trials_sleep: 0.1
+
+agent:
+  enabled: false
+
+databases:
+  lmdb:
+    enabled: false
+    path: flowcept_lmdb
+  mongodb:
+    enabled: true
+    host: localhost
+    port: 27017
+    db: __MONGO_DB__
+    create_collection_index: true
+
+# No flowcept adapters: darshan is an external producer publishing straight to
+# the mofka topic; DocumentInserter consumes the channel directly.
+adapters: {}

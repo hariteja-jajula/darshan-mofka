@@ -4,3 +4,7 @@
 [submodule "diaspora-stream-api"]
 	path = diaspora-stream-api
 	url = https://github.com/hariteja-jajula/diaspora-stream-api.git
+[submodule "flowcept"]
+	path = flowcept
+	url = https://github.com/hariteja-jajula/flowcept.git
+	branch = experiment/f1-v2-unpack-batches
