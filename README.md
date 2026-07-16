@@ -236,7 +236,27 @@ If you see `POSIX`, `STDIO`, and read/write operations, the full path worked:
 C workload -> Darshan connector -> Mofka topic -> capture.py consumer -> JSONL file
 ```
 
-## 8. Stop Server
+## 8. Reconstruct A Partial Darshan Log
+
+If the normal Darshan shutdown path fails and no final `.darshan` log is produced,
+the captured stream can be converted into a best-effort partial Darshan log:
+
+```bash
+./darshan/install/bin/darshan-mofka-reconstruct \
+  /tmp/darshan-mofka-events.jsonl \
+  /tmp/job_partial.darshan
+```
+
+Validate the reconstructed log with Darshan's parser:
+
+```bash
+./darshan/install/bin/darshan-parser --show-incomplete /tmp/job_partial.darshan | head -80
+```
+
+The reconstructed log is intentionally marked partial. It contains the latest module
+record snapshots that reached Mofka, plus synthetic job/exe/mount metadata.
+
+## 9. Stop Server
 
 Stop the broker when done:
 
@@ -277,6 +297,12 @@ cat /tmp/darshan-mofka-capture.count
 grep '"module":"POSIX"' /tmp/darshan-mofka-events.jsonl | head
 grep '"module":"STDIO"' /tmp/darshan-mofka-events.jsonl | head
 grep -E '"op":"(read|write)"' /tmp/darshan-mofka-events.jsonl | head
+
+./darshan/install/bin/darshan-mofka-reconstruct \
+  /tmp/darshan-mofka-events.jsonl \
+  /tmp/job_partial.darshan
+./darshan/install/bin/darshan-parser --show-incomplete /tmp/job_partial.darshan | head -80
+
 bash server/stop-server.sh
 ```
 
