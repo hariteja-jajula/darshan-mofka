@@ -2,62 +2,61 @@
 
 Minimal demo for streaming Darshan runtime I/O events into a Mofka topic.
 
-This repo keeps the demo small on purpose: build the Darshan fork, start a local
-Mofka broker, run one tiny C workload under `LD_PRELOAD`, then consume the JSON
-metadata events with `server/capture.py`.
+The demo runs one small C program under `LD_PRELOAD=libdarshan.so`. Darshan
+intercepts the program's POSIX/STDIO I/O calls, builds JSON metadata events, pushes
+them to Mofka, and `server/capture.py` consumes those events back out of the topic.
 
-## Layout
+## Repository Layout
 
 ```text
 darshan-mofka/
-├── darshan/              submodule: Darshan fork with the Mofka connector
-├── diaspora-stream-api/  submodule: Diaspora C bindings used by the connector
-├── server/               env, broker start/stop, and capture consumer
-└── workloads/            one C smoke workload
+├── darshan/              Darshan submodule with the Mofka connector
+├── diaspora-stream-api/  Diaspora C API submodule used by the connector
+├── server/               environment, broker start/stop, capture consumer
+└── workloads/            demo workload: mofka_forward_smoke.c
 ```
 
-The old overhead-study workloads, PBS jobs, slides, and generated result files are
-not on this clean branch. They can be recovered from the old study branch if needed.
+The old overhead-study jobs, result scripts, slides, and extra workloads were cut
+from this branch. Recover them from the study branch if needed.
 
-## Requirements
+## 1. Prepare Environment
 
-You need a Mochi/Mofka software environment that provides:
+From the repository root:
 
-- `bedrock`
-- `mochi.mofka` Python bindings
-- `mofkactl`
-- a C compiler
+```bash
+git submodule update --init --recursive
+source server/env.sh
+```
 
-You also need the `diaspora-stream-api` C install available through `DIASPORA_C`.
-The default `server/env.sh` auto-discovers common in-tree install locations, but
-cluster-specific module loads and paths should go in `server/env.local.sh`.
+Check that the main tools are visible:
 
-Start from the example:
+```bash
+command -v bedrock
+command -v cc
+"$PY" - <<'PY'
+import mochi.mofka.client
+print("mochi.mofka import OK")
+PY
+printf 'MOFKA_PROTOCOL=%s\n' "$MOFKA_PROTOCOL"
+printf 'DIASPORA_C=%s\n' "$DIASPORA_C"
+printf 'DARSHAN_PREFIX=%s\n' "$DARSHAN_PREFIX"
+```
+
+If those paths are wrong, create a local machine config:
 
 ```bash
 cp server/env.local.sh.example server/env.local.sh
 ```
 
-Then edit `server/env.local.sh` for the machine if auto-discovery is not enough.
-That file is intentionally ignored by git.
+Then edit `server/env.local.sh` to load modules or set paths for your cluster.
+`server/env.local.sh` is ignored by git.
 
-## Build
+## 2. Build Dependencies
 
-Clone with submodules or initialize them after cloning:
-
-```bash
-git submodule update --init --recursive
-```
-
-Source the environment:
+If `diaspora-stream-api/install` already exists, skip this step.
 
 ```bash
 source server/env.sh
-```
-
-If `diaspora-stream-api/install` does not exist yet, build the C bindings:
-
-```bash
 cd diaspora-stream-api
 cmake -S . -B _build -DENABLE_C_API=ON \
       -DCMAKE_PREFIX_PATH="$MOFKA_SPACK_VIEW" \
@@ -67,7 +66,15 @@ cmake --install _build
 cd ..
 ```
 
-Build Darshan with the Mofka connector:
+Refresh the environment after building Diaspora:
+
+```bash
+source server/env.sh
+```
+
+## 3. Build Darshan And The Demo Workload
+
+Build the Darshan fork with Mofka support:
 
 ```bash
 source server/env.sh
@@ -76,22 +83,49 @@ cd darshan
 cd ..
 ```
 
-Build the demo workload:
+Build the workload:
 
 ```bash
 cc -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 ```
 
-## Run Demo
+Confirm the Darshan library path:
 
-Start a local Mofka broker and create the `darshan` topic:
+```bash
+source server/env.sh
+darshan_lib
+```
+
+Expected: a path ending in `darshan/install/lib/libdarshan.so`.
+
+## 4. Start Mofka Server
+
+Start the local Bedrock/Mofka broker and create the `darshan` topic:
 
 ```bash
 source server/env.sh
 bash server/start-server.sh
 ```
 
-Run the workload under Darshan:
+Expected output looks like:
+
+```text
+starting bedrock (...) in .../server ...
+mofka up: ... | topic 'darshan' | groupfile .../server/mofka.json (pid ...)
+```
+
+The important file is:
+
+```bash
+ls -l server/mofka.json
+```
+
+That group file is what the Darshan connector and the consumer both use to connect
+to the same Mofka server.
+
+## 5. Run The Darshan-Instrumented Workload
+
+Run the C workload under Darshan and enable Mofka streaming:
 
 ```bash
 source server/env.sh
@@ -107,38 +141,161 @@ env \
   DARSHAN_MOFKA_MAX_BATCHES=64 \
   DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
   LD_PRELOAD="$(darshan_lib)" \
-  ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke
+  ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke \
+  > /tmp/darshan-mofka-workload.out \
+  2> /tmp/darshan-mofka-workload.err
 ```
 
-Capture streamed events from Mofka:
+Check that the workload ran:
 
 ```bash
+cat /tmp/darshan-mofka-workload.out
+```
+
+Expected:
+
+```text
+mofka_forward_smoke complete: wrote/read POSIX and STDIO files in /tmp/mofka-forward-smoke
+```
+
+Check that the connector sent events:
+
+```bash
+grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-workload.err | wc -l
+```
+
+Expected: a nonzero count. In the simple login-node smoke run this was `12`.
+
+## 6. Capture Events From Mofka
+
+Use the consumer in `server/capture.py` to drain the `darshan` topic to JSONL:
+
+```bash
+source server/env.sh
+
 timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
   > /tmp/darshan-mofka-events.jsonl \
   2> /tmp/darshan-mofka-capture.count
+```
 
+Print the captured count:
+
+```bash
 cat /tmp/darshan-mofka-capture.count
+```
+
+Expected:
+
+```text
+captured N
+```
+
+where `N` is nonzero. The earlier simple smoke run captured `12` events.
+
+## 7. Verify The Captured Events
+
+Check for POSIX events:
+
+```bash
 grep '"module":"POSIX"' /tmp/darshan-mofka-events.jsonl | head
+```
+
+Check for STDIO events:
+
+```bash
 grep '"module":"STDIO"' /tmp/darshan-mofka-events.jsonl | head
+```
+
+Check for read/write operations:
+
+```bash
 grep -E '"op":"(read|write)"' /tmp/darshan-mofka-events.jsonl | head
 ```
 
-Stop the broker:
+A compact summary is often easier to read:
+
+```bash
+"$PY" - <<'PY'
+import json
+from collections import Counter
+mods = Counter()
+ops = Counter()
+with open('/tmp/darshan-mofka-events.jsonl') as f:
+    for line in f:
+        ev = json.loads(line)
+        mods[ev.get('module')] += 1
+        ops[ev.get('op')] += 1
+print('modules:', dict(mods))
+print('ops:', dict(ops))
+PY
+```
+
+If you see `POSIX`, `STDIO`, and read/write operations, the full path worked:
+
+```text
+C workload -> Darshan connector -> Mofka topic -> capture.py consumer -> JSONL file
+```
+
+## 8. Stop Server
+
+Stop the broker when done:
 
 ```bash
 bash server/stop-server.sh
 ```
 
-Expected result: `capture.py` reports a nonzero event count and the JSONL contains
-POSIX and STDIO records from `mofka_forward_smoke.c`.
+## One-Shot Command Block
 
-## Connector Environment
+After everything has been built once, this block runs the full demo:
 
-These variables are read in the Darshan-instrumented process:
+```bash
+source server/env.sh
+bash server/start-server.sh
+cc -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
+darshan_ensure_logdir
+
+env \
+  DARSHAN_ENABLE_NONMPI=1 \
+  DARSHAN_MOFKA_ENABLE=1 \
+  DARSHAN_MOFKA_GROUP_FILE="$ROOT/server/mofka.json" \
+  DARSHAN_MOFKA_TOPIC=darshan \
+  DARSHAN_MOFKA_TIMING=1 \
+  DARSHAN_MOFKA_BATCH=0 \
+  DARSHAN_MOFKA_MAX_BATCHES=64 \
+  DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
+  LD_PRELOAD="$(darshan_lib)" \
+  ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke \
+  > /tmp/darshan-mofka-workload.out \
+  2> /tmp/darshan-mofka-workload.err
+
+timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
+  > /tmp/darshan-mofka-events.jsonl \
+  2> /tmp/darshan-mofka-capture.count
+
+cat /tmp/darshan-mofka-workload.out
+cat /tmp/darshan-mofka-capture.count
+grep '"module":"POSIX"' /tmp/darshan-mofka-events.jsonl | head
+grep '"module":"STDIO"' /tmp/darshan-mofka-events.jsonl | head
+grep -E '"op":"(read|write)"' /tmp/darshan-mofka-events.jsonl | head
+bash server/stop-server.sh
+```
+
+## What Gets Streamed
+
+The connector streams JSON metadata events. It does not stream the application's
+actual file contents.
+
+The `rec_hex` field, when present, is a hex-encoded copy of Darshan's internal
+module record at the time of the event. It is profiling/record state, not user file
+data.
+
+## Connector Environment Variables
+
+Variables read by the Darshan-instrumented process:
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `DARSHAN_MOFKA_ENABLE` | Enables Mofka streaming in Darshan | off |
+| `DARSHAN_MOFKA_ENABLE` | Enables Mofka streaming | off |
 | `DARSHAN_MOFKA_GROUP_FILE` | Mofka group file, usually `server/mofka.json` | required |
 | `DARSHAN_MOFKA_TOPIC` | Topic name | `darshan` |
 | `DARSHAN_MOFKA_BATCH` | Producer batch size; `0` means adaptive | `0` |
@@ -147,11 +304,34 @@ These variables are read in the Darshan-instrumented process:
 | `DARSHAN_MOFKA_TIMING` | Print per-call timing lines | off |
 | `DARSHAN_MOFKA_VERBOSE` | Print connector setup details | off |
 
-There are no per-module enable variables on this branch. If Darshan calls the
-Mofka send hook, the connector forwards the event.
+There are no per-module enable variables on this branch. If Darshan calls the Mofka
+send hook, the connector forwards the event.
 
-## What Is Streamed
+## Troubleshooting
 
-Darshan sends JSON metadata events to Mofka. The connector does not stream the
-application's actual file data. The optional `rec_hex` field is a hex-encoded
-snapshot of Darshan's internal module record, not the file contents.
+If `server/mofka.json` is missing after starting the server, check:
+
+```bash
+cat server/bedrock.log
+```
+
+If `capture.py` captures zero events, check that the workload actually sent events:
+
+```bash
+grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-workload.err | wc -l
+```
+
+If that count is zero, check that `LD_PRELOAD` points at the Darshan build:
+
+```bash
+darshan_lib
+```
+
+If Python cannot import Mofka, check `$PY`, `$PYTHONPATH`, and `server/env.local.sh`:
+
+```bash
+"$PY" - <<'PY'
+import mochi.mofka.client
+print('OK')
+PY
+```
