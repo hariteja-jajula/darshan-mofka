@@ -1,147 +1,157 @@
 # darshan-mofka
 
-Workloads and overhead measurement for the Darshan → Mofka connector. Runs a workload
-under Darshan, streams its I/O records to a Mofka broker, and measures the streaming
-overhead. Requires an existing Darshan build, diaspora-c install, and mofka/mochi stack;
-builds none of them.
+Minimal demo for streaming Darshan runtime I/O events into a Mofka topic.
 
-## Overhead study
-
-Each workload runs in three modes:
-
-- `none`   — no Darshan (baseline wall time)
-- `native` — Darshan logging to a `.darshan` file, no streaming
-- `mofka`  — Darshan streaming every I/O op to the broker
-
-Streaming overhead is `mofka` minus `native`. The workload (`io_ckpt.*`) is a checkpoint
-app: compute epochs with periodic bounded checkpoint I/O (write, fsync, read-back) to
-`/tmp`. The study sweeps producer batch size {0, 1, 64}, 5 repeats per cell; the MPI job
-omits batch 1 (uses {0, 64}) to avoid deadlock at 256 producers.
-`jobs/analyze_overhead.py` reduces each run to `SUMMARY_AUTO.md`; `slides/` renders the
-tables.
+This repo keeps the demo small on purpose: build the Darshan fork, start a local
+Mofka broker, run one tiny C workload under `LD_PRELOAD`, then consume the JSON
+metadata events with `server/capture.py`.
 
 ## Layout
 
-```
+```text
 darshan-mofka/
-├── darshan/              submodule — connector fork
-│                         branches: darshan-mofka (per-op), darshan-aggregate (aggregate)
-├── diaspora-stream-api/  submodule — diaspora-c source
-├── workloads/            io_ckpt.c/.py, io_mpi_ckpt.c, io_test
-├── jobs/                 PBS jobs, analyze_overhead.py
-├── server/               broker start/stop, capture.py
-└── slides/               result tables
+├── darshan/              submodule: Darshan fork with the Mofka connector
+├── diaspora-stream-api/  submodule: Diaspora C bindings used by the connector
+├── server/               env, broker start/stop, and capture consumer
+└── workloads/            one C smoke workload
 ```
 
-Clone with `--recursive` (or `git submodule update --init --recursive`). The submodules
-pin the Darshan and diaspora-c source commits; their installs live outside git and are
-referenced by env vars.
+The old overhead-study workloads, PBS jobs, slides, and generated result files are
+not on this clean branch. They can be recovered from the old study branch if needed.
 
-## Dependencies
+## Requirements
 
-Referenced by env var; not built here.
+You need a Mochi/Mofka software environment that provides:
 
-| Dependency | Env var | Notes |
-|---|---|---|
-| diaspora-c install | `DIASPORA_C` | dir with `include/diaspora/diaspora_c.h`, `lib/libdiaspora-c.so` |
-| mofka / mochi stack | `MOFKA_SPACK_VIEW` | spack view with `bedrock`, `mofkactl`, python + `mochi.mofka` |
-| darshan install | `DARSHAN_PREFIX` | dir with `lib/libdarshan.so` (from `darshan/build.sh`) |
-| C compiler | `CC` / `module load` | Improv: `module load gcc/13.2.0`, matching diaspora-c |
+- `bedrock`
+- `mochi.mofka` Python bindings
+- `mofkactl`
+- a C compiler
 
-## Build order
+You also need the `diaspora-stream-api` C install available through `DIASPORA_C`.
+The default `server/env.sh` auto-discovers common in-tree install locations, but
+cluster-specific module loads and paths should go in `server/env.local.sh`.
 
-`mofka/mochi stack → diaspora-c → darshan → workloads`. Steps 1–2 are skippable if the
-stack or diaspora-c already exist; re-point the env vars instead.
-
-1. **mofka/mochi stack (spack).** Provides `bedrock`, `mofkactl`, python, and the deps
-   for diaspora-c. Install with spack and expose as a view at `$MOFKA_SPACK_VIEW`.
-
-2. **diaspora-c** (in `diaspora-stream-api`):
-   ```bash
-   cd diaspora-stream-api
-   cmake -S . -B _build -DENABLE_C_API=ON \
-         -DCMAKE_PREFIX_PATH="$MOFKA_SPACK_VIEW" -DCMAKE_INSTALL_PREFIX=$PWD/install
-   cmake --build _build -j && cmake --install _build     # DIASPORA_C = ./install
-   ```
-
-3. **darshan** — see [Build darshan](#build-darshan) (needs `$DIASPORA_C`).
-
-4. **workloads** — configure and run (below).
-
-## Configure
-
-`server/env.sh` derives the repo root from its own location, sources the optional
-`server/env.local.sh` (per-machine, git-ignored), then auto-discovers the install paths —
-`MOFKA_SPACK_VIEW`, `DIASPORA_C`, `DARSHAN_PREFIX`, `PY` — in conventional locations (the
-`_discover` calls in `env.sh`). `DIASPORA_C` points at the install root: the directory
-containing `include/` and `lib/` (e.g. `diaspora-stream-api/install`, or
-`../diaspora-c-install-fork`), not a subdirectory.
-
-`env.local.sh` holds only what can't be discovered — module loads and transport. Copy it
-from `env.local.sh.example`:
+Start from the example:
 
 ```bash
-# server/env.local.sh
-module load gcc/13.2.0 openmpi/4.1.8
-export MOFKA_PROTOCOL=verbs        # verbs (IB); env.sh defaults to ofi+tcp; not ofi+verbs (times out)
+cp server/env.local.sh.example server/env.local.sh
 ```
 
-Override discovery only when it fails: set the variable in the environment before
-sourcing, e.g. `DIASPORA_C=/path/to/install`.
+Then edit `server/env.local.sh` for the machine if auto-discovery is not enough.
+That file is intentionally ignored by git.
 
-## Build darshan
+## Build
+
+Clone with submodules or initialize them after cloning:
 
 ```bash
-cd darshan && git checkout darshan-mofka       # darshan-mofka or darshan-aggregate
-DIASPORA_C=$DIASPORA_C ./build.sh              # -> darshan/install
+git submodule update --init --recursive
+```
+
+Source the environment:
+
+```bash
+source server/env.sh
+```
+
+If `diaspora-stream-api/install` does not exist yet, build the C bindings:
+
+```bash
+cd diaspora-stream-api
+cmake -S . -B _build -DENABLE_C_API=ON \
+      -DCMAKE_PREFIX_PATH="$MOFKA_SPACK_VIEW" \
+      -DCMAKE_INSTALL_PREFIX="$PWD/install"
+cmake --build _build -j
+cmake --install _build
 cd ..
 ```
 
-## Run
+Build Darshan with the Mofka connector:
 
-Single node:
 ```bash
-cd server && ./start-server.sh          # start the broker
-cd ../workloads && ./run.sh             # io_test under Darshan -> mofka
+source server/env.sh
+cd darshan
+./build.sh
+cd ..
 ```
 
-Overhead study (PBS), one job per language:
+Build the demo workload:
+
 ```bash
-cd jobs
-qsub overhead_CKPT_C.pbs                # io_ckpt.c,     single node
-qsub overhead_CKPT_PY.pbs               # io_ckpt.py,    single node
-qsub overhead_CKPT_MPI.pbs              # io_mpi_ckpt.c, multi-node
+cc -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 ```
-Knobs default in-script; override per submit, e.g.
-`qsub -v EPOCH_COMPUTE_S=1.45 overhead_CKPT_C.pbs` (see the study-matrix block at the top
-of each script). Output goes to `jobs/runs/<stamp>/`: `results.csv`, `SUMMARY_AUTO.md`,
-`overhead_summary.csv`. Regenerate the deck with `python3 slides/build_slides.py` (writes
-`slides/overhead_tables.html`).
 
-## Connector env vars
+## Run Demo
 
-Read by the connector on the Darshan process; see `workloads/run.sh`.
+Start a local Mofka broker and create the `darshan` topic:
 
-| var | controls | default |
+```bash
+source server/env.sh
+bash server/start-server.sh
+```
+
+Run the workload under Darshan:
+
+```bash
+source server/env.sh
+darshan_ensure_logdir
+
+env \
+  DARSHAN_ENABLE_NONMPI=1 \
+  DARSHAN_MOFKA_ENABLE=1 \
+  DARSHAN_MOFKA_GROUP_FILE="$ROOT/server/mofka.json" \
+  DARSHAN_MOFKA_TOPIC=darshan \
+  DARSHAN_MOFKA_TIMING=1 \
+  DARSHAN_MOFKA_BATCH=0 \
+  DARSHAN_MOFKA_MAX_BATCHES=64 \
+  DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
+  LD_PRELOAD="$(darshan_lib)" \
+  ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke
+```
+
+Capture streamed events from Mofka:
+
+```bash
+timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
+  > /tmp/darshan-mofka-events.jsonl \
+  2> /tmp/darshan-mofka-capture.count
+
+cat /tmp/darshan-mofka-capture.count
+grep '"module":"POSIX"' /tmp/darshan-mofka-events.jsonl | head
+grep '"module":"STDIO"' /tmp/darshan-mofka-events.jsonl | head
+grep -E '"op":"(read|write)"' /tmp/darshan-mofka-events.jsonl | head
+```
+
+Stop the broker:
+
+```bash
+bash server/stop-server.sh
+```
+
+Expected result: `capture.py` reports a nonzero event count and the JSONL contains
+POSIX and STDIO records from `mofka_forward_smoke.c`.
+
+## Connector Environment
+
+These variables are read in the Darshan-instrumented process:
+
+| Variable | Meaning | Default |
 |---|---|---|
-| `DARSHAN_MOFKA_ENABLE` | master switch | off |
-| `DARSHAN_MOFKA_GROUP_FILE` | mofka group file | required |
-| `DARSHAN_MOFKA_TOPIC` | topic | `darshan` |
-| `DARSHAN_MOFKA_ENABLE_{POSIX,STDIO,MPIIO,HDF5}` | per-module streaming | off |
-| `DARSHAN_MOFKA_BATCH` | producer batch size (0 = adaptive) | `0` (`MOFKA_BATCH_SIZE`) |
-| `DARSHAN_MOFKA_MAX_BATCHES` | max in-flight batches; must be ≥ events/run or the producer can deadlock | `0` |
-| `DARSHAN_MOFKA_FLUSH_MS` | finalize flush timeout, ms | `5000` |
-| `DARSHAN_MOFKA_TIMING` | emit per-op send-timing lines | off |
-| `DARSHAN_MOFKA_VERBOSE` | verbose logging | off |
+| `DARSHAN_MOFKA_ENABLE` | Enables Mofka streaming in Darshan | off |
+| `DARSHAN_MOFKA_GROUP_FILE` | Mofka group file, usually `server/mofka.json` | required |
+| `DARSHAN_MOFKA_TOPIC` | Topic name | `darshan` |
+| `DARSHAN_MOFKA_BATCH` | Producer batch size; `0` means adaptive | `0` |
+| `DARSHAN_MOFKA_MAX_BATCHES` | Max pending batches; `0` means library default | `0` |
+| `DARSHAN_MOFKA_FLUSH_MS` | Finalize flush timeout in milliseconds | `5000` |
+| `DARSHAN_MOFKA_TIMING` | Print per-call timing lines | off |
+| `DARSHAN_MOFKA_VERBOSE` | Print connector setup details | off |
 
-## Infrastructure env vars
+There are no per-module enable variables on this branch. If Darshan calls the
+Mofka send hook, the connector forwards the event.
 
-`env.sh` auto-discovers these; set one explicitly only to override discovery.
+## What Is Streamed
 
-| var | points at | discovered at |
-|---|---|---|
-| `DIASPORA_C` | diaspora-c install root (`include/`, `lib/`) | `diaspora-stream-api/install`, else `../diaspora-c-install-fork` |
-| `MOFKA_SPACK_VIEW` | mofka/mochi spack view | `mofka-view` (up to two levels up) |
-| `DARSHAN_PREFIX` | darshan install | `darshan/install` |
-| `DARSHAN_LOGPATH` | native `.darshan` log dir | `darshan-logs` |
-| `MOFKA_PROTOCOL` | transport | env.local.sh sets `verbs`; env.sh default `ofi+tcp` (not `ofi+verbs`) |
+Darshan sends JSON metadata events to Mofka. The connector does not stream the
+application's actual file data. The optional `rec_hex` field is a hex-encoded
+snapshot of Darshan's internal module record, not the file contents.
