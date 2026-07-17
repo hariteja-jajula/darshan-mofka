@@ -21,16 +21,17 @@ from this branch. Recover them from the study branch if needed.
 
 ## 1. Prepare Environment
 
-From the repository root:
+From the repository root on LCRC/Improv:
 
 ```bash
 git submodule update --init --recursive
-source server/env.sh
+DARSHAN_MOFKA_ENV=lcrc source server/env.sh
 ```
 
 Check that the main tools are visible:
 
 ```bash
+printf 'MOFKA_SPACK_VIEW=%s\n' "$MOFKA_SPACK_VIEW"
 command -v bedrock
 command -v cc
 "$PY" - <<'PY'
@@ -42,10 +43,12 @@ printf 'DIASPORA_C=%s\n' "$DIASPORA_C"
 printf 'DARSHAN_PREFIX=%s\n' "$DARSHAN_PREFIX"
 ```
 
-If those paths are wrong, create a local machine config:
+For other systems, either set `DARSHAN_MOFKA_ENV` to another committed profile
+or create a local machine config:
 
 ```bash
 cp server/env.local.sh.example server/env.local.sh
+source server/env.sh
 ```
 
 Then edit `server/env.local.sh` to load modules or set paths for your cluster.
@@ -56,7 +59,7 @@ Then edit `server/env.local.sh` to load modules or set paths for your cluster.
 If `diaspora-stream-api/install` already exists, skip this step.
 
 ```bash
-source server/env.sh
+DARSHAN_MOFKA_ENV=lcrc source server/env.sh
 cd diaspora-stream-api
 cmake -S . -B _build -DENABLE_C_API=ON \
       -DCMAKE_PREFIX_PATH="$MOFKA_SPACK_VIEW" \
@@ -69,7 +72,7 @@ cd ..
 Refresh the environment after building Diaspora:
 
 ```bash
-source server/env.sh
+DARSHAN_MOFKA_ENV=lcrc source server/env.sh
 ```
 
 ## 3. Build Darshan And The Demo Workload
@@ -77,7 +80,7 @@ source server/env.sh
 Build the Darshan fork with Mofka support:
 
 ```bash
-source server/env.sh
+DARSHAN_MOFKA_ENV=lcrc source server/env.sh
 cd darshan
 ./build.sh
 cd ..
@@ -92,7 +95,7 @@ cc -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 Confirm the Darshan library path:
 
 ```bash
-source server/env.sh
+DARSHAN_MOFKA_ENV=lcrc source server/env.sh
 darshan_lib
 ```
 
@@ -103,7 +106,7 @@ Expected: a path ending in `darshan/install/lib/libdarshan.so`.
 Start the local Bedrock/Mofka broker and create the `darshan` topic:
 
 ```bash
-source server/env.sh
+DARSHAN_MOFKA_ENV=lcrc source server/env.sh
 bash server/start-server.sh
 ```
 
@@ -128,7 +131,7 @@ to the same Mofka server.
 Run the C workload under Darshan and enable Mofka streaming:
 
 ```bash
-source server/env.sh
+DARSHAN_MOFKA_ENV=lcrc source server/env.sh
 darshan_ensure_logdir
 
 env \
@@ -171,7 +174,7 @@ Expected: a nonzero count. In the simple login-node smoke run this was `12`.
 Use the consumer in `server/capture.py` to drain the `darshan` topic to JSONL:
 
 ```bash
-source server/env.sh
+DARSHAN_MOFKA_ENV=lcrc source server/env.sh
 
 timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
   > /tmp/darshan-mofka-events.jsonl \
@@ -269,7 +272,7 @@ bash server/stop-server.sh
 After everything has been built once, this block runs the full demo:
 
 ```bash
-source server/env.sh
+DARSHAN_MOFKA_ENV=lcrc source server/env.sh
 bash server/start-server.sh
 cc -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 darshan_ensure_logdir
