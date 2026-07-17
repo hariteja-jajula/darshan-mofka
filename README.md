@@ -64,11 +64,13 @@ cmake --install _build
 cd ..
 ```
 
-Refresh the environment after building Diaspora, then confirm Python can import Mofka:
+Refresh the environment after building Diaspora. This is required because the install step creates `diaspora-stream-api/install/lib/python3.14/site-packages`, which must be on `PYTHONPATH` for Mofka's Python client to import `pydiaspora_stream_api`.
 
 ```bash
 source server/env.sh --lcrc
+printf 'PYTHONPATH=%s\n' "$PYTHONPATH"
 "$PY" - <<'PY'
+import pydiaspora_stream_api
 import mochi.mofka.client
 print("mochi.mofka import OK")
 PY
