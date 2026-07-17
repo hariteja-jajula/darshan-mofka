@@ -68,6 +68,8 @@ Refresh the environment after building Diaspora. This is required because the in
 
 ```bash
 source server/env.sh --lcrc
+printf 'PY=%s\n' "$PY"
+"$PY" -VV
 printf 'PYTHONPATH=%s\n' "$PYTHONPATH"
 "$PY" - <<'PY'
 import pydiaspora_stream_api
