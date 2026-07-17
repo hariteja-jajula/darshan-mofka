@@ -20,7 +20,7 @@ fi
 # Keep paths user-independent by deriving from $HOME.
 export DIASPORA_C="${DIASPORA_C:-$HOME/diaspora-c-install}"
 export DARSHAN_PREFIX="${DARSHAN_PREFIX:-$ROOT/darshan/install}"
-export MOFKA_PROTOCOL="${MOFKA_PROTOCOL:-verbs}"
+export MOFKA_PROTOCOL=verbs
 
 # Ask Spack for the exact Mofka prefix when available. This provides bedrock,
 # mofkactl, CMake package files, and the Python mochi.mofka package.
@@ -28,6 +28,9 @@ if command -v spack >/dev/null 2>&1; then
     _mofka_prefix="$(spack location -i mofka+python 2>/dev/null || true)"
     if [[ -n "$_mofka_prefix" && -d "$_mofka_prefix" ]]; then
         export MOFKA_SPACK_VIEW="${MOFKA_SPACK_VIEW:-$_mofka_prefix}"
-        export MOFKA_PYTHONPATH="${MOFKA_PYTHONPATH:-$_mofka_prefix/lib/python3.14/site-packages}"
+        _python_site="$_mofka_prefix/lib/python3.14/site-packages"
+        _diaspora_python_site="$DIASPORA_C/lib/python3.14/site-packages"
+        [[ -d "$_diaspora_python_site" ]] && _python_site="$_diaspora_python_site:$_python_site"
+        export MOFKA_PYTHONPATH="${MOFKA_PYTHONPATH:-$_python_site}"
     fi
 fi
