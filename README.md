@@ -59,9 +59,8 @@ Then edit `server/env.local.sh` to load modules or set paths for your cluster.
 If `diaspora-stream-api/install` already exists, skip this step.
 
 ```bash
-source server/env.sh --lcrc
 cd diaspora-stream-api
-cmake -S . -B _build -DENABLE_C_API=ON \
+cmake -S . -B _build -DENABLE_C_API=ON -DENABLE_PYTHON=ON \
       -DCMAKE_PREFIX_PATH="$MOFKA_SPACK_VIEW" \
       -DCMAKE_INSTALL_PREFIX="$PWD/install"
 cmake --build _build -j
@@ -80,7 +79,6 @@ source server/env.sh --lcrc
 Build the Darshan fork with Mofka support:
 
 ```bash
-source server/env.sh --lcrc
 cd darshan
 ./build.sh
 cd ..
@@ -95,7 +93,6 @@ cc -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 Confirm the Darshan library path:
 
 ```bash
-source server/env.sh --lcrc
 darshan_lib
 ```
 
@@ -106,7 +103,6 @@ Expected: a path ending in `darshan/install/lib/libdarshan.so`.
 Start the local Bedrock/Mofka broker and create the `darshan` topic:
 
 ```bash
-source server/env.sh --lcrc
 bash server/start-server.sh
 ```
 
@@ -131,7 +127,6 @@ to the same Mofka server.
 Run the C workload under Darshan and enable Mofka streaming:
 
 ```bash
-source server/env.sh --lcrc
 darshan_ensure_logdir
 
 env \
@@ -174,8 +169,6 @@ Expected: a nonzero count. In the simple login-node smoke run this was `12`.
 Use the consumer in `server/capture.py` to drain the `darshan` topic to JSONL:
 
 ```bash
-source server/env.sh --lcrc
-
 timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
   > /tmp/darshan-mofka-events.jsonl \
   2> /tmp/darshan-mofka-capture.count
