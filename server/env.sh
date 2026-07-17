@@ -18,9 +18,13 @@ ROOT="${INTERNSHIP_ROOT:-$(cd "$SERVER_DIR/.." && pwd)}"
 export ROOT SERVER_DIR
 
 # --- per-machine overrides ----------------------------------------------------
-# Sourced if present. This is where MOFKA_SPACK_VIEW / DIASPORA_C / PYPREFIX /
-# MOFKA_PYTHONPATH / module loads / MPIEXEC live for THIS cluster.
-if [[ -f "$SERVER_DIR/env.local.sh" ]]; then
+# Select a committed cluster profile with DARSHAN_MOFKA_ENV=lcrc, or keep using
+# an uncommitted env.local.sh for one-off local overrides.
+if [[ -n "${DARSHAN_MOFKA_ENV:-}" ]]; then
+    _cluster_env="$SERVER_DIR/env_${DARSHAN_MOFKA_ENV}.sh"
+    [[ -f "$_cluster_env" ]] || { echo "[env] missing $_cluster_env" >&2; return 1; }
+    source "$_cluster_env"
+elif [[ -f "$SERVER_DIR/env.local.sh" ]]; then
     source "$SERVER_DIR/env.local.sh"
 fi
 
