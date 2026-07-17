@@ -93,7 +93,13 @@ if [[ -n "$PYPREFIX" ]]; then
     _prepend PATH            "$PYPREFIX/bin"
     _prepend LD_LIBRARY_PATH "$PYPREFIX/lib"
 fi
-[[ -n "$MOFKA_PYTHONPATH" ]] && export PYTHONPATH="$MOFKA_PYTHONPATH:${PYTHONPATH:-}"
+if [[ -n "$MOFKA_PYTHONPATH" ]]; then
+    _clean_pythonpath=":${PYTHONPATH:-}:"
+    _clean_pythonpath="${_clean_pythonpath//:$MOFKA_PYTHONPATH:/:}"
+    _clean_pythonpath="${_clean_pythonpath#:}"
+    _clean_pythonpath="${_clean_pythonpath%:}"
+    export PYTHONPATH="$MOFKA_PYTHONPATH${_clean_pythonpath:+:$_clean_pythonpath}"
+fi
 
 # --- transport ----------------------------------------------------------------
 export MOFKA_PROTOCOL="${MOFKA_PROTOCOL:-ofi+tcp}"

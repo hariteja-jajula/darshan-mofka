@@ -39,6 +39,6 @@ if command -v spack >/dev/null 2>&1; then
         _python_site="$_mofka_prefix/lib/python3.14/site-packages"
         _diaspora_python_site="$DIASPORA_C/lib/python3.14/site-packages"
         [[ -d "$_diaspora_python_site" ]] && _python_site="$_diaspora_python_site:$_python_site"
-        export MOFKA_PYTHONPATH="${MOFKA_PYTHONPATH:-$_python_site}"
+        export MOFKA_PYTHONPATH="$_python_site"
     fi
 fi
