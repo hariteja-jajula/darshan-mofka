@@ -17,6 +17,14 @@ SERVER_DIR="$(cd "$(dirname "$_ENV_SRC")" && pwd)"
 ROOT="${INTERNSHIP_ROOT:-$(cd "$SERVER_DIR/.." && pwd)}"
 export ROOT SERVER_DIR
 
+# Optional profile shorthand: source server/env.sh --lcrc
+case "${1:-}" in
+    --lcrc) DARSHAN_MOFKA_ENV=lcrc ;;
+    --polaris) DARSHAN_MOFKA_ENV=polaris ;;
+    "") ;;
+    *) echo "[env] unknown profile '${1:-}' (use --lcrc or --polaris)" >&2; return 1 ;;
+esac
+
 # --- per-machine overrides ----------------------------------------------------
 # Select a committed cluster profile with DARSHAN_MOFKA_ENV=lcrc, or keep using
 # an uncommitted env.local.sh for one-off local overrides.
