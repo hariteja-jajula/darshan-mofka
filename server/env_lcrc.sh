@@ -17,10 +17,18 @@ if [[ -f "$HOME/mofka_tests/spack/share/spack/setup-env.sh" ]]; then
     spack env activate flowcept-mofka
 fi
 
-# Keep paths user-independent by deriving from $HOME.
-export DIASPORA_C="${DIASPORA_C:-$HOME/diaspora-c-install}"
+# Prefer the repo-local install built by the README; fall back to the old home install.
+# This intentionally overrides a stale DIASPORA_C from a previous source command.
+if [[ -e "$ROOT/diaspora-stream-api/install/include/diaspora/diaspora_c.h" ]]; then
+    DIASPORA_C="$ROOT/diaspora-stream-api/install"
+else
+    DIASPORA_C="${DIASPORA_C:-$HOME/diaspora-c-install}"
+fi
+export DIASPORA_C
 export DARSHAN_PREFIX="${DARSHAN_PREFIX:-$ROOT/darshan/install}"
 export MOFKA_PROTOCOL=verbs
+export CC="${CC:-$(command -v gcc || true)}"
+export CXX="${CXX:-$(command -v g++ || true)}"
 
 # Ask Spack for the exact Mofka prefix when available. This provides bedrock,
 # mofkactl, CMake package files, and the Python mochi.mofka package.
