@@ -33,11 +33,7 @@ Check that the main tools are visible:
 ```bash
 printf 'MOFKA_SPACK_VIEW=%s\n' "$MOFKA_SPACK_VIEW"
 command -v bedrock
-command -v cc
-"$PY" - <<'PY'
-import mochi.mofka.client
-print("mochi.mofka import OK")
-PY
+command -v "$CC"
 printf 'MOFKA_PROTOCOL=%s\n' "$MOFKA_PROTOCOL"
 printf 'DIASPORA_C=%s\n' "$DIASPORA_C"
 printf 'DARSHAN_PREFIX=%s\n' "$DARSHAN_PREFIX"
@@ -68,10 +64,14 @@ cmake --install _build
 cd ..
 ```
 
-Refresh the environment after building Diaspora:
+Refresh the environment after building Diaspora, then confirm Python can import Mofka:
 
 ```bash
 source server/env.sh --lcrc
+"$PY" - <<'PY'
+import mochi.mofka.client
+print("mochi.mofka import OK")
+PY
 ```
 
 ## 3. Build Darshan And The Demo Workload
@@ -87,7 +87,7 @@ cd ..
 Build the workload:
 
 ```bash
-cc -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
+"$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 ```
 
 Confirm the Darshan library path:
@@ -267,7 +267,7 @@ After everything has been built once, this block runs the full demo:
 ```bash
 source server/env.sh --lcrc
 bash server/start-server.sh
-cc -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
+"$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 darshan_ensure_logdir
 
 env \
