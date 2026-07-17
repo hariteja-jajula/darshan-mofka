@@ -17,6 +17,13 @@ if [[ -f "$HOME/mofka_tests/spack/share/spack/setup-env.sh" ]]; then
     spack env activate flowcept-mofka
 fi
 
+# Use the Python from the active Spack environment. A stale PY from a previous
+# shell can point at a different Python ABI, which will not see the cpython-314
+# pydiaspora_stream_api extension built below.
+if command -v python3 >/dev/null 2>&1; then
+    export PY="$(command -v python3)"
+fi
+
 # Prefer the repo-local install built by the README; fall back to the old home install.
 # This intentionally overrides a stale DIASPORA_C from a previous source command.
 if [[ -e "$ROOT/diaspora-stream-api/install/include/diaspora/diaspora_c.h" ]]; then
