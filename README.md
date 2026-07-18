@@ -21,11 +21,12 @@ from this branch. Recover them from the study branch if needed.
 
 ## 1. Prepare Environment
 
-From the repository root on LCRC/Improv:
+From the repository root, choose the cluster profile:
 
 ```bash
 git submodule update --init --recursive
-source server/env.sh --lcrc
+source server/env.sh --lcrc     # LCRC/Improv
+# source server/env.sh --polaris # Polaris
 ```
 
 Check that the main tools are visible:
@@ -67,7 +68,7 @@ cd ..
 Refresh the environment after building Diaspora. This is required because the install step creates `diaspora-stream-api/install/lib/python3.14/site-packages`, which must be on `PYTHONPATH` for Mofka's Python client to import `pydiaspora_stream_api`.
 
 ```bash
-source server/env.sh --lcrc
+source server/env.sh --lcrc     # or: source server/env.sh --polaris
 printf 'PY=%s\n' "$PY"
 "$PY" -VV
 printf 'PYTHONPATH=%s\n' "$PYTHONPATH"
