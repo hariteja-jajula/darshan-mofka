@@ -28,7 +28,10 @@ else
     DIASPORA_C="${DIASPORA_C:-$_EAGLE/diaspora-c-install}"
 fi
 export DIASPORA_C
-export DARSHAN_PREFIX="${DARSHAN_PREFIX:-$ROOT/darshan/install}"
+if [[ -z "${DARSHAN_PREFIX:-}" || ! -e "$DARSHAN_PREFIX/lib/libdarshan.so" ]]; then
+    DARSHAN_PREFIX="$ROOT/darshan/install"
+fi
+export DARSHAN_PREFIX
 export MOFKA_PROTOCOL=ofi+tcp
 export BEDROCK_PROTOCOL=ofi+tcp
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
