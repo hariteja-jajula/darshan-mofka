@@ -8,6 +8,11 @@ _SPACK_OPT="$_EAGLE/mofka_tests/spack/opt/spack"
 _VIEW="$_EAGLE/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view"
 _VENV="${FLOWCEPT_VENV:-$_EAGLE/envs/flowcept-py314}"
 
+if command -v module >/dev/null 2>&1; then
+    module swap PrgEnv-nvidia PrgEnv-gnu >/dev/null 2>&1 || module load PrgEnv-gnu >/dev/null 2>&1 || true
+    module load gcc-native/13.2 >/dev/null 2>&1 || module load gcc-native/13 >/dev/null 2>&1 || true
+fi
+
 # Polaris stack is consumed through the regenerated Spack view directly. Avoid
 # live `spack env activate`; the transferred Spack tree has historically been
 # fragile on login nodes.

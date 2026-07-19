@@ -25,8 +25,8 @@ From the repository root, choose the cluster profile:
 
 ```bash
 git submodule update --init --recursive
-source server/env.sh --lcrc     # LCRC/Improv
-# source server/env.sh --polaris # Polaris
+source server/env.sh --polaris  # Polaris
+# source server/env.sh --lcrc   # LCRC/Improv
 ```
 
 Check that the main tools are visible:
@@ -68,7 +68,7 @@ cd ..
 Refresh the environment after building Diaspora. This is required because the install step creates `diaspora-stream-api/install/lib/python3.14/site-packages`, which must be on `PYTHONPATH` for Mofka's Python client to import `pydiaspora_stream_api`.
 
 ```bash
-source server/env.sh --lcrc     # or: source server/env.sh --polaris
+source server/env.sh --polaris  # or: source server/env.sh --lcrc on LCRC/Improv
 printf 'PY=%s\n' "$PY"
 "$PY" -VV
 printf 'PYTHONPATH=%s\n' "$PYTHONPATH"
@@ -270,7 +270,7 @@ bash server/stop-server.sh
 After everything has been built once, this block runs the full demo:
 
 ```bash
-source server/env.sh --lcrc
+source server/env.sh --polaris  # or: source server/env.sh --lcrc on LCRC/Improv
 bash server/start-server.sh
 "$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 darshan_ensure_logdir
