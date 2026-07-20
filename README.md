@@ -127,95 +127,14 @@ ls -l server/mofka.json
 That group file is what the Darshan connector and the consumer both use to connect
 to the same Mofka server.
 
-## 5. Run DLIO On Polaris
-
-For a quick batch run, submit the committed PBS smoke test from the repository root:
+## 5. Run DLIO Benchmark
 
 ```bash
-qsub jobs/dlio_smoke.pbs
+git clone https://github.com/argonne-lcf/dlio_benchmark
+cd dlio_benchmark/
+pip install .
+dlio_benchmark ++workload.workflow.generate_data=True
 ```
-
-For an interactive run on Polaris, first request a compute-node allocation:
-
-```bash
-qsub -I -A radix-io -q preemptable -l select=1:ncpus=8 -l walltime=00:30:00 -l filesystems=home:eagle
-```
-
-After the job starts, run the small DLIO workload from this repository, not from a separate `dlio_benchmark` checkout:
-
-```bash
-cd /path/to/darshan-mofka
-source server/env.sh --polaris
-
-RUN_ID="${PBS_JOBID:-interactive-$(date +%Y%m%d-%H%M%S)}"
-RUN_DIR="$PWD/server/_interactive_dlio_${RUN_ID}"
-export MOFKA_SERVER_DIR="$RUN_DIR/mofka"
-DLIO_DATA="$RUN_DIR/data/default"
-mkdir -p "$RUN_DIR" "$MOFKA_SERVER_DIR" "$DLIO_DATA"
-
-bash server/stop-server.sh || true
-bash server/start-server.sh
-trap 'bash server/stop-server.sh || true' EXIT
-
-darshan_ensure_logdir >/dev/null
-LIBDARSHAN="$(darshan_lib)"
-
-COMMON_OVERRIDES=(
-  workload=default
-  ++workload.dataset.data_folder="$DLIO_DATA"
-  ++workload.dataset.num_files_train=8
-  ++workload.dataset.num_files_eval=2
-  ++workload.dataset.record_length_bytes=1024
-  ++workload.dataset.num_subfolders_train=0
-  ++workload.dataset.num_subfolders_eval=0
-  ++workload.reader.batch_size=2
-  ++workload.reader.batch_size_eval=1
-  ++workload.reader.read_threads=1
-  ++workload.train.epochs=1
-  ++workload.train.computation_time=0.01
-  ++workload.evaluation.eval_time=0.01
-)
-
-dlio_benchmark "${COMMON_OVERRIDES[@]}" \
-  ++workload.workflow.generate_data=True \
-  ++workload.workflow.train=False \
-  hydra.run.dir="$RUN_DIR/generate" \
-  > "$RUN_DIR/generate.out" \
-  2> "$RUN_DIR/generate.err"
-
-env -u PYTHONSAFEPATH \
-  PYTHONHOME=/usr \
-  DARSHAN_ENABLE_NONMPI=1 \
-  DARSHAN_MOFKA_ENABLE=1 \
-  DARSHAN_MOFKA_GROUP_FILE="$MOFKA_SERVER_DIR/mofka.json" \
-  DARSHAN_MOFKA_TOPIC=darshan \
-  DARSHAN_MOFKA_TIMING=1 \
-  DARSHAN_MOFKA_BATCH=0 \
-  DARSHAN_MOFKA_MAX_BATCHES=256 \
-  DARSHAN_MOFKA_FLUSH_MS=30000 \
-  DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
-  LD_PRELOAD="$LIBDARSHAN" \
-  dlio_benchmark "${COMMON_OVERRIDES[@]}" \
-    ++workload.workflow.generate_data=False \
-    ++workload.workflow.train=True \
-    ++workload.workflow.evaluation=True \
-    hydra.run.dir="$RUN_DIR/train" \
-  > "$RUN_DIR/train.out" \
-  2> "$RUN_DIR/train.err"
-
-EXPECTED="$(grep -c 'darshan-mofka\\[timing\\] send' "$RUN_DIR/train.err")"
-printf 'darshan-mofka sends: %s\n' "$EXPECTED"
-
-timeout 60 "$PY" server/capture.py "$MOFKA_SERVER_DIR/mofka.json" darshan "$EXPECTED" 5 \
-  > "$RUN_DIR/events.jsonl" \
-  2> "$RUN_DIR/capture.count" || true
-
-wc -l "$RUN_DIR/events.jsonl"
-cat "$RUN_DIR/capture.count"
-printf 'run dir: %s\n' "$RUN_DIR"
-```
-
-The standalone command `dlio_benchmark ++workload.workflow.generate_data=True` only verifies DLIO itself. The integration test above additionally starts Mofka and runs DLIO under `LD_PRELOAD=$(darshan_lib)` with the `DARSHAN_MOFKA_*` environment variables enabled.
 
 ## 6. Run The Darshan-Instrumented Workload
 
