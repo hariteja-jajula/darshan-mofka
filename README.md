@@ -127,25 +127,26 @@ ls -l server/mofka.json
 That group file is what the Darshan connector and the consumer both use to connect
 to the same Mofka server.
 
-## 5. Run DLIO Benchmark
+## 5. Choose Workload Output Names
+
+Use a separate MongoDB database and JSONL file for each workload run. The default below is for the C smoke workload:
 
 ```bash
-git clone https://github.com/argonne-lcf/dlio_benchmark
-cd dlio_benchmark/
-pip install .
-dlio_benchmark ++workload.workflow.generate_data=True
+WORKLOAD_NAME="${WORKLOAD_NAME:-c_smoke}"
+RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_${WORKLOAD_NAME}}"
+MONGO_DB="${MONGO_DB:-darshan_${WORKLOAD_NAME}}"
+MONGO_PORT="${MONGO_PORT:-27017}"
+EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-${WORKLOAD_NAME}-events.jsonl}"
+mkdir -p "$RUN_DIR"
 ```
+
+For another workload, set a different `WORKLOAD_NAME` before starting FlowCept, for example `WORKLOAD_NAME=dlio`.
 
 ## 6. Start FlowCept As The Live Consumer
 
-Start FlowCept before the workload. It runs in the background and continuously drains the `darshan` Mofka topic into MongoDB.
+Start FlowCept before the workload. It runs in the background and continuously drains the `darshan` Mofka topic into the workload-specific MongoDB database.
 
 ```bash
-RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
-MONGO_DB="${MONGO_DB:-darshan_stream}"
-MONGO_PORT="${MONGO_PORT:-27017}"
-mkdir -p "$RUN_DIR"
-
 RUN_DIR="$RUN_DIR" \
 MONGO_DB="$MONGO_DB" \
 MONGO_PORT="$MONGO_PORT" \
@@ -156,7 +157,7 @@ FLOWCEPT_CAPTURE_PID=$!
 until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
 ```
 
-## 7. Run The Darshan-Instrumented Workload
+## 7. Run The Darshan-Instrumented C Smoke Workload
 
 Run the C workload under Darshan while FlowCept is draining the topic:
 
@@ -174,67 +175,59 @@ env \
   DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
   LD_PRELOAD="$(darshan_lib)" \
   ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke \
-  > /tmp/darshan-mofka-workload.out \
-  2> /tmp/darshan-mofka-workload.err
+  > /tmp/darshan-mofka-${WORKLOAD_NAME}.out \
+  2> /tmp/darshan-mofka-${WORKLOAD_NAME}.err
 ```
 
 Check that the workload ran and sent events:
 
 ```bash
-cat /tmp/darshan-mofka-workload.out
-grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-workload.err | wc -l
+cat /tmp/darshan-mofka-${WORKLOAD_NAME}.out
+grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-${WORKLOAD_NAME}.err | wc -l
 ```
 
 Expected: the workload prints `mofka_forward_smoke complete...` and the send count is nonzero.
 
 ## 8. Stop FlowCept And Export JSONL
 
-Tell FlowCept to flush and stop its consumer, then export the MongoDB records to JSONL for validation or reconstruction:
+Tell FlowCept to flush and stop its consumer, then export the workload-specific MongoDB records to JSONL:
 
 ```bash
 touch "$RUN_DIR/SHUTDOWN"
 until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
 
 "$PY" server/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
-  > /tmp/darshan-mofka-events.jsonl \
-  2> /tmp/darshan-mofka-export.count
+  > "$EVENTS_JSONL" \
+  2> "$RUN_DIR/export.count"
 
-cat /tmp/darshan-mofka-export.count
+cat "$RUN_DIR/export.count"
 kill "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 wait "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 ```
 
 `server/capture.py` is still available as a simple debug drain, but the FlowCept path above is the live consumer path.
 
-## 9. Verify The Captured Events
+## 9. Verify C Smoke Events
 
-Check for POSIX events:
-
-```bash
-grep '"module":"POSIX"' /tmp/darshan-mofka-events.jsonl | head
-```
-
-Check for STDIO events:
+Verify the JSONL exported for the C smoke workload:
 
 ```bash
-grep '"module":"STDIO"' /tmp/darshan-mofka-events.jsonl | head
-```
-
-Check for read/write operations:
-
-```bash
-grep -E '"op":"(read|write)"' /tmp/darshan-mofka-events.jsonl | head
+EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-c_smoke-events.jsonl}"
+grep '"module":"POSIX"' "$EVENTS_JSONL" | head
+grep '"module":"STDIO"' "$EVENTS_JSONL" | head
+grep -E '"op":"(read|write)"' "$EVENTS_JSONL" | head
 ```
 
 A compact summary is often easier to read:
 
 ```bash
-"$PY" - <<'PY'
+"$PY" - "$EVENTS_JSONL" <<'PY'
 import json
+import sys
 from collections import Counter
 mods = Counter()
 ops = Counter()
-with open('/tmp/darshan-mofka-events.jsonl') as f:
+with open(sys.argv[1]) as f:
     for line in f:
         ev = json.loads(line)
         mods[ev.get('module')] += 1
@@ -244,20 +237,24 @@ print('ops:', dict(ops))
 PY
 ```
 
-If you see `POSIX`, `STDIO`, and read/write operations, the full path worked:
+## 10. Verify DLIO Events
 
-```text
-C workload -> Darshan connector -> Mofka topic -> FlowCept consumer -> MongoDB -> JSONL file
+If a DLIO workload run was exported with `WORKLOAD_NAME=dlio`, verify that JSONL separately:
+
+```bash
+EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-dlio-events.jsonl}"
+grep '"module":"POSIX"' "$EVENTS_JSONL" | head
+grep -Ei '"op":"(open|read|write|close)"' "$EVENTS_JSONL" | head
 ```
 
-## 10. Reconstruct A Partial Darshan Log
+## 11. Reconstruct A Partial Darshan Log
 
 If the normal Darshan shutdown path fails and no final `.darshan` log is produced,
 the captured stream can be converted into a best-effort partial Darshan log:
 
 ```bash
 ./darshan/install/bin/darshan-mofka-reconstruct \
-  /tmp/darshan-mofka-events.jsonl \
+  "$EVENTS_JSONL" \
   /tmp/job_partial.darshan
 ```
 
@@ -270,7 +267,7 @@ Validate the reconstructed log with Darshan's parser:
 The reconstructed log is intentionally marked partial. It contains the latest module
 record snapshots that reached Mofka, plus synthetic job/exe/mount metadata.
 
-## 11. Stop Server
+## 12. Stop Server
 
 Stop the broker when done:
 
@@ -287,9 +284,11 @@ source server/env.sh --polaris  # or: source server/env.sh --lcrc on LCRC/Improv
 bash server/start-server.sh
 "$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 
-RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
-MONGO_DB="${MONGO_DB:-darshan_stream}"
+WORKLOAD_NAME="${WORKLOAD_NAME:-c_smoke}"
+RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_${WORKLOAD_NAME}}"
+MONGO_DB="${MONGO_DB:-darshan_${WORKLOAD_NAME}}"
 MONGO_PORT="${MONGO_PORT:-27017}"
+EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-${WORKLOAD_NAME}-events.jsonl}"
 mkdir -p "$RUN_DIR"
 RUN_DIR="$RUN_DIR" MONGO_DB="$MONGO_DB" MONGO_PORT="$MONGO_PORT" \
 MOFKA_GROUP="$ROOT/server/mofka.json" \
@@ -310,29 +309,40 @@ env \
   DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
   LD_PRELOAD="$(darshan_lib)" \
   ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke \
-  > /tmp/darshan-mofka-workload.out \
-  2> /tmp/darshan-mofka-workload.err
+  > /tmp/darshan-mofka-${WORKLOAD_NAME}.out \
+  2> /tmp/darshan-mofka-${WORKLOAD_NAME}.err
 
 touch "$RUN_DIR/SHUTDOWN"
 until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
 "$PY" server/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
-  > /tmp/darshan-mofka-events.jsonl \
-  2> /tmp/darshan-mofka-export.count
+  > "$EVENTS_JSONL" \
+  2> "$RUN_DIR/export.count"
 kill "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 wait "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 
-cat /tmp/darshan-mofka-workload.out
-cat /tmp/darshan-mofka-export.count
-grep '"module":"POSIX"' /tmp/darshan-mofka-events.jsonl | head
-grep '"module":"STDIO"' /tmp/darshan-mofka-events.jsonl | head
-grep -E '"op":"(read|write)"' /tmp/darshan-mofka-events.jsonl | head
+cat /tmp/darshan-mofka-${WORKLOAD_NAME}.out
+cat "$RUN_DIR/export.count"
+grep '"module":"POSIX"' "$EVENTS_JSONL" | head
+grep '"module":"STDIO"' "$EVENTS_JSONL" | head
+grep -E '"op":"(read|write)"' "$EVENTS_JSONL" | head
 
 ./darshan/install/bin/darshan-mofka-reconstruct \
-  /tmp/darshan-mofka-events.jsonl \
+  "$EVENTS_JSONL" \
   /tmp/job_partial.darshan
 ./darshan/install/bin/darshan-parser --show-incomplete /tmp/job_partial.darshan | head -80
 
 bash server/stop-server.sh
+```
+
+## Optional DLIO Quickstart
+
+This is the upstream DLIO quickstart. If DLIO is used as a Darshan-Mofka workload, start Mofka and FlowCept first, set `WORKLOAD_NAME=dlio`, and export to `/tmp/darshan-mofka-dlio-events.jsonl`.
+
+```bash
+git clone https://github.com/argonne-lcf/dlio_benchmark
+cd dlio_benchmark/
+pip install .
+dlio_benchmark ++workload.workflow.generate_data=True
 ```
 
 ## What Gets Streamed
