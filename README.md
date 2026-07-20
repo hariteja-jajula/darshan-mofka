@@ -118,6 +118,7 @@ PY
 Build the Darshan fork with Mofka support:
 
 ```bash
+module unload darshan   # avoids Cray cc wrapper's darshan-runtime pkg-config hook
 cd darshan
 ./build.sh
 cd ..
@@ -164,6 +165,8 @@ to the same Mofka server.
 ## 5. Choose Output Files
 
 Pick where this run writes its FlowCept artifacts and exported JSONL. Use different `MONGO_DB` and `EVENTS_JSONL` values for different workload runs if you want to keep them separate.
+
+> Make sure `server/env.sh` is sourced in this shell (it sets `$ROOT`); otherwise these paths collapse and the watch loops silently grep the wrong file.
 
 ```bash
 RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
