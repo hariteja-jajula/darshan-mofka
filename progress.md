@@ -105,6 +105,29 @@ darshan-parser, darshan-mofka-reconstruct). Parser RPATH puts `install/lib` firs
   builds darshan-util with rpath + `-j1` fallback + bzip2 workaround). Submodule commits
   `f9e85f2`, `8200251` pushed to the darshan fork.
 
+## Reproducible stack (the big one) — DONE
+
+The demo depended on a prebuilt Mofka/FlowCept spack stack that existed only as an
+Improv-transferred tree derived by relative path from the author's home — so a fresh
+clone by anyone else had no way to get or rebuild it. Fixed:
+
+- Built the **Polaris-native** stack from source (`flowcept-mofka-polaris` spack env):
+  gcc@12.3.0 + cray-mpich + PE externals, everything else from source. All specs
+  installed incl. `mofka@main`, `mochi-bedrock`, darshan; `bedrock` runs natively (no
+  dead RPATH).
+- Vendored the spec into the repo: `server/spack/{spack.yaml,spack.lock,README.md}`.
+- `env_polaris.sh` now defaults to the native view (falls back to Improv), pins the venv
+  python, and adds Cray libfabric to `LD_LIBRARY_PATH` (native view uses it as a PE
+  external). Verified from a clean env: flowcept + mochi + pydiaspora + pymongo import.
+- **End-to-end proof against the native stack**: job 7263569, `bash jobs/job.sh`,
+  INGEST PASS, 26 events (C:12 + DLIO:14) -> Mongo -> 26 JSONL. Broker ran from the
+  native view.
+
+Remaining non-reproducible piece: the py3.14 **venv** (flowcept/mochi/pymongo) is still
+pip-installed on the author's base python; it runs fine layered on the native view's
+libs. Regenerating it from scratch (venv + `pip install -e flowcept/` + mochi wheels) is
+the last portability gap, documented in `server/spack/README.md`.
+
 ## Status: ready to share
 
 `bash jobs/job.sh` (with `mongod` on PATH or `$MONGOD` set) reproduces the whole README
