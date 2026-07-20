@@ -9,7 +9,7 @@ them to Mofka, and FlowCept drains the topic into MongoDB.
 ## Polaris Allocation
 
 ```bash
-qsub -I -A radix-io -q preemptable -l select=1:ncpus=8 -l walltime=00:30:00 -l filesystems=home:eagle
+qsub -I -A <project> -q <queue> -l select=<nodes>:ncpus=<cpus> -l walltime=<HH:MM:SS> -l filesystems=<filesystems>
 ```
 
 ## Repository Layout
