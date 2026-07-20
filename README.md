@@ -141,10 +141,10 @@ For an interactive run on Polaris, first request a compute-node allocation:
 qsub -I -A radix-io -q preemptable -l select=1:ncpus=8 -l walltime=00:30:00 -l filesystems=home:eagle
 ```
 
-After the job starts, run the integration smoke test from this repository, not from the separate `dlio_benchmark` checkout:
+After the job starts, run the small DLIO workload from this repository, not from a separate `dlio_benchmark` checkout:
 
 ```bash
-cd /lus/eagle/projects/radix-io/hjajula/darshan-mofka-flowcept/darshan-mofka
+cd /path/to/darshan-mofka
 source server/env.sh --polaris
 
 RUN_ID="${PBS_JOBID:-interactive-$(date +%Y%m%d-%H%M%S)}"
