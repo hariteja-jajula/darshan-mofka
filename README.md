@@ -55,6 +55,16 @@ from this branch. Recover them from the study branch if needed.
 
 ## 1. Prepare Environment
 
+Run the build/streaming steps on a **compute node** (the Mofka broker's fabric
+transport does not come up on Polaris login nodes). Grab one, e.g.:
+
+```bash
+qsub -I -q debug -A <project> -l select=1 -l walltime=01:00:00 -l filesystems=home:eagle
+```
+
+> **Compute-node note:** interactive PBS shells often start without `TERM` set,
+> which garbles `clear`/editors. If so: `export TERM=xterm`.
+
 From the repository root, choose the cluster profile:
 
 ```bash
@@ -89,6 +99,18 @@ Then edit `server/env.local.sh` to load modules or set paths for your cluster.
 
 If `diaspora-stream-api/install` already exists, skip this step.
 
+> **Polaris note (validated):** the Cray `cc` wrapper injects a `darshan-runtime`
+> pkg-config hook from the system `darshan` module, which fails the CMake compiler
+> check with `Package 'zlib' ... required by 'darshan-runtime', not found`. Unload
+> the module and put zlib on `PKG_CONFIG_PATH` **before** this build (the same hook
+> also affects step 3):
+>
+> ```bash
+> module unload darshan
+> export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
+> pkg-config --exists zlib && echo "zlib OK"   # sanity check
+> ```
+
 ```bash
 cd diaspora-stream-api
 cmake -S . -B _build -DENABLE_C_API=ON -DENABLE_PYTHON=ON \
@@ -115,10 +137,18 @@ PY
 
 ## 3. Build Darshan And The Demo Workload
 
-Build the Darshan fork with Mofka support:
+Build the Darshan fork with Mofka support.
+
+> **Polaris note (validated):** re-sourcing `server/env.sh` after step 2 re-adds
+> the system darshan pkg-config path, so re-apply the fix from step 2 before
+> building the runtime:
+>
+> ```bash
+> module unload darshan   # avoids Cray cc wrapper's darshan-runtime pkg-config hook
+> export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
+> ```
 
 ```bash
-module unload darshan   # avoids Cray cc wrapper's darshan-runtime pkg-config hook
 cd darshan
 ./build.sh
 cd ..
