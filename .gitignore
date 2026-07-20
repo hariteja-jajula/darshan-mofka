@@ -15,8 +15,9 @@
 /server/bedrock.log
 /server/bedrock.pid
 
-# machine-specific environment
+# local environment overrides
 /server/env.local.sh
+/server/runtime.local.env
 
 # generated files and crashes
 *.o

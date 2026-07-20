@@ -18,23 +18,19 @@
 # Usage:
 #   source server/env.sh
 #   MONGO_DB=darshan_stream server/capture_flowcept.sh
-# Env knobs (all optional):
-#   TOPIC          mofka topic to consume         (default: darshan; MUST match producer)
-#   MONGO_DB       mongo db to ingest into        (default: darshan_stream)
-#   MONGO_PORT     mongod port                    (default: 27017)
-#   RUN_DIR        where to write run artifacts   (default: $ROOT/server/_flowcept_run)
-#   SHUTDOWN_FLAG  file whose creation stops us   (default: $RUN_DIR/SHUTDOWN)
-#   MONGOD         path to mongod binary          (default: `command -v mongod`)
+# Runtime defaults live in server/runtime.env and are loaded by server/env.sh.
+# Override them before sourcing env.sh, or create server/runtime.local.env.
+# MONGOD remains a local tool path knob (default: `command -v mongod`).
 set -uo pipefail
 
 : "${ROOT:?source server/env.sh first (ROOT unset)}"
-TOPIC="${TOPIC:-darshan}"
-MONGO_DB="${MONGO_DB:-darshan_stream}"
-MONGO_PORT="${MONGO_PORT:-27017}"
-RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
-SHUTDOWN_FLAG="${SHUTDOWN_FLAG:-$RUN_DIR/SHUTDOWN}"
-MOFKA_GROUP="${MOFKA_GROUP:-$ROOT/server/mofka.json}"
-SETTINGS_TEMPLATE="${SETTINGS_TEMPLATE:-$ROOT/server/flowcept_settings.template.yaml}"
+: "${TOPIC:?source server/env.sh first (TOPIC unset)}"
+: "${MONGO_DB:?source server/env.sh first (MONGO_DB unset)}"
+: "${MONGO_PORT:?source server/env.sh first (MONGO_PORT unset)}"
+: "${RUN_DIR:?source server/env.sh first (RUN_DIR unset)}"
+: "${SHUTDOWN_FLAG:?source server/env.sh first (SHUTDOWN_FLAG unset)}"
+: "${MOFKA_GROUP:?source server/env.sh first (MOFKA_GROUP unset)}"
+: "${SETTINGS_TEMPLATE:?source server/env.sh first (SETTINGS_TEMPLATE unset)}"
 MONGOD="${MONGOD:-$(command -v mongod || true)}"
 PY="${PY:-python3}"
 

@@ -50,6 +50,11 @@ source server/env.sh
 Then edit `server/env.local.sh` to load modules or set paths for your cluster.
 `server/env.local.sh` is ignored by git.
 
+Runtime pipeline defaults such as the Mofka topic, Mongo database, run directory,
+Darshan-Mofka toggles, and output paths live in `server/runtime.env`. To override
+those without editing committed files, create `server/runtime.local.env`; it is
+ignored by git and is loaded after `server/runtime.env`.
+
 ## 2. Build Dependencies
 
 If `diaspora-stream-api/install` already exists, skip this step.
@@ -133,16 +138,7 @@ Run the C workload under Darshan and enable Mofka streaming:
 ```bash
 darshan_ensure_logdir
 
-env \
-  DARSHAN_ENABLE_NONMPI=1 \
-  DARSHAN_MOFKA_ENABLE=1 \
-  DARSHAN_MOFKA_GROUP_FILE="$ROOT/server/mofka.json" \
-  DARSHAN_MOFKA_TOPIC=darshan \
-  DARSHAN_MOFKA_TIMING=1 \
-  DARSHAN_MOFKA_BATCH=0 \
-  DARSHAN_MOFKA_MAX_BATCHES=64 \
-  DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
-  LD_PRELOAD="$(darshan_lib)" \
+env LD_PRELOAD="$(darshan_lib)" \
   ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke \
   > /tmp/darshan-mofka-workload.out \
   2> /tmp/darshan-mofka-workload.err
@@ -274,16 +270,7 @@ bash server/start-server.sh
 "$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 darshan_ensure_logdir
 
-env \
-  DARSHAN_ENABLE_NONMPI=1 \
-  DARSHAN_MOFKA_ENABLE=1 \
-  DARSHAN_MOFKA_GROUP_FILE="$ROOT/server/mofka.json" \
-  DARSHAN_MOFKA_TOPIC=darshan \
-  DARSHAN_MOFKA_TIMING=1 \
-  DARSHAN_MOFKA_BATCH=0 \
-  DARSHAN_MOFKA_MAX_BATCHES=64 \
-  DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
-  LD_PRELOAD="$(darshan_lib)" \
+env LD_PRELOAD="$(darshan_lib)" \
   ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke \
   > /tmp/darshan-mofka-workload.out \
   2> /tmp/darshan-mofka-workload.err

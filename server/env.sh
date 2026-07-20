@@ -36,6 +36,12 @@ elif [[ -f "$SERVER_DIR/env.local.sh" ]]; then
     source "$SERVER_DIR/env.local.sh"
 fi
 
+# --- runtime defaults ---------------------------------------------------------
+# Pipeline behavior lives here; machine/install locations stay below or in the
+# profile/env.local files. runtime.local.env is ignored and can override defaults.
+[[ -f "$SERVER_DIR/runtime.env" ]] && source "$SERVER_DIR/runtime.env"
+[[ -f "$SERVER_DIR/runtime.local.env" ]] && source "$SERVER_DIR/runtime.local.env"
+
 # --- software stack locations -------------------------------------------------
 # env.local.sh may set these explicitly; otherwise AUTO-DISCOVER them in
 # conventional spots (built into the workspace, or one/two levels up). On a
@@ -100,9 +106,6 @@ if [[ -n "$MOFKA_PYTHONPATH" ]]; then
     _clean_pythonpath="${_clean_pythonpath%:}"
     export PYTHONPATH="$MOFKA_PYTHONPATH${_clean_pythonpath:+:$_clean_pythonpath}"
 fi
-
-# --- transport ----------------------------------------------------------------
-export MOFKA_PROTOCOL="${MOFKA_PROTOCOL:-ofi+tcp}"
 
 # --- python + mofkactl --------------------------------------------------------
 # Prefer explicit $PY; else the discovered spack view's python; else PATH.
