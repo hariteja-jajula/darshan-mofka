@@ -44,29 +44,53 @@ Python-under-LD_PRELOAD process that flush makes zero progress and burns the who
 flush). Secondary issue: DLIO runs under system python3.12, so it must run with a clean
 python env (`-u PYTHONPATH -u PYTHONSAFEPATH -u PYTHONHOME`), not the py3.14 exports.
 
-Fix under validation on a compute node: run DLIO as a workload against the **live**
-consumer (diagnostic job 7263473 compares `DARSHAN_MOFKA_BATCH=0` vs `=1`). `jobs/job.sh`
-will be finalized with whatever the diagnostic shows actually lands DLIO events in mongo.
+**PROVEN on compute nodes.** Diagnostic 7263486: DLIO under the live consumer landed
+`INGEST: PASS, 28 darshan docs`, zero flush timeouts, `BATCH=0` finalize 96ms (vs 1.86s
+for `BATCH=1`) — so `job.sh` uses `BATCH=0`. Full `bash jobs/job.sh` run 7263495:
+`INGEST: PASS, 26 docs` from BOTH the C (12 sends) and DLIO (14 sends) workloads.
 
 ## jobs/ directory
 
-Reduced to a single script per request: **`jobs/job.sh`**. It is a README replica that,
-on a login node, self-submits via `qsub` so all real work runs on a compute node; on the
-compute node it runs the full pipeline for both the C workload and DLIO and prints the
-mongo/JSONL verdict. (The whole `jobs/` dir was previously untracked; it is now added.)
+Single script per request: **`jobs/job.sh`** (committed `770aa1a`). README replica that
+self-submits via `qsub` on a login node (forwarding `$MONGOD`) so all real work runs on a
+compute node; on the node it runs broker -> live consumer -> C + DLIO -> export -> verify.
+Proven end-to-end (job 7263495). No user-specific content.
+
+## export_jsonl.py fix (committed 770aa1a)
+
+First clean run exposed `TypeError: Object of type datetime is not JSON serializable`
+(FlowCept stores `ended_at` as a native datetime) -> 0 JSONL lines. Fixed with
+`json.dumps(default=str)`. Re-verified against job 7263495's persisted mongo: 26 events
+export to JSONL; reconstruct + parse both succeed.
+
+## Reconstructor (README step 11) — verified
+
+`darshan-mofka-reconstruct` already had its fix in submodule commit `bc17efd3`
+(nprocs = max_rank+1). Verified working: 24-event JSONL -> 7 module records -> a partial
+`.darshan` that `darshan-parser` reads cleanly (POSIX+STDIO, `partial=true`). Gap found:
+`build.sh` built only the runtime, so step 11's binaries did not exist after the documented
+build, and `darshan-parser` loaded a stale spack `libdarshan-util.so`. Fixed in `build.sh`
+(darshan submodule, UNCOMMITTED pending review): also build darshan-util into the same
+prefix with `-Wl,-rpath,$PREFIX/lib`, plus a broken-bzip2 uthash-untar workaround. Tested:
+produces both binaries; parser now resolves its own lib via RUNPATH.
 
 ## Multi-node scale test (out of repo, by request)
 
-Not committed and not in the README. Script at `/tmp/dm_diag/multinode_scale.pbs`
-(job 7263474): broker + consumer on the primary node, C workloads fanned across all nodes
-via mpiexec, all draining into one mongo; verifies total events and distinct producer
-hostnames.
+Not committed, not in the README. Script `/tmp/dm_diag/multinode_scale.pbs`: broker +
+consumer on the primary node, C workloads fanned across all nodes via mpiexec into one
+mongo. First run (7263502, ppn=4) captured 0 — consumer logged no flush; node-2 ranks 4-7
+produced no output (suspected connect-storm; the proven cross-node job 7262662 used ppn=1).
+Retry 7263514 uses ppn=1 + 30s drain to match the proven config.
 
-## Committed this session
+## Committed this session (parent repo, dev/env-polaris-cleanup)
 
-`f298b94` — de-hardcode `env_polaris.sh` (\$ROOT-derived, no user prefix), export
-`DARSHAN_MOFKA_ENV`, `stop-server.sh` honors `MOFKA_SERVER_DIR`, `.gitignore` catches
-`dm_*.o<id>` / `data/` / `hydra_log/` / per-job run dirs.
+- `f298b94` — de-hardcode `env_polaris.sh`, export `DARSHAN_MOFKA_ENV`, `stop-server.sh`
+  honors `MOFKA_SERVER_DIR`, `.gitignore` job-output patterns.
+- `ad32580` — rewrite progress.md.
+- `770aa1a` — add `jobs/job.sh`, fix `export_jsonl.py` datetime, broaden `.gitignore`.
+
+Uncommitted / pending decision: `darshan/build.sh` (submodule — needs a submodule commit +
+parent pointer bump + push to the darshan fork).
 
 ## Open / next
 
