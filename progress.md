@@ -82,9 +82,11 @@ one mongo.
 - **2 nodes (7263514, ppn=1): PASS** — 24 events, 2 distinct hostnames.
 - **4 nodes (7263522, ppn=1, debug-scaling): PASS** — 48 events, 4 distinct hostnames,
   INGEST PASS; reconstruct -> 11 module records -> parseable partial log.
-- **ppn=4 (7263502): FAIL** — captured 0; node-2 ranks produced no output (connect-storm
-  / cpu-bind) and node-1 sends did not drain. Multi-rank-per-node needs a connect-storm
-  fix or explicit cpu-binding; ppn=1 is the reliable config (matches proven job 7262662).
+- **2 nodes x 2 (7263528, cpu-bind): PASS** — 48 events, all 4 ranks 12 each, 24/host.
+- **ppn=4 without cpu-bind (7263502): FAIL** — captured 0; half the ranks never launched.
+  Root cause was missing `--cpu-bind`, NOT a Mofka connect-storm: adding
+  `mpiexec --cpu-bind depth -d <cpus/ppn>` fixed multi-rank-per-node (see 7263528).
+- **8 nodes x 4 = 32 ranks (7263531, cpu-bind -d 8): in flight.**
 
 ## Clean build verification (out of repo)
 
