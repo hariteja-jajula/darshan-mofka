@@ -4,7 +4,13 @@ Minimal demo for streaming Darshan runtime I/O events into a Mofka topic.
 
 The demo runs one small C program under `LD_PRELOAD=libdarshan.so`. Darshan
 intercepts the program's POSIX/STDIO I/O calls, builds JSON metadata events, pushes
-them to Mofka, and `server/capture.py` consumes those events back out of the topic.
+them to Mofka, and FlowCept drains the topic into MongoDB.
+
+## Polaris Allocation
+
+```bash
+qsub -I -A radix-io -q preemptable -l select=1:ncpus=8 -l walltime=00:30:00 -l filesystems=home:eagle
+```
 
 ## Repository Layout
 
