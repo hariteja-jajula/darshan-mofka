@@ -20,8 +20,10 @@
 
 # job run outputs and artifacts
 /server/_pbs_*/
+/server/_diag_*/
+/server/_scale_*/
 /server/_flowcept_run/
-dm_*.o[0-9]*
+*.o[0-9]*
 /data/
 /hydra_log/
 
