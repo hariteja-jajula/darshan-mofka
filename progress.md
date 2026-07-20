@@ -74,13 +74,23 @@ build, and `darshan-parser` loaded a stale spack `libdarshan-util.so`. Fixed in 
 prefix with `-Wl,-rpath,$PREFIX/lib`, plus a broken-bzip2 uthash-untar workaround. Tested:
 produces both binaries; parser now resolves its own lib via RUNPATH.
 
-## Multi-node scale test (out of repo, by request)
+## Multi-node scale test (out of repo, by request) — PASSES at ppn=1
 
-Not committed, not in the README. Script `/tmp/dm_diag/multinode_scale.pbs`: broker +
-consumer on the primary node, C workloads fanned across all nodes via mpiexec into one
-mongo. First run (7263502, ppn=4) captured 0 — consumer logged no flush; node-2 ranks 4-7
-produced no output (suspected connect-storm; the proven cross-node job 7262662 used ppn=1).
-Retry 7263514 uses ppn=1 + 30s drain to match the proven config.
+Not committed, not in the README. Scripts under `/tmp/dm_diag/*scale*.pbs`: broker +
+live consumer on the primary node, C workloads fanned across all nodes via mpiexec into
+one mongo.
+- **2 nodes (7263514, ppn=1): PASS** — 24 events, 2 distinct hostnames.
+- **4 nodes (7263522, ppn=1, debug-scaling): PASS** — 48 events, 4 distinct hostnames,
+  INGEST PASS; reconstruct -> 11 module records -> parseable partial log.
+- **ppn=4 (7263502): FAIL** — captured 0; node-2 ranks produced no output (connect-storm
+  / cpu-bind) and node-1 sends did not drain. Multi-rank-per-node needs a connect-storm
+  fix or explicit cpu-binding; ppn=1 is the reliable config (matches proven job 7262662).
+
+## Clean build verification (out of repo)
+
+Job 7263523 wiped `darshan/{_build,install,darshan-util/_build}` and ran `build.sh` from
+scratch on a compute node: Exit 0, all three binaries produced (libdarshan.so,
+darshan-parser, darshan-mofka-reconstruct). Parser RPATH puts `install/lib` first.
 
 ## Committed this session (parent repo, dev/env-polaris-cleanup)
 
@@ -89,8 +99,16 @@ Retry 7263514 uses ppn=1 + 30s drain to match the proven config.
 - `ad32580` — rewrite progress.md.
 - `770aa1a` — add `jobs/job.sh`, fix `export_jsonl.py` datetime, broaden `.gitignore`.
 
-Uncommitted / pending decision: `darshan/build.sh` (submodule — needs a submodule commit +
-parent pointer bump + push to the darshan fork).
+- `1ccb47d` / `e791346` — bump darshan submodule to `feat/build-util` (build.sh now also
+  builds darshan-util with rpath + `-j1` fallback + bzip2 workaround). Submodule commits
+  `f9e85f2`, `8200251` pushed to the darshan fork.
+
+## Status: ready to share
+
+`bash jobs/job.sh` (with `mongod` on PATH or `$MONGOD` set) reproduces the whole README
+on a compute node and prints `INGEST: PASS`. Verified: single-node C+DLIO (26 events),
+2- and 4-node C fan-in, reconstruct+parse, clean from-scratch build. No user-specific
+content in committed files.
 
 ## Open / next
 
