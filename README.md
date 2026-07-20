@@ -205,13 +205,12 @@ Expected: a nonzero count. In the simple login-node smoke run this was `12`.
 
 ## 6. Capture Events As A Partial Darshan Log
 
-Use the consumer in `server/capture.py` and pipe the streamed JSON records directly
-into `darshan-mofka-reconstruct`. The stored artifact is the reconstructed
-`.darshan` file; JSONL does not need to be written to disk for the normal path.
+Use `server/capture_darshan.sh` to drain the topic and write the reconstructed
+`.darshan` file. JSONL does not need to be written to disk for the normal path.
 
 ```bash
-timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
-  | ./darshan/install/bin/darshan-mofka-reconstruct - /tmp/job_partial.darshan \
+timeout 45 bash server/capture_darshan.sh \
+  "$ROOT/server/mofka.json" darshan /tmp/job_partial.darshan 100 5 \
   2> /tmp/darshan-mofka-reconstruct.count
 ```
 
@@ -233,6 +232,9 @@ Validate the reconstructed log with Darshan's parser:
 
 The reconstructed log is intentionally marked partial. It contains the latest module
 record snapshots that reached Mofka, plus synthetic job/exe/mount metadata.
+`darshan-merge` is still useful for merging existing `.darshan` logs, but it cannot
+read Mofka stream events directly; `capture_darshan.sh` is the stream-to-`.darshan`
+path.
 
 If you need to debug the raw stream, capture JSONL explicitly:
 
@@ -242,7 +244,7 @@ timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
   2> /tmp/darshan-mofka-capture.count
 ```
 
-Then inspect it with `grep` or pass it to the same reconstructor:
+Then inspect it with `grep` or pass it to the same `.darshan` writer:
 
 ```bash
 ./darshan/install/bin/darshan-mofka-reconstruct \
@@ -288,8 +290,8 @@ env \
   > /tmp/darshan-mofka-workload.out \
   2> /tmp/darshan-mofka-workload.err
 
-timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
-  | ./darshan/install/bin/darshan-mofka-reconstruct - /tmp/job_partial.darshan \
+timeout 45 bash server/capture_darshan.sh \
+  "$ROOT/server/mofka.json" darshan /tmp/job_partial.darshan 100 5 \
   2> /tmp/darshan-mofka-reconstruct.count
 
 cat /tmp/darshan-mofka-workload.out
