@@ -147,14 +147,21 @@ For another workload, set a different `WORKLOAD_NAME` before starting FlowCept, 
 Start FlowCept before the workload. It runs in the background and continuously drains the `darshan` Mofka topic into the workload-specific MongoDB database.
 
 ```bash
+MONGOD="${MONGOD:-$(command -v mongod || true)}"
+[[ -x "$MONGOD" ]] || { echo "mongod not found; load MongoDB or set MONGOD=/path/to/mongod"; exit 1; }
+
 RUN_DIR="$RUN_DIR" \
 MONGO_DB="$MONGO_DB" \
 MONGO_PORT="$MONGO_PORT" \
+MONGOD="$MONGOD" \
 MOFKA_GROUP="$ROOT/server/mofka.json" \
 bash server/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
 FLOWCEPT_CAPTURE_PID=$!
 
-until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
+until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do
+  kill -0 "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || { cat "$RUN_DIR/flowcept_capture.out"; exit 1; }
+  sleep 1
+done
 ```
 
 ## 7. Run The Darshan-Instrumented C Smoke Workload
@@ -194,7 +201,10 @@ Tell FlowCept to flush and stop its consumer, then export the workload-specific 
 
 ```bash
 touch "$RUN_DIR/SHUTDOWN"
-until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
+until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do
+  kill -0 "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || { cat "$RUN_DIR/flowcept_capture.out"; exit 1; }
+  sleep 1
+done
 
 "$PY" server/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
   > "$EVENTS_JSONL" \
@@ -290,11 +300,16 @@ MONGO_DB="${MONGO_DB:-darshan_${WORKLOAD_NAME}}"
 MONGO_PORT="${MONGO_PORT:-27017}"
 EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-${WORKLOAD_NAME}-events.jsonl}"
 mkdir -p "$RUN_DIR"
-RUN_DIR="$RUN_DIR" MONGO_DB="$MONGO_DB" MONGO_PORT="$MONGO_PORT" \
+MONGOD="${MONGOD:-$(command -v mongod || true)}"
+[[ -x "$MONGOD" ]] || { echo "mongod not found; load MongoDB or set MONGOD=/path/to/mongod"; exit 1; }
+RUN_DIR="$RUN_DIR" MONGO_DB="$MONGO_DB" MONGO_PORT="$MONGO_PORT" MONGOD="$MONGOD" \
 MOFKA_GROUP="$ROOT/server/mofka.json" \
 bash server/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
 FLOWCEPT_CAPTURE_PID=$!
-until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
+until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do
+  kill -0 "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || { cat "$RUN_DIR/flowcept_capture.out"; exit 1; }
+  sleep 1
+done
 
 darshan_ensure_logdir
 
@@ -313,7 +328,10 @@ env \
   2> /tmp/darshan-mofka-${WORKLOAD_NAME}.err
 
 touch "$RUN_DIR/SHUTDOWN"
-until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
+until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do
+  kill -0 "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || { cat "$RUN_DIR/flowcept_capture.out"; exit 1; }
+  sleep 1
+done
 "$PY" server/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
   > "$EVENTS_JSONL" \
   2> "$RUN_DIR/export.count"
