@@ -1,7 +1,7 @@
 #!/bin/bash
 # capture_flowcept.sh -- "scale mode" consumer: FlowCept drains the darshan Mofka
 # topic into MongoDB (instead of capture.py -> flat JSONL). This is the scalable
-# / persistent alternative to server/capture.py. See server/INSTRUCTIONS.md.
+# / persistent alternative to server/capture.py. See the repo README (steps 6-9).
 #
 # It does NOT start the broker -- run server/start-server.sh first (same as the
 # capture.py path). It DOES start a local mongod (FlowCept's sink) and the
