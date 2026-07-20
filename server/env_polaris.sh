@@ -3,10 +3,11 @@
 # Source through env.sh:
 #   source server/env.sh --polaris
 
-_EAGLE="${EAGLE:-/eagle/radix-io/hjajula}"
-_SPACK_OPT="$_EAGLE/mofka_tests/spack/opt/spack"
-_VIEW="$_EAGLE/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view"
-_VENV="${FLOWCEPT_VENV:-$_EAGLE/envs/flowcept-py314}"
+_PROJECT_ROOT="$(cd "$ROOT/.." && pwd)"
+_EAGLE_ROOT="$(cd "$_PROJECT_ROOT/.." && pwd)"
+_SPACK_OPT="$_EAGLE_ROOT/mofka_tests/spack/opt/spack"
+_VIEW="$_EAGLE_ROOT/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view"
+_VENV="${FLOWCEPT_VENV:-$_EAGLE_ROOT/envs/flowcept-py314}"
 
 if command -v module >/dev/null 2>&1; then
     module swap PrgEnv-nvidia PrgEnv-gnu >/dev/null 2>&1 || module load PrgEnv-gnu >/dev/null 2>&1 || true
@@ -25,7 +26,7 @@ export MOFKA_SPACK_VIEW="${MOFKA_SPACK_VIEW:-$_VIEW}"
 if [[ -e "$ROOT/diaspora-stream-api/install/include/diaspora/diaspora_c.h" ]]; then
     DIASPORA_C="$ROOT/diaspora-stream-api/install"
 else
-    DIASPORA_C="${DIASPORA_C:-$_EAGLE/diaspora-c-install}"
+    DIASPORA_C="${DIASPORA_C:-$_EAGLE_ROOT/diaspora-c-install}"
 fi
 export DIASPORA_C
 if [[ -z "${DARSHAN_PREFIX:-}" || ! -e "$DARSHAN_PREFIX/lib/libdarshan.so" ]]; then
@@ -38,6 +39,8 @@ export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 export PYTHONSAFEPATH=1
 
 [[ -d "$_VENV/bin" ]] && export PATH="$_VENV/bin:$PATH"
+[[ -d "$_EAGLE_ROOT/miniconda3_polaris/envs/cll-mongo/bin" ]] && export PATH="$_EAGLE_ROOT/miniconda3_polaris/envs/cll-mongo/bin:$PATH"
+[[ -d "$_EAGLE_ROOT/miniconda3/envs/flowcept-mongo/bin" ]] && export PATH="$_EAGLE_ROOT/miniconda3/envs/flowcept-mongo/bin:$PATH"
 [[ -d "$_VIEW/bin" ]] && export PATH="$_VIEW/bin:$PATH"
 _CMAKE_BIN="$(find "$_SPACK_OPT" -maxdepth 4 -type f -path '*/cmake-*/bin/cmake' 2>/dev/null | head -1)"
 [[ -n "$_CMAKE_BIN" ]] && export PATH="$(dirname "$_CMAKE_BIN"):$PATH"
@@ -62,3 +65,5 @@ _python_site="$_VIEW/lib/python3.14/site-packages"
 _diaspora_python_site="$DIASPORA_C/lib/python3.14/site-packages"
 [[ -d "$_diaspora_python_site" ]] && _python_site="$_diaspora_python_site:$_python_site"
 export MOFKA_PYTHONPATH="$_python_site"
+
+unset _PROJECT_ROOT _EAGLE_ROOT _SPACK_OPT _VIEW _VENV _GCC13_LIB _PYLIB _CMAKE_BIN _python_site _diaspora_python_site

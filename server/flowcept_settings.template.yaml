@@ -8,6 +8,7 @@
 # Placeholders (substituted at run time by capture_flowcept.sh):
 #   __MOFKA_GROUP__ : absolute path to this run's mofka.json (bedrock group file)
 #   __MONGO_DB__    : mongo db name to ingest into
+#   __MONGO_PORT__  : local mongod port for this run
 #   __TOPIC__       : mofka topic/channel to subscribe to -- MUST equal the
 #                     producer's DARSHAN_MOFKA_TOPIC (default "darshan") or the
 #                     consumer subscribes to the wrong topic and lands 0 docs.
@@ -101,7 +102,7 @@ databases:
   mongodb:
     enabled: true
     host: localhost
-    port: 27017
+    port: __MONGO_PORT__
     db: __MONGO_DB__
     create_collection_index: true
 

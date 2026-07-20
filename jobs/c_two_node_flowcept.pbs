@@ -1,0 +1,21 @@
+#!/bin/bash
+#PBS -N dm_c_2node_fc
+#PBS -A radix-io
+#PBS -q preemptable
+#PBS -l select=2:ncpus=8
+#PBS -l walltime=00:10:00
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+
+set -euo pipefail
+export ROOT="${PBS_O_WORKDIR:-$(pwd)}"
+cd "$ROOT"
+export RUN_DIR="$ROOT/server/_pbs_c_2node_${PBS_JOBID}"
+export MOFKA_SERVER_DIR="$RUN_DIR/mofka"
+export MONGO_DB="c_demo_${PBS_JOBID%%.*}"
+export MONGO_PORT="${MONGO_PORT:-$((27017 + ${PBS_JOBID%%.*} % 1000))}"
+export EVENTS_JSONL="$RUN_DIR/events.jsonl"
+mkdir -p "$RUN_DIR" "$MOFKA_SERVER_DIR"
+mpiexec -n 2 --ppn 1 /bin/bash --noprofile --norc "$ROOT/jobs/two_node_demo.sh" c
+cat "$RUN_DIR/export.count"
+wc -l "$EVENTS_JSONL"

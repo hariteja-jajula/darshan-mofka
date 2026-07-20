@@ -73,6 +73,7 @@ for i in $(seq 1 30); do (echo > "/dev/tcp/127.0.0.1/$MONGO_PORT") 2>/dev/null &
 FLOWCEPT_SETTINGS="$RUN_DIR/flowcept_settings.yaml"
 sed -e "s|__MOFKA_GROUP__|$MOFKA_GROUP|g" \
     -e "s|__MONGO_DB__|$MONGO_DB|g" \
+    -e "s|__MONGO_PORT__|$MONGO_PORT|g" \
     -e "s|__TOPIC__|$TOPIC|g" \
     -e "s|__ENV_ID__|$(hostname -s)-$$|g" \
     "$SETTINGS_TEMPLATE" > "$FLOWCEPT_SETTINGS"

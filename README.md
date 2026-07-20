@@ -353,15 +353,39 @@ grep -E '"op":"(read|write)"' "$EVENTS_JSONL" | head
 bash server/stop-server.sh
 ```
 
-## Optional DLIO Quickstart
+## Two-Node C And DLIO Demo
 
-This is the upstream DLIO quickstart. If DLIO is used as a Darshan-Mofka workload, start Mofka and FlowCept first, then choose a separate `MONGO_DB` and `EVENTS_JSONL` for the DLIO run.
+For overhead demos, do not co-locate the workload with Mofka, MongoDB, and FlowCept. Use two nodes: rank 0 runs the services, rank 1 runs the Darshan-instrumented workload.
+
+From this repo in an interactive allocation or as batch jobs:
 
 ```bash
-git clone https://github.com/argonne-lcf/dlio_benchmark
-cd dlio_benchmark/
-pip install .
-dlio_benchmark ++workload.workflow.generate_data=True
+source server/env.sh --polaris
+qsub jobs/c_two_node_flowcept.pbs
+qsub jobs/dlio_two_node_flowcept.pbs
+```
+
+Both jobs write all artifacts under `server/_pbs_*_<jobid>/`. The exported stream is `events.jsonl`; `export.count` should say `exported N` with `N > 0`.
+
+The DLIO job defaults to the sibling checkout at `../dlio_benchmark/dlio_benchmark`. Override with `DLIO_ROOT=/path/to/dlio_benchmark` if needed. It intentionally uses a tiny dataset so tomorrow's demo proves the path quickly:
+
+```bash
+DLIO_NUM_FILES_TRAIN=2 DLIO_NUM_FILES_EVAL=1 DLIO_EVALUATION=False \
+  qsub jobs/dlio_two_node_flowcept.pbs
+```
+
+For a manual interactive run, allocate two nodes, then run the same helper through MPI:
+
+```bash
+source server/env.sh --polaris
+export RUN_DIR="$ROOT/server/_interactive_dlio_$(date +%Y%m%d_%H%M%S)"
+export MOFKA_SERVER_DIR="$RUN_DIR/mofka"
+export MONGO_DB="interactive_dlio"
+export MONGO_PORT=27017
+export EVENTS_JSONL="$RUN_DIR/events.jsonl"
+mkdir -p "$RUN_DIR" "$MOFKA_SERVER_DIR"
+mpiexec -n 2 --ppn 1 /bin/bash --noprofile --norc "$ROOT/jobs/two_node_demo.sh" dlio
+cat "$RUN_DIR/export.count"
 ```
 
 ## What Gets Streamed

@@ -22,6 +22,12 @@
 *.o
 *.log
 *.pyc
+/dm_*.o*
+/dm_*.e*
+/data/
+/hydra_log/
+/server/_pbs_*/
+/server/_flowcept_run*/
 core
 core.*
 __pycache__/
