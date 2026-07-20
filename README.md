@@ -47,7 +47,8 @@ darshan-mofka/
 │   ├── spack/            Spack spec to rebuild the Mofka/FlowCept stack on Polaris
 │   └── requirements.txt  Python deps for the FlowCept consumer venv
 ├── jobs/                 job.sh: one-shot end-to-end demo on a compute node
-└── workloads/            demo workload: mofka_forward_smoke.c
+└── workloads/            demo workloads: mofka_forward_smoke.c (POSIX/STDIO),
+                          mofka_forward_mpiio.c (MPI-IO)
 ```
 
 The old overhead-study jobs, result scripts, slides, and extra workloads were cut
@@ -154,11 +155,16 @@ cd darshan
 cd ..
 ```
 
-Build the workload:
+Build the workloads (the non-MPI smoke test and the MPI-IO test):
 
 ```bash
 "$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
+"$CC" -O2 workloads/mofka_forward_mpiio.c -o workloads/mofka_forward_mpiio
 ```
+
+`mofka_forward_mpiio` exercises the MPIIO module (and its `MPI_File_close`
+streaming hook). On Polaris the Cray `cc` wrapper is MPI-aware, so `$CC` links
+MPI automatically; on other systems use `mpicc`.
 
 Confirm the Darshan library path:
 
@@ -274,6 +280,41 @@ grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-workload.err | wc -l
 ```
 
 Expected: the workload prints `mofka_forward_smoke complete...` and the send count is nonzero.
+
+### 7b. Run The MPI-IO Workload (exercises the MPIIO module)
+
+To test the MPIIO -> Mofka path, run the MPI workload under `mpiexec`. This is a
+real MPI job, so do **not** set `DARSHAN_ENABLE_NONMPI`. Use more than one rank so
+the shared-file / cross-rank behavior is exercised:
+
+```bash
+darshan_ensure_logdir
+
+mpiexec -n 4 env \
+  DARSHAN_MOFKA_ENABLE=1 \
+  DARSHAN_MOFKA_GROUP_FILE="$ROOT/server/mofka.json" \
+  DARSHAN_MOFKA_TOPIC=darshan \
+  DARSHAN_MOFKA_TIMING=1 \
+  DARSHAN_MOFKA_FLUSH_MS=10000 \
+  DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
+  LD_PRELOAD="$(darshan_lib)" \
+  ./workloads/mofka_forward_mpiio /tmp/mofka-forward-mpiio \
+  > /tmp/darshan-mofka-mpiio.out \
+  2> /tmp/darshan-mofka-mpiio.err
+```
+
+Check it ran and streamed MPIIO events (including close):
+
+```bash
+cat /tmp/darshan-mofka-mpiio.out
+grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-mpiio.err | wc -l
+grep -c '"module":"MPIIO"' "$EVENTS_JSONL"     # after the consumer drains
+```
+
+Expected: prints `mofka_forward_mpiio complete...`, a nonzero send count, and
+MPIIO events (with `"op":"close"` present) in the captured JSONL. For a lossless
+manual capture, pass the exact expected event count as `capture.py`'s target, or
+start the consumer before the workload with a generous idle timeout.
 
 ## 8. Stop FlowCept And Export JSONL
 
