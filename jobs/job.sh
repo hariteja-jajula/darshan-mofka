@@ -1,6 +1,6 @@
 #!/bin/bash
 #PBS -N darshan_mofka_demo
-#PBS -A radix-io
+#PBS -A PROJECT
 #PBS -q debug
 #PBS -l select=1:ncpus=32
 #PBS -l walltime=00:30:00
@@ -10,8 +10,10 @@
 # End-to-end README demo on a compute node:
 #   broker -> live FlowCept consumer -> Darshan-instrumented workload -> MongoDB -> JSONL
 # Runs two workloads: the C smoke test and DLIO. Run it either way:
-#   bash jobs/job.sh     # self-submits to a compute node, prints the job id
-#   qsub jobs/job.sh     # submit directly
+#   PBS_ACCOUNT=<your_project> bash jobs/job.sh   # self-submits to a compute node
+#   qsub -A <your_project> jobs/job.sh            # submit directly
+# The '#PBS -A PROJECT' line above is a placeholder; set your allocation via
+# PBS_ACCOUNT (bash path) or 'qsub -A' (direct path).
 set -uo pipefail
 
 # --- keep all real work on compute nodes: self-submit when run on a login node ---
@@ -20,12 +22,14 @@ set -uo pipefail
 # environment. Set MONGOD=/path/to/mongod, or put mongod on PATH, before running.
 if [[ -z "${PBS_JOBID:-}" ]]; then
     cd "$(dirname "${BASH_SOURCE[0]}")/.."
+    ACCOUNT="${PBS_ACCOUNT:-${PBS_A:-}}"
+    [[ -n "$ACCOUNT" ]] || { echo "set your allocation: PBS_ACCOUNT=<project> bash jobs/job.sh"; exit 1; }
     MONGOD="${MONGOD:-$(command -v mongod || true)}"
     [[ -x "$MONGOD" ]] || { echo "mongod not found; set MONGOD=/path/to/mongod or put it on PATH"; exit 1; }
     # forward MONGOD (always) and MOFKA_SPACK_VIEW (if the user overrode it) into the job
     FWD="MONGOD=$MONGOD"
     [[ -n "${MOFKA_SPACK_VIEW:-}" ]] && FWD="$FWD,MOFKA_SPACK_VIEW=$MOFKA_SPACK_VIEW"
-    exec qsub -v "$FWD" jobs/job.sh
+    exec qsub -A "$ACCOUNT" -v "$FWD" jobs/job.sh
 fi
 
 ROOT="${PBS_O_WORKDIR:-$(pwd)}"; cd "$ROOT"

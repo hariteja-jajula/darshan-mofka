@@ -8,18 +8,28 @@ them to Mofka, and FlowCept drains the topic into MongoDB.
 
 ## Prerequisites
 
-Two things live outside this repo and must exist before the steps below work:
+Three things live outside this repo and must exist before the steps below work:
 
 1. **A built Mofka/FlowCept Spack view** (Bedrock, Mochi, Mofka, Darshan). These are
    ~1 GB of compiled binaries, not committed. Rebuild them from the vendored spec in
    `server/spack/` (see `server/spack/README.md`), then point `MOFKA_SPACK_VIEW` at the
    resulting view. `server/env_polaris.sh` also auto-detects it if it sits at the
    author's default layout, but on a fresh account set `MOFKA_SPACK_VIEW` explicitly.
-2. **`mongod`** (MongoDB) — FlowCept's sink. It is not on `PATH` by default; put it on
+2. **A Python venv** with the FlowCept consumer's deps. Create it on top of the Spack
+   view's python and install the requirements plus the flowcept submodule:
+   ```bash
+   python -m venv ../envs/flowcept-py314        # or anywhere; see env_polaris.sh
+   source ../envs/flowcept-py314/bin/activate
+   pip install -r server/requirements.txt       # PyPI deps (pymongo, redis, ...)
+   pip install -e flowcept/                      # the flowcept submodule
+   ```
+   `server/requirements.lock.txt` has the exact frozen set if you need to reproduce it.
+   (mochi.mofka / pydiaspora come from the Spack view, not pip.)
+3. **`mongod`** (MongoDB) — FlowCept's sink. It is not on `PATH` by default; put it on
    `PATH` or set `MONGOD=/path/to/mongod` (see step 6).
 
-The quickest path once both exist: `bash jobs/job.sh` runs the whole pipeline below on a
-compute node in one shot.
+The quickest path once all three exist: `PBS_ACCOUNT=<your_project> bash jobs/job.sh`
+runs the whole pipeline below on a compute node in one shot.
 
 ## Polaris Allocation
 
@@ -34,7 +44,8 @@ darshan-mofka/
 ├── darshan/              Darshan submodule with the Mofka connector
 ├── diaspora-stream-api/  Diaspora C API submodule used by the connector
 ├── server/               environment, broker start/stop, capture consumer
-│   └── spack/            Spack spec to rebuild the Mofka/FlowCept stack on Polaris
+│   ├── spack/            Spack spec to rebuild the Mofka/FlowCept stack on Polaris
+│   └── requirements.txt  Python deps for the FlowCept consumer venv
 ├── jobs/                 job.sh: one-shot end-to-end demo on a compute node
 └── workloads/            demo workload: mofka_forward_smoke.c
 ```
