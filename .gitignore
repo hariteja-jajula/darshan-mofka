@@ -18,6 +18,15 @@
 # machine-specific environment
 /server/env.local.sh
 
+# job run outputs and artifacts
+/server/_pbs_*/
+/server/_diag_*/
+/server/_scale_*/
+/server/_flowcept_run/
+*.o[0-9]*
+/data/
+/hydra_log/
+
 # generated files and crashes
 *.o
 *.log

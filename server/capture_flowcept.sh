@@ -1,7 +1,7 @@
 #!/bin/bash
 # capture_flowcept.sh -- "scale mode" consumer: FlowCept drains the darshan Mofka
 # topic into MongoDB (instead of capture.py -> flat JSONL). This is the scalable
-# / persistent alternative to server/capture.py. See server/INSTRUCTIONS.md.
+# / persistent alternative to server/capture.py. See the repo README (steps 6-9).
 #
 # It does NOT start the broker -- run server/start-server.sh first (same as the
 # capture.py path). It DOES start a local mongod (FlowCept's sink) and the
@@ -10,8 +10,8 @@
 #
 # Flow:
 #   1. server/start-server.sh        (broker + darshan topic + mofka.json)
-#   2. server/capture_flowcept.sh &  (mongod + flowcept consumer; this script)
-#   3. run the darshan-instrumented workload (README section 5)
+#   2. server/capture_flowcept.sh &  (mongod + FlowCept consumer; this script)
+#   3. run the Darshan-instrumented workload while FlowCept drains the topic
 #   4. touch "$SHUTDOWN_FLAG"         (tells this script to flush + stop)
 #   5. server/export_jsonl.py ...     (mongo -> events.jsonl for the reconstructor)
 #
@@ -45,7 +45,7 @@ echo "=== [flowcept-capture] topic=$TOPIC db=$MONGO_DB run_dir=$RUN_DIR ==="
 
 # --- preflight -------------------------------------------------------------
 [[ -s "$MOFKA_GROUP" ]] || { echo "[fc] FAIL: no mofka group file at $MOFKA_GROUP -- run server/start-server.sh first"; exit 1; }
-[[ -n "$MONGOD" && -x "$MONGOD" ]] || { echo "[fc] FAIL: mongod not found (set MONGOD=/path/to/mongod)"; exit 1; }
+[[ -n "$MONGOD" && -x "$MONGOD" ]] || { echo "[fc] FAIL: mongod not found on PATH; load MongoDB or set MONGOD=/path/to/mongod"; exit 1; }
 "$PY" -c "import flowcept.cli" 2>/dev/null || { echo "[fc] FAIL: flowcept.cli not importable -- did you 'git submodule update --init --recursive' and pip-install deps/flowcept?"; exit 1; }
 "$PY" -c "import pymongo" 2>/dev/null || { echo "[fc] FAIL: pymongo not importable"; exit 1; }
 

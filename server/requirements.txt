@@ -1,0 +1,23 @@
+# Python deps for the FlowCept consumer side of the demo.
+#
+# Install into the py3.14 venv that layers on the Spack view (see server/spack/README.md):
+#   python -m venv <venv> && source <venv>/bin/activate
+#   pip install -r server/requirements.txt
+#   pip install -e ../flowcept        # the flowcept submodule (editable)
+#
+# NOT listed here (provided elsewhere, do NOT pip install):
+#   - mochi.mofka / py-mochi-margo / pydiaspora_stream_api  -> from the Spack view
+#   - flowcept                                              -> pip install -e flowcept/
+#   - pydarshan                                             -> optional, from darshan/darshan-util/pydarshan
+#
+# Versions below are the ones validated on Polaris (2026-07). Loosen if you need to.
+pymongo==4.17.0          # FlowCept's MongoDB sink
+redis==8.0.0             # flowcept[redis]; imported even when kvdb is disabled
+pydantic==2.13.4
+pydantic-settings==2.14.2
+omegaconf==2.3.0
+msgpack==1.1.2
+ormsgpack==1.12.2
+orjson==3.11.9
+numpy==2.4.6
+psutil==7.2.2

@@ -32,7 +32,10 @@ else
     DIASPORA_C="${DIASPORA_C:-$HOME/diaspora-c-install}"
 fi
 export DIASPORA_C
-export DARSHAN_PREFIX="${DARSHAN_PREFIX:-$ROOT/darshan/install}"
+if [[ -z "${DARSHAN_PREFIX:-}" || ! -e "$DARSHAN_PREFIX/lib/libdarshan.so" ]]; then
+    DARSHAN_PREFIX="$ROOT/darshan/install"
+fi
+export DARSHAN_PREFIX
 export MOFKA_PROTOCOL=verbs
 export CC="${CC:-$(command -v gcc || true)}"
 export CXX="${CXX:-$(command -v g++ || true)}"
