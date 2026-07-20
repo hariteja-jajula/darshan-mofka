@@ -10,8 +10,8 @@
 #
 # Flow:
 #   1. server/start-server.sh        (broker + darshan topic + mofka.json)
-#   2. server/capture_flowcept.sh &  (mongod + flowcept consumer; this script)
-#   3. run the darshan-instrumented workload (README section 5)
+#   2. server/capture_flowcept.sh &  (mongod + FlowCept consumer; this script)
+#   3. run the Darshan-instrumented workload while FlowCept drains the topic
 #   4. touch "$SHUTDOWN_FLAG"         (tells this script to flush + stop)
 #   5. server/export_jsonl.py ...     (mongo -> events.jsonl for the reconstructor)
 #

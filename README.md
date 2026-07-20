@@ -136,9 +136,29 @@ pip install .
 dlio_benchmark ++workload.workflow.generate_data=True
 ```
 
-## 6. Run The Darshan-Instrumented Workload
+## 6. Start FlowCept As The Live Consumer
 
-Run the C workload under Darshan and enable Mofka streaming:
+Start FlowCept before the workload. It runs in the background and continuously drains the `darshan` Mofka topic into MongoDB.
+
+```bash
+RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
+MONGO_DB="${MONGO_DB:-darshan_stream}"
+MONGO_PORT="${MONGO_PORT:-27017}"
+mkdir -p "$RUN_DIR"
+
+RUN_DIR="$RUN_DIR" \
+MONGO_DB="$MONGO_DB" \
+MONGO_PORT="$MONGO_PORT" \
+MOFKA_GROUP="$ROOT/server/mofka.json" \
+bash server/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
+FLOWCEPT_CAPTURE_PID=$!
+
+until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
+```
+
+## 7. Run The Darshan-Instrumented Workload
+
+Run the C workload under Darshan while FlowCept is draining the topic:
 
 ```bash
 darshan_ensure_logdir
@@ -158,51 +178,35 @@ env \
   2> /tmp/darshan-mofka-workload.err
 ```
 
-Check that the workload ran:
+Check that the workload ran and sent events:
 
 ```bash
 cat /tmp/darshan-mofka-workload.out
-```
-
-Expected:
-
-```text
-mofka_forward_smoke complete: wrote/read POSIX and STDIO files in /tmp/mofka-forward-smoke
-```
-
-Check that the connector sent events:
-
-```bash
 grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-workload.err | wc -l
 ```
 
-Expected: a nonzero count. In the simple login-node smoke run this was `12`.
+Expected: the workload prints `mofka_forward_smoke complete...` and the send count is nonzero.
 
-## 7. Capture Events From Mofka
+## 8. Stop FlowCept And Export JSONL
 
-Use the consumer in `server/capture.py` to drain the `darshan` topic to JSONL:
+Tell FlowCept to flush and stop its consumer, then export the MongoDB records to JSONL for validation or reconstruction:
 
 ```bash
-timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
+touch "$RUN_DIR/SHUTDOWN"
+until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
+
+"$PY" server/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
   > /tmp/darshan-mofka-events.jsonl \
-  2> /tmp/darshan-mofka-capture.count
+  2> /tmp/darshan-mofka-export.count
+
+cat /tmp/darshan-mofka-export.count
+kill "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
+wait "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 ```
 
-Print the captured count:
+`server/capture.py` is still available as a simple debug drain, but the FlowCept path above is the live consumer path.
 
-```bash
-cat /tmp/darshan-mofka-capture.count
-```
-
-Expected:
-
-```text
-captured N
-```
-
-where `N` is nonzero. The earlier simple smoke run captured `12` events.
-
-## 8. Verify The Captured Events
+## 9. Verify The Captured Events
 
 Check for POSIX events:
 
@@ -243,10 +247,10 @@ PY
 If you see `POSIX`, `STDIO`, and read/write operations, the full path worked:
 
 ```text
-C workload -> Darshan connector -> Mofka topic -> capture.py consumer -> JSONL file
+C workload -> Darshan connector -> Mofka topic -> FlowCept consumer -> MongoDB -> JSONL file
 ```
 
-## 9. Reconstruct A Partial Darshan Log
+## 10. Reconstruct A Partial Darshan Log
 
 If the normal Darshan shutdown path fails and no final `.darshan` log is produced,
 the captured stream can be converted into a best-effort partial Darshan log:
@@ -266,7 +270,7 @@ Validate the reconstructed log with Darshan's parser:
 The reconstructed log is intentionally marked partial. It contains the latest module
 record snapshots that reached Mofka, plus synthetic job/exe/mount metadata.
 
-## 10. Stop Server
+## 11. Stop Server
 
 Stop the broker when done:
 
@@ -282,6 +286,17 @@ After everything has been built once, this block runs the full demo:
 source server/env.sh --polaris  # or: source server/env.sh --lcrc on LCRC/Improv
 bash server/start-server.sh
 "$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
+
+RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
+MONGO_DB="${MONGO_DB:-darshan_stream}"
+MONGO_PORT="${MONGO_PORT:-27017}"
+mkdir -p "$RUN_DIR"
+RUN_DIR="$RUN_DIR" MONGO_DB="$MONGO_DB" MONGO_PORT="$MONGO_PORT" \
+MOFKA_GROUP="$ROOT/server/mofka.json" \
+bash server/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
+FLOWCEPT_CAPTURE_PID=$!
+until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
+
 darshan_ensure_logdir
 
 env \
@@ -298,12 +313,16 @@ env \
   > /tmp/darshan-mofka-workload.out \
   2> /tmp/darshan-mofka-workload.err
 
-timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
+touch "$RUN_DIR/SHUTDOWN"
+until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do sleep 1; done
+"$PY" server/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
   > /tmp/darshan-mofka-events.jsonl \
-  2> /tmp/darshan-mofka-capture.count
+  2> /tmp/darshan-mofka-export.count
+kill "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
+wait "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 
 cat /tmp/darshan-mofka-workload.out
-cat /tmp/darshan-mofka-capture.count
+cat /tmp/darshan-mofka-export.count
 grep '"module":"POSIX"' /tmp/darshan-mofka-events.jsonl | head
 grep '"module":"STDIO"' /tmp/darshan-mofka-events.jsonl | head
 grep -E '"op":"(read|write)"' /tmp/darshan-mofka-events.jsonl | head
