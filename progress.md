@@ -123,10 +123,16 @@ clone by anyone else had no way to get or rebuild it. Fixed:
   INGEST PASS, 26 events (C:12 + DLIO:14) -> Mongo -> 26 JSONL. Broker ran from the
   native view.
 
-Remaining non-reproducible piece: the py3.14 **venv** (flowcept/mochi/pymongo) is still
-pip-installed on the author's base python; it runs fine layered on the native view's
-libs. Regenerating it from scratch (venv + `pip install -e flowcept/` + mochi wheels) is
-the last portability gap, documented in `server/spack/README.md`.
+Python side is now reproducible too: `server/requirements.txt` (curated PyPI deps) +
+`server/requirements.lock.txt` (exact frozen set). **Verified**: a throwaway venv built
+from the Spack-view python + `pip install -r server/requirements.txt` + `pip install -e
+flowcept/` imports flowcept.cli, mochi.mofka, pydiaspora, pymongo, redis, msgpack. mochi/
+pydiaspora come from the Spack view; only flowcept + PyPI deps are pip-installed.
+
+Portability: `jobs/job.sh` no longer hardcodes an ALCF project — `#PBS -A` is a
+placeholder; the allocation comes from `PBS_ACCOUNT` (bash path) or `qsub -A` (direct).
+Verified both paths (7263603: `PBS_ACCOUNT=radix-io bash jobs/job.sh` -> Account_Name
+radix-io -> INGEST PASS 26 events). A darshan-dev on any Polaris project can now run it.
 
 ## Status: ready to share
 
