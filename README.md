@@ -3,8 +3,9 @@
 Minimal demo for streaming Darshan runtime I/O events into a Mofka topic.
 
 The demo runs one small C program under `LD_PRELOAD=libdarshan.so`. Darshan
-intercepts the program's POSIX/STDIO I/O calls, builds JSON metadata events, pushes
-them to Mofka, and `server/capture.py` consumes those events back out of the topic.
+intercepts the program's POSIX/STDIO I/O calls, builds JSON metadata events,
+pushes them to Mofka, and the capture path reconstructs a best-effort partial
+`.darshan` log from the streamed records.
 
 ## Repository Layout
 
@@ -13,25 +14,59 @@ darshan-mofka/
 ├── darshan/              Darshan submodule with the Mofka connector
 ├── diaspora-stream-api/  Diaspora C API submodule used by the connector
 ├── server/               environment, broker start/stop, capture consumer
+│   └── spack/            Spack environment for rebuilding the Mofka stack
 └── workloads/            demo workload: mofka_forward_smoke.c
 ```
 
 The old overhead-study jobs, result scripts, slides, and extra workloads were cut
 from this branch. Recover them from the study branch if needed.
 
+## 0. Rebuild The Spack View On Polaris
+
+Compiled Mofka/Bedrock/Mochi dependencies are not committed to this repository.
+For a reproducible checkout under `$HOME`, build a user-owned Spack view from the
+vendored environment in `server/spack/`:
+
+```bash
+git clone https://github.com/spack/spack.git "$HOME/mofka_tests/spack"
+source "$HOME/mofka_tests/spack/share/spack/setup-env.sh"
+
+cd /path/to/darshan-mofka
+spack env create -d "$HOME/mofka_tests/spack/var/spack/environments/flowcept-mofka" server/spack
+spack env activate "$HOME/mofka_tests/spack/var/spack/environments/flowcept-mofka"
+spack concretize -f
+spack install
+```
+
+Then point the demo at that view before sourcing `server/env.sh`:
+
+```bash
+export MOFKA_SPACK_VIEW="$HOME/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view"
+source server/env.sh --polaris
+which cmake
+cmake --version
+```
+
+The environment requests `cmake@3.31.11` and disables Mercury shared-memory
+transport (`~sm`) because Polaris may block cross-memory attach with Yama. Use
+`MOFKA_PROTOCOL=ofi+tcp` unless you have validated another provider for your
+allocation.
+
 ## 1. Prepare Environment
 
-From the repository root on LCRC/Improv:
+From the repository root:
 
 ```bash
 git submodule update --init --recursive
-source server/env.sh --lcrc
+source server/env.sh --polaris  # Polaris
+# source server/env.sh --lcrc   # LCRC/Improv
 ```
 
 Check that the main tools are visible:
 
 ```bash
 printf 'MOFKA_SPACK_VIEW=%s\n' "$MOFKA_SPACK_VIEW"
+command -v cmake
 command -v bedrock
 command -v "$CC"
 printf 'MOFKA_PROTOCOL=%s\n' "$MOFKA_PROTOCOL"
@@ -168,84 +203,27 @@ grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-workload.err | wc -l
 
 Expected: a nonzero count. In the simple login-node smoke run this was `12`.
 
-## 6. Capture Events From Mofka
+## 6. Capture Events As A Partial Darshan Log
 
-Use the consumer in `server/capture.py` to drain the `darshan` topic to JSONL:
+Use the consumer in `server/capture.py` and pipe the streamed JSON records directly
+into `darshan-mofka-reconstruct`. The stored artifact is the reconstructed
+`.darshan` file; JSONL does not need to be written to disk for the normal path.
 
 ```bash
 timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
-  > /tmp/darshan-mofka-events.jsonl \
-  2> /tmp/darshan-mofka-capture.count
+  | ./darshan/install/bin/darshan-mofka-reconstruct - /tmp/job_partial.darshan \
+  2> /tmp/darshan-mofka-reconstruct.count
 ```
 
-Print the captured count:
+Print the reconstruction count:
 
 ```bash
-cat /tmp/darshan-mofka-capture.count
+cat /tmp/darshan-mofka-reconstruct.count
 ```
 
-Expected:
+Expected: a nonzero number of streamed events and module records.
 
-```text
-captured N
-```
-
-where `N` is nonzero. The earlier simple smoke run captured `12` events.
-
-## 7. Verify The Captured Events
-
-Check for POSIX events:
-
-```bash
-grep '"module":"POSIX"' /tmp/darshan-mofka-events.jsonl | head
-```
-
-Check for STDIO events:
-
-```bash
-grep '"module":"STDIO"' /tmp/darshan-mofka-events.jsonl | head
-```
-
-Check for read/write operations:
-
-```bash
-grep -E '"op":"(read|write)"' /tmp/darshan-mofka-events.jsonl | head
-```
-
-A compact summary is often easier to read:
-
-```bash
-"$PY" - <<'PY'
-import json
-from collections import Counter
-mods = Counter()
-ops = Counter()
-with open('/tmp/darshan-mofka-events.jsonl') as f:
-    for line in f:
-        ev = json.loads(line)
-        mods[ev.get('module')] += 1
-        ops[ev.get('op')] += 1
-print('modules:', dict(mods))
-print('ops:', dict(ops))
-PY
-```
-
-If you see `POSIX`, `STDIO`, and read/write operations, the full path worked:
-
-```text
-C workload -> Darshan connector -> Mofka topic -> capture.py consumer -> JSONL file
-```
-
-## 8. Reconstruct A Partial Darshan Log
-
-If the normal Darshan shutdown path fails and no final `.darshan` log is produced,
-the captured stream can be converted into a best-effort partial Darshan log:
-
-```bash
-./darshan/install/bin/darshan-mofka-reconstruct \
-  /tmp/darshan-mofka-events.jsonl \
-  /tmp/job_partial.darshan
-```
+## 7. Verify The Partial Darshan Log
 
 Validate the reconstructed log with Darshan's parser:
 
@@ -256,7 +234,29 @@ Validate the reconstructed log with Darshan's parser:
 The reconstructed log is intentionally marked partial. It contains the latest module
 record snapshots that reached Mofka, plus synthetic job/exe/mount metadata.
 
-## 9. Stop Server
+If you need to debug the raw stream, capture JSONL explicitly:
+
+```bash
+timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
+  > /tmp/darshan-mofka-events.jsonl \
+  2> /tmp/darshan-mofka-capture.count
+```
+
+Then inspect it with `grep` or pass it to the same reconstructor:
+
+```bash
+./darshan/install/bin/darshan-mofka-reconstruct \
+  /tmp/darshan-mofka-events.jsonl \
+  /tmp/job_partial.darshan
+```
+
+If the parser shows POSIX/STDIO records, the full path worked:
+
+```text
+C workload -> Darshan connector -> Mofka topic -> capture.py consumer -> partial .darshan log
+```
+
+## 8. Stop Server
 
 Stop the broker when done:
 
@@ -289,18 +289,11 @@ env \
   2> /tmp/darshan-mofka-workload.err
 
 timeout 45 "$PY" server/capture.py "$ROOT/server/mofka.json" darshan 100 5 \
-  > /tmp/darshan-mofka-events.jsonl \
-  2> /tmp/darshan-mofka-capture.count
+  | ./darshan/install/bin/darshan-mofka-reconstruct - /tmp/job_partial.darshan \
+  2> /tmp/darshan-mofka-reconstruct.count
 
 cat /tmp/darshan-mofka-workload.out
-cat /tmp/darshan-mofka-capture.count
-grep '"module":"POSIX"' /tmp/darshan-mofka-events.jsonl | head
-grep '"module":"STDIO"' /tmp/darshan-mofka-events.jsonl | head
-grep -E '"op":"(read|write)"' /tmp/darshan-mofka-events.jsonl | head
-
-./darshan/install/bin/darshan-mofka-reconstruct \
-  /tmp/darshan-mofka-events.jsonl \
-  /tmp/job_partial.darshan
+cat /tmp/darshan-mofka-reconstruct.count
 ./darshan/install/bin/darshan-parser --show-incomplete /tmp/job_partial.darshan | head -80
 
 bash server/stop-server.sh

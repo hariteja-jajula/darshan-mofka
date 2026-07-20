@@ -9,8 +9,9 @@
 # reconstructor stays unchanged and DB-agnostic:
 #
 #     server/export_jsonl.py <mongo_host> <mongo_db> [--topic-schema darshan_runtime] \
-#         > events.jsonl
-#     ./darshan/install/bin/darshan-mofka-reconstruct events.jsonl job_partial.darshan
+#         | ./darshan/install/bin/darshan-mofka-reconstruct - job_partial.darshan
+#
+# Use --out only when you explicitly want JSONL for debugging.
 #
 # Only darshan task docs are exported (schema in {darshan_runtime,
 # darshan_runtime_agg}); FlowCept's own workflow/bookkeeping docs are skipped.

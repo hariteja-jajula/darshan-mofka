@@ -80,6 +80,8 @@ _prepend() { # _prepend VARNAME dir  (only if dir exists and is non-empty)
     export "$var=$dir:${!var:-}"
 }
 
+_prepend PATH "$HOME/.local/bin"
+
 if [[ -n "$MOFKA_SPACK_VIEW" ]]; then
     _prepend PATH            "$MOFKA_SPACK_VIEW/bin"
     _prepend LD_LIBRARY_PATH "$MOFKA_SPACK_VIEW/lib"
