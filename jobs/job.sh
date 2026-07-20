@@ -22,7 +22,10 @@ if [[ -z "${PBS_JOBID:-}" ]]; then
     cd "$(dirname "${BASH_SOURCE[0]}")/.."
     MONGOD="${MONGOD:-$(command -v mongod || true)}"
     [[ -x "$MONGOD" ]] || { echo "mongod not found; set MONGOD=/path/to/mongod or put it on PATH"; exit 1; }
-    exec qsub -v MONGOD="$MONGOD" jobs/job.sh
+    # forward MONGOD (always) and MOFKA_SPACK_VIEW (if the user overrode it) into the job
+    FWD="MONGOD=$MONGOD"
+    [[ -n "${MOFKA_SPACK_VIEW:-}" ]] && FWD="$FWD,MOFKA_SPACK_VIEW=$MOFKA_SPACK_VIEW"
+    exec qsub -v "$FWD" jobs/job.sh
 fi
 
 ROOT="${PBS_O_WORKDIR:-$(pwd)}"; cd "$ROOT"

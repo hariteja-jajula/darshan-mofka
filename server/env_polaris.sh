@@ -4,7 +4,11 @@
 
 _PROJECT_ROOT="$(cd "$ROOT/.." && pwd)"
 _SPACK_OPT="$_PROJECT_ROOT/../mofka_tests/spack/opt/spack"
-_VIEW="$_PROJECT_ROOT/../mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view"
+_SPACK_ENVS="$_PROJECT_ROOT/../mofka_tests/spack/var/spack/environments"
+# Prefer the Polaris-native view (reproducible from server/spack/); fall back to the
+# older Improv-transferred view. Override either by exporting MOFKA_SPACK_VIEW.
+_VIEW="$_SPACK_ENVS/flowcept-mofka-polaris/.spack-env/view"
+[[ -d "$_VIEW" ]] || _VIEW="$_SPACK_ENVS/flowcept-mofka/.spack-env/view"
 _VENV="$_PROJECT_ROOT/../envs/flowcept-py314"
 
 if command -v module >/dev/null 2>&1; then
