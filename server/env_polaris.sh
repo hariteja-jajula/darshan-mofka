@@ -44,10 +44,19 @@ export PYTHONSAFEPATH=1
 [[ -n "$_CMAKE_BIN" ]] && export PATH="$(dirname "$_CMAKE_BIN"):$PATH"
 [[ -d "$_VIEW/lib" ]] && export LD_LIBRARY_PATH="$_VIEW/lib:${LD_LIBRARY_PATH:-}"
 [[ -d "$_VIEW/lib64" ]] && export LD_LIBRARY_PATH="$_VIEW/lib64:${LD_LIBRARY_PATH:-}"
+# Cray libfabric is a PE external (not bundled in the view); its lib64 must be on the
+# path for the Mofka/OFI transport. Prefer the loaded module, else the newest install.
+_OFI_LIB="${CRAY_LIBFABRIC_PREFIX:+$CRAY_LIBFABRIC_PREFIX/lib64}"
+[[ -d "$_OFI_LIB" ]] || _OFI_LIB="$(compgen -G '/opt/cray/libfabric/*/lib64' | sort -V | tail -1)"
+[[ -n "$_OFI_LIB" && -d "$_OFI_LIB" ]] && export LD_LIBRARY_PATH="$_OFI_LIB:${LD_LIBRARY_PATH:-}"
 [[ -n "$_PYLIB" && -d "$_PYLIB" ]] && export LD_LIBRARY_PATH="$_PYLIB:${LD_LIBRARY_PATH:-}"
 [[ -n "$_GCC13_LIB" && -d "$_GCC13_LIB" ]] && export LD_LIBRARY_PATH="$_GCC13_LIB:${LD_LIBRARY_PATH:-}"
 
-if command -v python3 >/dev/null 2>&1; then
+# Prefer the venv python (it has flowcept/mochi/pymongo pip-installed); it layers on
+# top of the spack view's libs already on LD_LIBRARY_PATH. Fall back to PATH python3.
+if [[ -x "$_VENV/bin/python3" ]]; then
+    export PY="$_VENV/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
     export PY="$(command -v python3)"
 fi
 if command -v cc >/dev/null 2>&1; then
@@ -62,4 +71,4 @@ _diaspora_python_site="$DIASPORA_C/lib/python3.14/site-packages"
 [[ -d "$_diaspora_python_site" ]] && _python_site="$_diaspora_python_site:$_python_site"
 export MOFKA_PYTHONPATH="$_python_site"
 
-unset _PROJECT_ROOT _SPACK_OPT _VIEW _VENV _GCC13_LIB _PYLIB _CMAKE_BIN _python_site _diaspora_python_site
+unset _OFI_LIB _SPACK_ENVS _PROJECT_ROOT _SPACK_OPT _VIEW _VENV _GCC13_LIB _PYLIB _CMAKE_BIN _python_site _diaspora_python_site
