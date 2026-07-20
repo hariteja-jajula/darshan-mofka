@@ -56,7 +56,9 @@ def main() -> int:
     try:
         cursor = coll.find(query, {"_id": 0}).sort("seq", ASCENDING)
         for doc in cursor:
-            out.write(json.dumps(doc, separators=(",", ":")) + "\n")
+            # FlowCept stores some fields (e.g. ended_at) as native datetimes,
+            # which json cannot encode; default=str renders them as ISO strings.
+            out.write(json.dumps(doc, separators=(",", ":"), default=str) + "\n")
             n += 1
     finally:
         if out is not sys.stdout:
