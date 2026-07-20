@@ -15,6 +15,7 @@ case "${1:-}" in
     "") ;;
     *) echo "[env] unknown profile '${1:-}' (use --polaris or --lcrc)" >&2; return 1 ;;
 esac
+export DARSHAN_MOFKA_ENV
 
 if [[ -n "${DARSHAN_MOFKA_ENV:-}" ]]; then
     _cluster_env="$SERVER_DIR/env_${DARSHAN_MOFKA_ENV}.sh"
