@@ -51,9 +51,9 @@ Then edit `server/env.local.sh` to load modules or set paths for your cluster.
 `server/env.local.sh` is ignored by git.
 
 Runtime pipeline defaults such as the Mofka topic, Mongo database, run directory,
-Darshan-Mofka toggles, and output paths live in `server/runtime.env`. To override
-those without editing committed files, create `server/runtime.local.env`; it is
-ignored by git and is loaded after `server/runtime.env`.
+Darshan-Mofka toggles, and output paths are centralized in `server/env.sh`. To
+override them without editing committed files, set them before sourcing `env.sh`
+or put local overrides in `server/env.local.sh`.
 
 ## 2. Build Dependencies
 

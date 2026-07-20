@@ -18,8 +18,8 @@
 # Usage:
 #   source server/env.sh
 #   MONGO_DB=darshan_stream server/capture_flowcept.sh
-# Runtime defaults live in server/runtime.env and are loaded by server/env.sh.
-# Override them before sourcing env.sh, or create server/runtime.local.env.
+# Runtime defaults live in server/env.sh. Override them by exporting the
+# variables before sourcing env.sh, or via server/env.local.sh.
 # MONGOD remains a local tool path knob (default: `command -v mongod`).
 set -uo pipefail
 

@@ -17,7 +17,6 @@
 
 # local environment overrides
 /server/env.local.sh
-/server/runtime.local.env
 
 # generated files and crashes
 *.o

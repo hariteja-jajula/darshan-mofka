@@ -37,10 +37,37 @@ elif [[ -f "$SERVER_DIR/env.local.sh" ]]; then
 fi
 
 # --- runtime defaults ---------------------------------------------------------
-# Pipeline behavior lives here; machine/install locations stay below or in the
-# profile/env.local files. runtime.local.env is ignored and can override defaults.
-[[ -f "$SERVER_DIR/runtime.env" ]] && source "$SERVER_DIR/runtime.env"
-[[ -f "$SERVER_DIR/runtime.local.env" ]] && source "$SERVER_DIR/runtime.local.env"
+# Pipeline behavior defaults live here; machine/install locations stay below or
+# in profile/env.local files. Export a value before sourcing env.sh to override.
+: "${MOFKA_PROTOCOL:=ofi+tcp}"
+
+: "${DARSHAN_ENABLE_NONMPI:=1}"
+: "${DARSHAN_MOFKA_ENABLE:=1}"
+: "${DARSHAN_MOFKA_GROUP_FILE:=$ROOT/server/mofka.json}"
+: "${DARSHAN_MOFKA_TOPIC:=darshan}"
+: "${DARSHAN_MOFKA_BATCH:=0}"
+: "${DARSHAN_MOFKA_MAX_BATCHES:=64}"
+: "${DARSHAN_MOFKA_FLUSH_MS:=5000}"
+: "${DARSHAN_MOFKA_TIMING:=1}"
+
+: "${TOPIC:=$DARSHAN_MOFKA_TOPIC}"
+: "${MOFKA_GROUP:=$DARSHAN_MOFKA_GROUP_FILE}"
+: "${SETTINGS_TEMPLATE:=$ROOT/server/flowcept_settings.template.yaml}"
+
+: "${MONGO_DB:=darshan_stream}"
+: "${MONGO_PORT:=27017}"
+: "${RUN_DIR:=$ROOT/server/_flowcept_run}"
+: "${SHUTDOWN_FLAG:=$RUN_DIR/SHUTDOWN}"
+
+: "${EVENTS_JSONL:=/tmp/darshan-mofka-events.jsonl}"
+: "${DARSHAN_OUT:=/tmp/job_partial.darshan}"
+
+export MOFKA_PROTOCOL
+export DARSHAN_ENABLE_NONMPI DARSHAN_MOFKA_ENABLE DARSHAN_MOFKA_GROUP_FILE
+export DARSHAN_MOFKA_TOPIC DARSHAN_MOFKA_BATCH DARSHAN_MOFKA_MAX_BATCHES
+export DARSHAN_MOFKA_FLUSH_MS DARSHAN_MOFKA_TIMING
+export TOPIC MOFKA_GROUP SETTINGS_TEMPLATE
+export MONGO_DB MONGO_PORT RUN_DIR SHUTDOWN_FLAG EVENTS_JSONL DARSHAN_OUT
 
 # --- software stack locations -------------------------------------------------
 # env.local.sh may set these explicitly; otherwise AUTO-DISCOVER them in
