@@ -127,7 +127,97 @@ ls -l server/mofka.json
 That group file is what the Darshan connector and the consumer both use to connect
 to the same Mofka server.
 
-## 5. Run The Darshan-Instrumented Workload
+## 5. Run DLIO On Polaris
+
+For a quick batch run, submit the committed PBS smoke test from the repository root:
+
+```bash
+qsub jobs/dlio_smoke.pbs
+```
+
+For an interactive run on Polaris, first request a compute-node allocation:
+
+```bash
+qsub -I -A radix-io -q preemptable -l select=1:ncpus=8 -l walltime=00:30:00 -l filesystems=home:eagle
+```
+
+After the job starts, run the integration smoke test from this repository, not from the separate `dlio_benchmark` checkout:
+
+```bash
+cd /lus/eagle/projects/radix-io/hjajula/darshan-mofka-flowcept/darshan-mofka
+source server/env.sh --polaris
+
+RUN_ID="${PBS_JOBID:-interactive-$(date +%Y%m%d-%H%M%S)}"
+RUN_DIR="$PWD/server/_interactive_dlio_${RUN_ID}"
+export MOFKA_SERVER_DIR="$RUN_DIR/mofka"
+DLIO_DATA="$RUN_DIR/data/default"
+mkdir -p "$RUN_DIR" "$MOFKA_SERVER_DIR" "$DLIO_DATA"
+
+bash server/stop-server.sh || true
+bash server/start-server.sh
+trap 'bash server/stop-server.sh || true' EXIT
+
+darshan_ensure_logdir >/dev/null
+LIBDARSHAN="$(darshan_lib)"
+
+COMMON_OVERRIDES=(
+  workload=default
+  ++workload.dataset.data_folder="$DLIO_DATA"
+  ++workload.dataset.num_files_train=8
+  ++workload.dataset.num_files_eval=2
+  ++workload.dataset.record_length_bytes=1024
+  ++workload.dataset.num_subfolders_train=0
+  ++workload.dataset.num_subfolders_eval=0
+  ++workload.reader.batch_size=2
+  ++workload.reader.batch_size_eval=1
+  ++workload.reader.read_threads=1
+  ++workload.train.epochs=1
+  ++workload.train.computation_time=0.01
+  ++workload.evaluation.eval_time=0.01
+)
+
+dlio_benchmark "${COMMON_OVERRIDES[@]}" \
+  ++workload.workflow.generate_data=True \
+  ++workload.workflow.train=False \
+  hydra.run.dir="$RUN_DIR/generate" \
+  > "$RUN_DIR/generate.out" \
+  2> "$RUN_DIR/generate.err"
+
+env -u PYTHONSAFEPATH \
+  PYTHONHOME=/usr \
+  DARSHAN_ENABLE_NONMPI=1 \
+  DARSHAN_MOFKA_ENABLE=1 \
+  DARSHAN_MOFKA_GROUP_FILE="$MOFKA_SERVER_DIR/mofka.json" \
+  DARSHAN_MOFKA_TOPIC=darshan \
+  DARSHAN_MOFKA_TIMING=1 \
+  DARSHAN_MOFKA_BATCH=0 \
+  DARSHAN_MOFKA_MAX_BATCHES=256 \
+  DARSHAN_MOFKA_FLUSH_MS=30000 \
+  DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
+  LD_PRELOAD="$LIBDARSHAN" \
+  dlio_benchmark "${COMMON_OVERRIDES[@]}" \
+    ++workload.workflow.generate_data=False \
+    ++workload.workflow.train=True \
+    ++workload.workflow.evaluation=True \
+    hydra.run.dir="$RUN_DIR/train" \
+  > "$RUN_DIR/train.out" \
+  2> "$RUN_DIR/train.err"
+
+EXPECTED="$(grep -c 'darshan-mofka\\[timing\\] send' "$RUN_DIR/train.err")"
+printf 'darshan-mofka sends: %s\n' "$EXPECTED"
+
+timeout 60 "$PY" server/capture.py "$MOFKA_SERVER_DIR/mofka.json" darshan "$EXPECTED" 5 \
+  > "$RUN_DIR/events.jsonl" \
+  2> "$RUN_DIR/capture.count" || true
+
+wc -l "$RUN_DIR/events.jsonl"
+cat "$RUN_DIR/capture.count"
+printf 'run dir: %s\n' "$RUN_DIR"
+```
+
+The standalone command `dlio_benchmark ++workload.workflow.generate_data=True` only verifies DLIO itself. The integration test above additionally starts Mofka and runs DLIO under `LD_PRELOAD=$(darshan_lib)` with the `DARSHAN_MOFKA_*` environment variables enabled.
+
+## 6. Run The Darshan-Instrumented Workload
 
 Run the C workload under Darshan and enable Mofka streaming:
 
@@ -169,7 +259,7 @@ grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-workload.err | wc -l
 
 Expected: a nonzero count. In the simple login-node smoke run this was `12`.
 
-## 6. Capture Events From Mofka
+## 7. Capture Events From Mofka
 
 Use the consumer in `server/capture.py` to drain the `darshan` topic to JSONL:
 
@@ -193,7 +283,7 @@ captured N
 
 where `N` is nonzero. The earlier simple smoke run captured `12` events.
 
-## 7. Verify The Captured Events
+## 8. Verify The Captured Events
 
 Check for POSIX events:
 
@@ -237,7 +327,7 @@ If you see `POSIX`, `STDIO`, and read/write operations, the full path worked:
 C workload -> Darshan connector -> Mofka topic -> capture.py consumer -> JSONL file
 ```
 
-## 8. Reconstruct A Partial Darshan Log
+## 9. Reconstruct A Partial Darshan Log
 
 If the normal Darshan shutdown path fails and no final `.darshan` log is produced,
 the captured stream can be converted into a best-effort partial Darshan log:
@@ -257,7 +347,7 @@ Validate the reconstructed log with Darshan's parser:
 The reconstructed log is intentionally marked partial. It contains the latest module
 record snapshots that reached Mofka, plus synthetic job/exe/mount metadata.
 
-## 9. Stop Server
+## 10. Stop Server
 
 Stop the broker when done:
 
