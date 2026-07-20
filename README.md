@@ -127,24 +127,21 @@ ls -l server/mofka.json
 That group file is what the Darshan connector and the consumer both use to connect
 to the same Mofka server.
 
-## 5. Choose Workload Output Names
+## 5. Choose Output Files
 
-Use a separate MongoDB database and JSONL file for each workload run. The default below is for the C smoke workload:
+Pick where this run writes its FlowCept artifacts and exported JSONL. Use different `MONGO_DB` and `EVENTS_JSONL` values for different workload runs if you want to keep them separate.
 
 ```bash
-WORKLOAD_NAME="${WORKLOAD_NAME:-c_smoke}"
-RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_${WORKLOAD_NAME}}"
-MONGO_DB="${MONGO_DB:-darshan_${WORKLOAD_NAME}}"
+RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
+MONGO_DB="${MONGO_DB:-darshan_stream}"
 MONGO_PORT="${MONGO_PORT:-27017}"
-EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-${WORKLOAD_NAME}-events.jsonl}"
+EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-events.jsonl}"
 mkdir -p "$RUN_DIR"
 ```
 
-For another workload, set a different `WORKLOAD_NAME` before starting FlowCept, for example `WORKLOAD_NAME=dlio`.
-
 ## 6. Start FlowCept As The Live Consumer
 
-Start FlowCept before the workload. It runs in the background and continuously drains the `darshan` Mofka topic into the workload-specific MongoDB database.
+Start FlowCept before the workload. It runs in the background and continuously drains the `darshan` Mofka topic into MongoDB.
 
 ```bash
 MONGOD="${MONGOD:-$(command -v mongod || true)}"
@@ -164,9 +161,9 @@ until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do
 done
 ```
 
-## 7. Run The Darshan-Instrumented C Smoke Workload
+## 7. Run A Darshan-Instrumented Workload
 
-Run the C workload under Darshan while FlowCept is draining the topic:
+Run any workload under Darshan while FlowCept is draining the topic. This example uses the C smoke workload:
 
 ```bash
 darshan_ensure_logdir
@@ -182,15 +179,15 @@ env \
   DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
   LD_PRELOAD="$(darshan_lib)" \
   ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke \
-  > /tmp/darshan-mofka-${WORKLOAD_NAME}.out \
-  2> /tmp/darshan-mofka-${WORKLOAD_NAME}.err
+  > /tmp/darshan-mofka-workload.out \
+  2> /tmp/darshan-mofka-workload.err
 ```
 
 Check that the workload ran and sent events:
 
 ```bash
-cat /tmp/darshan-mofka-${WORKLOAD_NAME}.out
-grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-${WORKLOAD_NAME}.err | wc -l
+cat /tmp/darshan-mofka-workload.out
+grep 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-workload.err | wc -l
 ```
 
 Expected: the workload prints `mofka_forward_smoke complete...` and the send count is nonzero.
@@ -217,12 +214,11 @@ wait "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 
 `server/capture.py` is still available as a simple debug drain, but the FlowCept path above is the live consumer path.
 
-## 9. Verify C Smoke Events
+## 9. Verify Exported Events
 
-Verify the JSONL exported for the C smoke workload:
+Verify the JSONL exported for the workload you just ran:
 
 ```bash
-EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-c_smoke-events.jsonl}"
 grep '"module":"POSIX"' "$EVENTS_JSONL" | head
 grep '"module":"STDIO"' "$EVENTS_JSONL" | head
 grep -E '"op":"(read|write)"' "$EVENTS_JSONL" | head
@@ -249,10 +245,10 @@ PY
 
 ## 10. Verify DLIO Events
 
-If a DLIO workload run was exported with `WORKLOAD_NAME=dlio`, verify that JSONL separately:
+If you exported a DLIO run to a separate JSONL file, point `EVENTS_JSONL` at that file and verify it the same way:
 
 ```bash
-EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-dlio-events.jsonl}"
+EVENTS_JSONL=/tmp/darshan-mofka-dlio-events.jsonl
 grep '"module":"POSIX"' "$EVENTS_JSONL" | head
 grep -Ei '"op":"(open|read|write|close)"' "$EVENTS_JSONL" | head
 ```
@@ -294,11 +290,10 @@ source server/env.sh --polaris  # or: source server/env.sh --lcrc on LCRC/Improv
 bash server/start-server.sh
 "$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
 
-WORKLOAD_NAME="${WORKLOAD_NAME:-c_smoke}"
-RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_${WORKLOAD_NAME}}"
-MONGO_DB="${MONGO_DB:-darshan_${WORKLOAD_NAME}}"
+RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
+MONGO_DB="${MONGO_DB:-darshan_stream}"
 MONGO_PORT="${MONGO_PORT:-27017}"
-EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-${WORKLOAD_NAME}-events.jsonl}"
+EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-events.jsonl}"
 mkdir -p "$RUN_DIR"
 MONGOD="${MONGOD:-$(command -v mongod || true)}"
 [[ -x "$MONGOD" ]] || { echo "mongod not found; load MongoDB or set MONGOD=/path/to/mongod"; exit 1; }
@@ -324,8 +319,8 @@ env \
   DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
   LD_PRELOAD="$(darshan_lib)" \
   ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke \
-  > /tmp/darshan-mofka-${WORKLOAD_NAME}.out \
-  2> /tmp/darshan-mofka-${WORKLOAD_NAME}.err
+  > /tmp/darshan-mofka-workload.out \
+  2> /tmp/darshan-mofka-workload.err
 
 touch "$RUN_DIR/SHUTDOWN"
 until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do
@@ -338,7 +333,7 @@ done
 kill "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 wait "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 
-cat /tmp/darshan-mofka-${WORKLOAD_NAME}.out
+cat /tmp/darshan-mofka-workload.out
 cat "$RUN_DIR/export.count"
 grep '"module":"POSIX"' "$EVENTS_JSONL" | head
 grep '"module":"STDIO"' "$EVENTS_JSONL" | head
@@ -354,7 +349,7 @@ bash server/stop-server.sh
 
 ## Optional DLIO Quickstart
 
-This is the upstream DLIO quickstart. If DLIO is used as a Darshan-Mofka workload, start Mofka and FlowCept first, set `WORKLOAD_NAME=dlio`, and export to `/tmp/darshan-mofka-dlio-events.jsonl`.
+This is the upstream DLIO quickstart. If DLIO is used as a Darshan-Mofka workload, start Mofka and FlowCept first, then choose a separate `MONGO_DB` and `EVENTS_JSONL` for the DLIO run.
 
 ```bash
 git clone https://github.com/argonne-lcf/dlio_benchmark
