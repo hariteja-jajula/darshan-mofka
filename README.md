@@ -25,8 +25,8 @@ Three things live outside this repo and must exist before the steps below work:
    ```
    `server/requirements.lock.txt` has the exact frozen set if you need to reproduce it.
    (mochi.mofka / pydiaspora come from the Spack view, not pip.)
-3. **`mongod`** (MongoDB) — FlowCept's sink. It is not on `PATH` by default; put it on
-   `PATH` or set `MONGOD=/path/to/mongod` (see step 6).
+3. **`mongod`** (MongoDB server) — FlowCept's sink. External dep, not a pip package;
+   grab the standalone tarball and set `MONGOD=/path/to/mongod` (see step 6).
 
 The quickest path once all three exist: `PBS_ACCOUNT=<your_project> bash jobs/job.sh`
 runs the whole pipeline below on a compute node in one shot.
@@ -181,12 +181,19 @@ mkdir -p "$RUN_DIR"
 Start FlowCept before the workload. It runs in the background and continuously drains the `darshan` Mofka topic into MongoDB.
 
 FlowCept's sink is a local MongoDB, so `mongod` must be reachable. It is an external
-dependency (not built by this repo) and is usually not on `PATH`. Either put it on `PATH`
-(e.g. `module load mongodb`, or activate a conda env that provides it) or point `MONGOD`
-at the binary before running:
+dependency (not built by this repo, and not a pip package — `mongod` is the MongoDB
+*server*; the venv only has `pymongo`, the client). It runs as its own process, so it
+never conflicts with the flowcept venv. Get it either way, then point `MONGOD` at it:
 
 ```bash
-export MONGOD=/path/to/mongod   # e.g. inside a conda env: .../envs/<name>/bin/mongod
+# Option A (portable, no root/conda): standalone MongoDB server tarball
+cd "$ROOT"
+curl -sL https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-7.0.14.tgz | tar xz
+export MONGOD="$PWD/mongodb-linux-x86_64-ubuntu2204-7.0.14/bin/mongod"
+
+# Option B (if you already use conda): a separate env just for the server binary
+# conda create -y -n mongo -c conda-forge mongodb
+# export MONGOD="$(conda run -n mongo which mongod)"
 ```
 
 ```bash
