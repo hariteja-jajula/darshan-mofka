@@ -149,6 +149,15 @@ mkdir -p "$RUN_DIR"
 
 Start FlowCept before the workload. It runs in the background and continuously drains the `darshan` Mofka topic into MongoDB.
 
+FlowCept's sink is a local MongoDB, so `mongod` must be reachable. It is an external
+dependency (not built by this repo) and is usually not on `PATH`. Either put it on `PATH`
+(e.g. `module load mongodb`, or activate a conda env that provides it) or point `MONGOD`
+at the binary before running:
+
+```bash
+export MONGOD=/path/to/mongod   # e.g. inside a conda env: .../envs/<name>/bin/mongod
+```
+
 ```bash
 MONGOD="${MONGOD:-$(command -v mongod || true)}"
 [[ -x "$MONGOD" ]] || { echo "mongod not found; load MongoDB or set MONGOD=/path/to/mongod"; exit 1; }
