@@ -6,6 +6,31 @@ The demo runs one small C program under `LD_PRELOAD=libdarshan.so`. Darshan
 intercepts the program's POSIX/STDIO I/O calls, builds JSON metadata events, pushes
 them to Mofka, and FlowCept drains the topic into MongoDB.
 
+## Reproducible from-scratch build (recommended)
+
+To rebuild the **entire** stack from nothing (spack stack, `mongod`, python
+consumer, project source) with pinned versions and no hardcoded paths, use the
+phased installer in [`install/`](install/README.md). It is split for Polaris'
+no-internet-on-compute-nodes constraint:
+
+```bash
+# 1. LOGIN node (internet): download everything onto eagle
+bash install/00-fetch.sh
+
+# 2. COMPUTE node (offline): build from the fetched sources
+qsub -I -q debug -A <project> -l select=1 -l walltime=01:00:00 -l filesystems=home:eagle
+cd <repo>
+bash install/10-build.sh
+
+# 3. run the demo end to end
+bash job.sh
+```
+
+`install/config.yaml` holds the versions/names; `install/lock/` holds the exact
+pinned concretization. See [`install/README.md`](install/README.md) for details.
+The sections below document the same steps **manually** (useful for debugging or
+partial rebuilds).
+
 ## Prerequisites
 
 Three things live outside this repo and must exist before the steps below work:
