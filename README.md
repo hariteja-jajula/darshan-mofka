@@ -178,9 +178,7 @@ Build the Darshan fork with Mofka support.
 > ```
 
 ```bash
-cd darshan
 ./build.sh
-cd ..
 ```
 
 Build the workloads (the non-MPI smoke test and the MPI-IO test):
