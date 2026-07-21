@@ -156,9 +156,8 @@ to the same Mofka server.
 
 Pick where this run writes its FlowCept artifacts and exported JSONL. Use different `MONGO_DB` and `EVENTS_JSONL` values for different workload runs if you want to keep them separate.
 
-> Make sure `server/env.sh` is sourced in this shell (it sets `$ROOT`); otherwise these paths collapse and the watch loops silently grep the wrong file.
-
 ```bash
+source server/env.sh --polaris  # sets $ROOT (paths below derive from it)
 RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
 MONGO_DB="${MONGO_DB:-darshan_stream}"
 MONGO_PORT="${MONGO_PORT:-27017}"
