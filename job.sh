@@ -131,8 +131,10 @@ echo "  OK   darshan_lib -> $LIB"
 # the runtime lib links diaspora-c + (transitively) mofka/mochi from the view;
 # make sure none resolve to a system/$HOME location.
 if command -v ldd >/dev/null 2>&1; then
+    # allowed: the repo, the spack view, the project tree on eagle, and system dirs.
+    _view_root="${MOFKA_SPACK_VIEW%/view}"    # .../.spack-env
     BAD="$(ldd "$LIB" 2>/dev/null | awk '/=>/{print $3}' \
-        | grep -vE "^($ROOT|$PROJECT_ROOT|/lib|/lib64|/usr/lib|/opt/cray|/soft)" \
+        | grep -vE "^($ROOT|$PROJECT_ROOT|${MOFKA_SPACK_VIEW}|${_view_root}|/lib|/lib64|/usr/lib|/opt/cray|/soft)" \
         | grep -vE "^\s*$" || true)"
     if [[ -n "$BAD" ]]; then
         echo "  WARN: some linked libs resolve outside project/system dirs:"
