@@ -45,9 +45,14 @@ export PYTHONSAFEPATH=1
 #   1. explicit $MONGOD  2. install/00-fetch.sh's env (server/_mongo_env)
 #   3. known-good conda envs already on eagle  4. PATH
 if [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]]; then
+    # 0. validated pinned mongod (v7.0.34) -- hardcoded fallback so the demo
+    #    doesn't pick up a stale v6 env. Override by exporting MONGOD.
+    _pinned_mongod="/eagle/radix-io/hjajula/miniconda3_polaris/envs/cll-mongo/bin/mongod"
     # 1. installer's env dir (created by install/00-fetch.sh, symlink or real)
     if [[ -x "$ROOT/server/_mongo_env/bin/mongod" ]]; then
         MONGOD="$ROOT/server/_mongo_env/bin/mongod"
+    elif [[ -x "$_pinned_mongod" ]]; then
+        MONGOD="$_pinned_mongod"
     else
         # 2. search a few ancestors of the repo for miniconda*/envs/*/bin/mongod
         #    (location-independent: works no matter where the repo is cloned).
@@ -61,6 +66,7 @@ if [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]]; then
         [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]] && MONGOD="$(command -v mongod 2>/dev/null || true)"
         unset _p _m
     fi
+    unset _pinned_mongod
 fi
 export MONGOD
 
