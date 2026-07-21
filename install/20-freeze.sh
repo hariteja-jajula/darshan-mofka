@@ -11,11 +11,25 @@
 #   install/lock/mongo.lock.yml     exact conda env export (mongod)
 #   install/lock/versions.txt       human summary (toolchain + key component versions)
 #
-# Usage (compute node, env sourced):  bash install/20-freeze.sh
+# Usage:  bash install/20-freeze.sh
+# (sources server/env.sh itself so it records the PROJECT tools, not strays.)
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 cd "$REPO_ROOT"
 LOCK="$INSTALL_DIR/lock"; mkdir -p "$LOCK"
+
+# Source the project env so $CC/$PY/cmake/MONGOD are the PROJECT ones. Without
+# this, freeze records strays (e.g. ~/.local/bin/cmake, system python 3.6) and
+# an empty pip freeze -- exactly the wrong thing to pin.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/server/env.sh" --polaris || die "could not source server/env.sh"
+# provenance guard: refuse to freeze stray tools
+case "${PY:-}" in
+    *"/.local/"*|/usr/bin/python*|/bin/python*|"")
+        die "PY is stray/unset ($PY); source env in a clean shell before freezing";;
+esac
+"$PY" -c 'import sys; assert sys.version_info[:2]==(3,14), sys.version' 2>/dev/null \
+    || die "PY is not the project python 3.14 ($($PY -V 2>&1)); env not set up correctly"
 
 # ---- spack.lock (exact concretization) ---------------------------------------
 SPACK_DIR="$(layout_path spack_dir)"
@@ -31,16 +45,36 @@ if [[ -d "$SPACK_DIR/share/spack" ]]; then
 fi
 
 # ---- pip freeze (exact consumer deps) ----------------------------------------
+# Prefer the installer's venv; else the sourced project $PY (must be 3.14).
 VENV="$(layout_path venv_dir)"
-PYBIN="$VENV/bin/python"; [[ -x "$PYBIN" ]] || PYBIN="${PY:-python3}"
-say "freeze pip requirements"
-"$PYBIN" -m pip freeze > "$LOCK/requirements.lock" 2>/dev/null || echo "(pip freeze failed)" > "$LOCK/requirements.lock"
+PYBIN="$VENV/bin/python"; [[ -x "$PYBIN" ]] || PYBIN="$PY"
+say "freeze pip requirements (from $PYBIN)"
+if ! "$PYBIN" -m pip freeze > "$LOCK/requirements.lock" 2>/dev/null \
+     || [[ ! -s "$LOCK/requirements.lock" ]]; then
+    echo "[install] WARN: pip freeze empty/failed from $PYBIN"
+fi
 
-# ---- conda mongo env export --------------------------------------------------
+# ---- conda mongo env export (resilient: find conda like 00-fetch does) --------
 MONGO_ENV="$(layout_path mongo_env_dir)"
-if command -v conda >/dev/null 2>&1 && [[ -d "$MONGO_ENV/conda-meta" ]]; then
-    say "freeze mongo conda env"
-    conda env export -p "$MONGO_ENV" --no-builds > "$LOCK/mongo.lock.yml" 2>/dev/null || true
+_PROJECT_ROOT="${_PROJECT_ROOT:-$(cd "$REPO_ROOT/.." && pwd)}"
+_CONDA="$(command -v conda 2>/dev/null || true)"
+for c in "$_PROJECT_ROOT/../miniconda3_polaris/bin/conda" \
+         "$_PROJECT_ROOT/../miniconda3/bin/conda" "$HOME/miniconda3/bin/conda"; do
+    [[ -z "$_CONDA" && -x "$c" ]] && _CONDA="$c"
+done
+# the mongo env may be a real conda env, or a symlink to one elsewhere on eagle.
+_REAL_MONGO_ENV="$MONGO_ENV"
+[[ -L "$MONGO_ENV/bin/mongod" ]] && \
+    _REAL_MONGO_ENV="$(cd "$(dirname "$(readlink -f "$MONGO_ENV/bin/mongod")")/.." && pwd)"
+if [[ -n "$_CONDA" && -d "$_REAL_MONGO_ENV/conda-meta" ]]; then
+    say "freeze mongo conda env (from $_REAL_MONGO_ENV)"
+    "$_CONDA" env export -p "$_REAL_MONGO_ENV" --no-builds > "$LOCK/mongo.lock.yml" 2>/dev/null \
+        || echo "[install] WARN: conda env export failed"
+else
+    # no conda introspection possible; pin version from config as the spec.
+    say "no conda export; writing mongo version pin from config"
+    printf '# mongod pinned via server/mongo-environment.yml\nmongodb: %s\n' \
+        "$(cfg mongo.version)" > "$LOCK/mongo.lock.yml"
 fi
 
 # ---- human-readable version summary ------------------------------------------
@@ -52,10 +86,11 @@ say "write versions.txt"
     echo "cmake:   $(command -v cmake) $(cmake --version 2>&1 | head -1)"
     echo "python:  $("${PY:-python3}" -V 2>&1)"
     echo "mongod:  $("$MONGO_ENV/bin/mongod" --version 2>&1 | head -1)"
-    echo "## spack components (view)"
+    echo "## spack components (view, versioned)"
     if [[ -n "${ENV_NAME:-}" ]]; then
-        spack -e "$ENV_NAME" find --no-groups 2>/dev/null \
-            | grep -iE 'mofka|bedrock|margo|mercury|thallium|warabi|yokan|flock|darshan|diaspora' || true
+        spack -e "$ENV_NAME" find -x --long 2>/dev/null \
+            | grep -iE 'mofka|bedrock|margo|mercury|thallium|warabi|yokan|flock|darshan|diaspora' \
+            || spack -e "$ENV_NAME" find 2>/dev/null | grep -iE 'mofka|darshan|diaspora' || true
     fi
     echo "## darshan submodule"
     echo "darshan: $(git -C "$REPO_ROOT/$(cfg project.darshan_dir)" rev-parse --short HEAD 2>/dev/null)"
