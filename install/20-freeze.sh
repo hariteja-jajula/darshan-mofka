@@ -82,14 +82,21 @@ say "write versions.txt"
 {
     echo "# frozen $(date -u +%Y-%m-%dT%H:%M:%SZ) on $(hostname -s)"
     echo "## toolchain"
-    echo "cc:      $("${CC:-cc}" --version 2>&1 | head -1)"
+    # apply the Polaris pkg-config fix so 'cc --version' doesn't trip the system
+    # darshan-runtime pkg-config hook ("Error invoking pkg-config!").
+    PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}" \
+        "${CC:-cc}" --version >/tmp/_ccver 2>/dev/null && echo "cc:      $(head -1 /tmp/_ccver)" \
+        || echo "cc:      ${CC:-cc} (version probe skipped)"
+    rm -f /tmp/_ccver
     echo "cmake:   $(command -v cmake) $(cmake --version 2>&1 | head -1)"
     echo "python:  $("${PY:-python3}" -V 2>&1)"
     echo "mongod:  $("$MONGO_ENV/bin/mongod" --version 2>&1 | head -1)"
-    echo "## spack components (view, versioned)"
+    echo "## spack components (view, with versions)"
     if [[ -n "${ENV_NAME:-}" ]]; then
-        spack -e "$ENV_NAME" find -x --long 2>/dev/null \
+        # --format prints each installed spec as name@version (no hashes)
+        spack -e "$ENV_NAME" find --format '{name}@{version}' 2>/dev/null \
             | grep -iE 'mofka|bedrock|margo|mercury|thallium|warabi|yokan|flock|darshan|diaspora' \
+            | sort -u \
             || spack -e "$ENV_NAME" find 2>/dev/null | grep -iE 'mofka|darshan|diaspora' || true
     fi
     echo "## darshan submodule"
