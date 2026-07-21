@@ -67,20 +67,61 @@ fi
 say "point spack develop at the mofka clone"
 spack -e "$ENV_NAME" develop -p "$MOFKA_DIR" "mofka@$MOFKA_REF" 2>/dev/null || true
 
-say "spack concretize + fetch (download all sources for offline build)"
+say "spack concretize"
 spack -e "$ENV_NAME" concretize -f || die "spack concretize failed"
-spack -e "$ENV_NAME" fetch || echo "[install] WARN: spack fetch had misses (some pkgs fetch at build)"
+
+# Build a LOCAL MIRROR on eagle so the compute-node build is truly offline.
+# `spack fetch` only caches into spack's own stage; a mirror is the portable,
+# offline-complete source bundle. Misses (e.g. a flaky GNU patch mirror) are
+# warned, not fatal -- rerun the fetch on a login node if the build later needs one.
+MIRROR="$SPACK_DIR/_mirror"
+say "populate spack mirror -> $MIRROR (offline source bundle)"
+spack -e "$ENV_NAME" mirror create -d "$MIRROR" --all 2>&1 | tail -5 \
+    || echo "[install] WARN: mirror create had misses (see above)"
+spack mirror add local-eagle "$MIRROR" 2>/dev/null || true
+say "also warming spack's stage cache"
+spack -e "$ENV_NAME" fetch 2>/dev/null || echo "[install] WARN: spack fetch had misses (mirror should still cover the build)"
 
 # ---- 2. mongodb (conda env on eagle) -----------------------------------------
+# Order: (a) our own env dir; (b) an EXISTING working mongod on eagle (reuse it,
+# no new download); (c) create via conda (login node); (d) clear guidance.
 MONGO_ENV="$(layout_path mongo_env_dir)"
+find_conda() {
+    command -v conda 2>/dev/null && return 0
+    for c in "$_PROJECT_ROOT/../miniconda3_polaris/bin/conda" \
+             "$_PROJECT_ROOT/../miniconda3/bin/conda" \
+             "$HOME/miniconda3/bin/conda"; do
+        [[ -x "$c" ]] && { echo "$c"; return 0; }
+    done
+    return 1
+}
+# _PROJECT_ROOT is set by env.sh; if not sourced yet, derive it.
+_PROJECT_ROOT="${_PROJECT_ROOT:-$(cd "$REPO_ROOT/.." && pwd)}"
+
 if [[ -x "$MONGO_ENV/bin/mongod" ]]; then
     say "mongod already present at $MONGO_ENV/bin/mongod"
-elif command -v conda >/dev/null 2>&1; then
-    say "conda create mongodb=$(cfg mongo.version) -> $MONGO_ENV"
-    conda create -y -p "$MONGO_ENV" -c "$(cfg mongo.channel)" \
-        "$(cfg mongo.package)=$(cfg mongo.version)" || die "conda mongodb create failed"
 else
-    die "conda not found; needed to create the mongod env (or install mongod to $MONGO_ENV manually)"
+    # (b) reuse an existing working mongod on eagle (same list env_polaris.sh uses)
+    EXISTING=""
+    for m in "$_PROJECT_ROOT/../miniconda3_polaris/envs/cll-mongo/bin/mongod" \
+             "$_PROJECT_ROOT/../miniconda3/envs/flowcept-mongo/bin/mongod"; do
+        [[ -x "$m" ]] && { EXISTING="$m"; break; }
+    done
+    if [[ -n "$EXISTING" ]]; then
+        say "reusing existing mongod on eagle: $EXISTING"
+        mkdir -p "$MONGO_ENV/bin"
+        ln -sf "$EXISTING" "$MONGO_ENV/bin/mongod"
+        say "symlinked -> $MONGO_ENV/bin/mongod (env_polaris.sh will resolve it)"
+    elif CONDA="$(find_conda)"; then
+        say "conda create mongodb=$(cfg mongo.version) -> $MONGO_ENV  (via $CONDA)"
+        "$CONDA" create -y -p "$MONGO_ENV" -c "$(cfg mongo.channel)" \
+            "$(cfg mongo.package)=$(cfg mongo.version)" || die "conda mongodb create failed"
+    else
+        die "no mongod found and no conda available. Either:
+  - install conda and re-run, or
+  - create the env manually:  conda create -p '$MONGO_ENV' -c conda-forge mongodb=$(cfg mongo.version)
+  - or symlink an existing mongod:  ln -s /path/to/mongod '$MONGO_ENV/bin/mongod'"
+    fi
 fi
 
 # ---- 3. python venv + download wheels ----------------------------------------
