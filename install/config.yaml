@@ -37,6 +37,12 @@ mongo:
   channel: "conda-forge"
   package: "mongodb"
   version: "7.0.34"                # validated on Polaris (v7.0.34)
+  # OPTIONAL overrides so the fetch works regardless of where the repo is cloned:
+  #   mongod_path: absolute path to an existing mongod to reuse (symlinked in)
+  #   conda_bin:   absolute path to a conda to create the env with
+  # Leave blank to auto-detect (searches eagle account tree, then PATH).
+  mongod_path: ""
+  conda_bin: ""
 
 # ---- python consumer deps (installed into venv_dir on top of the spack python) -
 # Canonical list lives in server/requirements.txt (pinned). Kept there so pip and
