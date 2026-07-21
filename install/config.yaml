@@ -51,3 +51,11 @@ project:
   darshan_dir:  "darshan"
   # diaspora-c version requirement (also enforced in server/spack/spack.yaml)
   diaspora_require: "@0.5.7:"
+
+# ---- mofka source checkout (spack builds it via `develop`, not from a release) -
+# server/spack/spack.yaml has `develop: mofka path: ../../../mofka`. We clone mofka
+# here and point spack's develop at it so the connector patch is included.
+mofka:
+  git_url: "https://github.com/mochi-hpc/mofka.git"
+  git_ref: "main"
+  dir:     "install/_mofka"        # clone location (on eagle), relative to repo root
