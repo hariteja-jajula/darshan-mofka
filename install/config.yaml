@@ -1,0 +1,49 @@
+# install/config.yaml -- SINGLE source of truth for the from-scratch build.
+#
+# Only VERSIONS and NAMES live here. NO hardcoded paths, accounts, or usernames:
+# paths are derived at run time from the repo location (which is on eagle) and the
+# active user's environment. Edit versions here; the install/*.sh scripts read them.
+#
+# Reproducibility model (Polaris has NO internet on compute nodes):
+#   phase 1  install/00-fetch.sh   LOGIN node  -- download everything to eagle
+#   phase 2  install/10-build.sh   login/compute -- compile from the fetched sources
+#   phase 3  install/20-freeze.sh  compute node -- snapshot exact versions -> lock/
+# See install/README.md.
+
+# ---- where things get created (RELATIVE to repo root, which is on eagle) -------
+# These are names only; the scripts prefix them with the detected repo root.
+layout:
+  spack_dir:        "install/_spack"            # cloned spack + the built env/view
+  spack_env_name:   "flowcept-mofka-polaris"    # spack env name (matches server/spack)
+  mongo_env_dir:    "server/_mongo_env"          # conda prefix for mongod (on eagle)
+  venv_dir:         "install/_venv"              # python venv for the flowcept consumer
+  darshan_prefix:   "darshan/install"            # darshan runtime install (non-MPI)
+  util_prefix:      "darshan/darshan-util/install"
+
+# ---- spack (native HPC stack: bedrock/mochi/mofka/darshan-util deps + cmake) ---
+spack:
+  git_url:   "https://github.com/spack/spack.git"
+  git_ref:   "releases/v0.23"      # pin the spack release used to concretize
+  env_spec:  "server/spack/spack.yaml"   # the committed spec (specs + externals)
+  env_lock:  "server/spack/spack.lock"   # the committed pinned concretization
+  build_jobs: 4                    # -j4: Polaris login-node fork cap
+
+# ---- mongodb server (mongod) -- conda, NOT pip -------------------------------
+mongo:
+  channel: "conda-forge"
+  package: "mongodb"
+  version: "7.0.34"                # validated on Polaris (v7.0.34)
+
+# ---- python consumer deps (installed into venv_dir on top of the spack python) -
+# Canonical list lives in server/requirements.txt (pinned). Kept there so pip and
+# these scripts agree; this key just points at it.
+python:
+  requirements: "server/requirements.txt"
+  flowcept_editable: "flowcept"    # submodule, pip install -e
+
+# ---- project source (submodules; built from source) --------------------------
+project:
+  diaspora_dir: "diaspora-stream-api"
+  darshan_dir:  "darshan"
+  # diaspora-c version requirement (also enforced in server/spack/spack.yaml)
+  diaspora_require: "@0.5.7:"
