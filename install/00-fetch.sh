@@ -60,7 +60,11 @@ fi
 # mofka clone; then concretize + fetch for an offline build.
 ENV_NAME="$(cfg layout.spack_env_name)"
 ENV_SPEC="$REPO_ROOT/$(cfg spack.env_spec)"
-if ! spack env list 2>/dev/null | grep -qx "$ENV_NAME"; then
+# idempotent: check the env dir directly (spack env list formatting is unreliable)
+ENV_DIR="$SPACK_DIR/var/spack/environments/$ENV_NAME"
+if [[ -f "$ENV_DIR/spack.yaml" ]]; then
+    say "spack env '$ENV_NAME' already exists -> reuse"
+else
     say "create spack env '$ENV_NAME' from spec (repos + develop)"
     spack env create "$ENV_NAME" "$ENV_SPEC" || die "spack env create (spec) failed"
 fi
