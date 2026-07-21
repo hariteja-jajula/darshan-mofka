@@ -19,7 +19,7 @@
 # machine-specific environment
 /server/env.local.sh
 
-# from-scratch installer build outputs (rebuilt from install/config.yaml + lock/)
+# automated setup build outputs (rebuilt by install/setup.sh from install/config.yaml)
 /install/_spack/
 /install/_venv/
 /install/_mofka/

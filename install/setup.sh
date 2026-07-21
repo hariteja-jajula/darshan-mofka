@@ -1,67 +1,52 @@
 #!/bin/bash
-# install/00-fetch.sh -- PHASE 1 (LOGIN NODE): download everything to eagle so the
-# offline compute-node build (install/10-build.sh) can proceed. Usage: bash install/00-fetch.sh
+# install/setup.sh -- one-shot automated setup for the darshan-mofka demo.
+#
+# This is the AUTOMATED BACKUP to the manual steps in the top-level README
+# ("Dependencies & Environments"). Prefer the README if you already have parts of
+# the stack -- run `bash check-deps.sh` first to see what's missing.
+#
+# Does everything in one run:
+#   1. submodules
+#   2. spack: clone (pinned) -> env from server/spack/spack.yaml -> install
+#   3. mongod: reuse an existing one, else conda-create
+#   4. python venv (>=3.11) + FlowCept consumer deps
+#   5. build diaspora-stream-api, the darshan runtime (Mofka connector),
+#      darshan-util, and the C smoke workload
+#
+# Versions/names come from install/config.yaml (no hardcoded paths). Needs
+# internet for the downloads, so run it where you have it (on Polaris: a login
+# node; the spack build itself works on login or compute).
+#
+# Usage (repo root):  bash install/setup.sh
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
-require_login_node
 cd "$REPO_ROOT"
 
 SPACK_DIR="$(layout_path spack_dir)"
 MONGO_ENV="$(layout_path mongo_env_dir)"
 VENV="$(layout_path venv_dir)"
 
+# ---- 0. preflight (fail fast on missing system deps) -------------------------
 say "preflight"
-if [[ -d "$SPACK_DIR/.git" ]]; then
-    say "spack repo present: $SPACK_DIR"
-elif command -v spack >/dev/null 2>&1; then
-    say "system spack present: $(command -v spack)"
-    confirm_install "repo-local pinned spack" "this build uses the pinned Spack commit in install/config.yaml"
-else
-    confirm_install "spack" "the installer will clone the pinned Spack into $SPACK_DIR"
+if command -v module >/dev/null 2>&1 && ! command -v cc >/dev/null 2>&1; then
+    module swap PrgEnv-nvidia PrgEnv-gnu >/dev/null 2>&1 || module load PrgEnv-gnu >/dev/null 2>&1 || true
 fi
+command -v cc >/dev/null 2>&1 || die "cc compiler wrapper not found; load a compiler/MPI PrgEnv first"
 
-if command -v module >/dev/null 2>&1; then
-    say "environment modules available"
-    if ! command -v cc >/dev/null 2>&1; then
-        confirm_install "compiler/MPI modules" "the installer will try: module swap PrgEnv-nvidia PrgEnv-gnu; module load gcc-native/13.2"
-        module swap PrgEnv-nvidia PrgEnv-gnu >/dev/null 2>&1 || module load PrgEnv-gnu >/dev/null 2>&1 || true
-        module load gcc-native/13.2 >/dev/null 2>&1 || true
-    fi
-else
-    say "environment modules not available; continuing if required compilers/MPI are already on PATH"
-fi
-command -v cc >/dev/null 2>&1 || die "cc compiler wrapper not found; load compiler/MPI modules before running install/00-fetch.sh"
-
-# Externals are declared in server/spack/spack.yaml (single source of truth);
-# check every external prefix exists so the offline spack build won't fail later.
+# externals are declared in server/spack/spack.yaml (single source of truth)
 missing=()
 while IFS= read -r path; do
     [[ -z "$path" ]] && continue
     [[ -e "$path" ]] || missing+=("$path")
 done < <(spack_external_prefixes)
-if ((${#missing[@]})); then
-    die "missing external paths required by server/spack/spack.yaml: ${missing[*]}"
-fi
+((${#missing[@]})) && die "missing external paths required by server/spack/spack.yaml: ${missing[*]}"
 say "compiler and spack externals present"
 
-if [[ -x "$MONGO_ENV/bin/mongod" || -n "$(command -v mongod 2>/dev/null || true)" ]]; then
-    say "mongod present"
-else
-    confirm_install "mongod" "the installer will reuse an existing conda or create $MONGO_ENV"
-fi
-
-if [[ -x "$VENV/bin/python" ]]; then
-    say "python venv present: $VENV"
-elif PY311="$(have_python_311)"; then
-    say "python >= 3.11 present: $PY311"
-    confirm_install "FlowCept python venv" "the installer will create $VENV and install server/requirements.txt"
-else
-    die "no python >= 3.11 found; load a Python module before running install/00-fetch.sh"
-fi
-
+# ---- 1. submodules -----------------------------------------------------------
 say "submodules"
 git submodule update --init --recursive
 
+# ---- 2. spack: clone (pinned) -> env -> install ------------------------------
 SPACK_URL="$(cfg spack.git_url)"; SPACK_COMMIT="$(cfg spack.git_commit)"; SPACK_REF="$(cfg spack.git_ref)"
 if [[ ! -d "$SPACK_DIR/.git" ]]; then
     say "clone spack -> $SPACK_DIR (pin ${SPACK_COMMIT:0:12})"
@@ -90,14 +75,14 @@ spack -e "$ENV_NAME" develop -p "$MOFKA_DIR" "mofka@$MOFKA_REF" 2>/dev/null || t
 say "spack concretize"
 spack -e "$ENV_NAME" concretize -f || die "spack concretize failed"
 
-MIRROR="$SPACK_DIR/_mirror"
-say "spack mirror -> $MIRROR (offline source bundle)"
-spack -e "$ENV_NAME" mirror create -d "$MIRROR" --all 2>&1 | tail -5 || echo "[install] WARN: mirror misses"
-spack mirror add local-eagle "$MIRROR" 2>/dev/null || true
-spack -e "$ENV_NAME" fetch 2>/dev/null || echo "[install] WARN: fetch misses (mirror should cover build)"
+JOBS="$(cfg spack.build_jobs)"
+say "spack install (-j$JOBS)"
+spack -e "$ENV_NAME" install -j"$JOBS" || die "spack install failed"
+MOFKA_SPACK_VIEW="$(spack location -e "$ENV_NAME")/.spack-env/view"
+export MOFKA_SPACK_VIEW
+say "spack view: $MOFKA_SPACK_VIEW"
 
-# --- mongod: reuse existing on eagle, else conda-create; location-independent ---
-MONGO_ENV="$(layout_path mongo_env_dir)"
+# ---- 3. mongod: reuse existing, else conda-create ----------------------------
 _roots=(); _p="$REPO_ROOT"; for _ in 1 2 3 4; do _p="$(dirname "$_p")"; _roots+=("$_p"); done; _roots+=("$HOME")
 find_existing_mongod() {
     local o; o="$(cfg mongo.mongod_path)"; [[ -n "$o" && -x "$o" ]] && { echo "$o"; return 0; }
@@ -125,12 +110,12 @@ else
     die "no mongod and no conda; set mongo.mongod_path or mongo.conda_bin in install/config.yaml"
 fi
 
-# --- python venv (>=3.11) + consumer deps from real PyPI -----------------------
+# ---- 4. python venv (>=3.11) + consumer deps ---------------------------------
 # shellcheck disable=SC1091
 source "$REPO_ROOT/server/env.sh" --polaris 2>/dev/null || true
-VENV="$(layout_path venv_dir)"; REQS="$REPO_ROOT/$(cfg python.requirements)"
+REQS="$REPO_ROOT/$(cfg python.requirements)"
 pick_python() {
-    local c; for c in "$PY" python3.14 python3.13 python3.12 python3.11 python3; do
+    local c; for c in "${PY:-}" python3.14 python3.13 python3.12 python3.11 python3; do
         [[ -n "$c" ]] && command -v "$c" >/dev/null 2>&1 || continue
         "$c" -c 'import sys;sys.exit(0 if sys.version_info[:2]>=(3,11) else 1)' 2>/dev/null \
             && { command -v "$c"; return 0; }; done; return 1
@@ -151,4 +136,48 @@ say "pip install consumer deps + flowcept"
 "$VENV/bin/python" -m pip install "${PIPFLAGS[@]}" -r "$REQS" || die "pip install requirements failed"
 "$VENV/bin/python" -m pip install "${PIPFLAGS[@]}" -e "$REPO_ROOT/$(cfg python.flowcept_editable)" || die "pip install flowcept failed"
 
-say "FETCH PHASE COMPLETE. Next (COMPUTE node): bash install/10-build.sh"
+# ---- 5. build project source -------------------------------------------------
+# refresh env so the freshly built view + venv are picked up
+export MONGOD="$MONGO_ENV/bin/mongod"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/server/env.sh" --polaris
+module unload darshan 2>/dev/null || true
+export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
+
+DIA="$REPO_ROOT/$(cfg project.diaspora_dir)"
+if [[ -e "$DIA/install/include/diaspora/diaspora_c.h" ]]; then
+    say "diaspora already installed -> skip"
+else
+    say "build diaspora-stream-api"
+    ( cd "$DIA" \
+      && cmake -S . -B _build -DENABLE_C_API=ON -DENABLE_PYTHON=ON \
+            -DCMAKE_PREFIX_PATH="$MOFKA_SPACK_VIEW" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/install" \
+      && cmake --build _build -j && cmake --install _build ) || die "diaspora build failed"
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/server/env.sh" --polaris
+    module unload darshan 2>/dev/null || true
+    export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
+fi
+
+say "build darshan runtime"
+( cd "$REPO_ROOT" && ./build.sh ) || die "darshan build failed"
+export DARSHAN_PREFIX="$REPO_ROOT/$(cfg layout.darshan_prefix)"
+[[ -e "$(darshan_lib)" ]] || die "libdarshan.so missing after build"
+say "darshan_lib=$(darshan_lib)"
+
+say "build darshan-util"
+( cd "$REPO_ROOT/$(cfg project.darshan_dir)/darshan-util"
+  if [[ ! -f _build_util/Makefile ]]; then
+      ( cd .. && ./prepare.sh )
+      mkdir -p _build_util
+      ( cd _build_util && ../configure --prefix="$PWD/../install" )
+  fi
+  ( cd _build_util && make -j"$JOBS" && make install ) ) || die "darshan-util build failed"
+
+say "build smoke workload"
+"$CC" -O2 "$REPO_ROOT/workloads/c/mofka_forward_smoke.c" \
+    -o "$REPO_ROOT/workloads/c/mofka_forward_smoke" || die "workload compile failed"
+
+say "SETUP COMPLETE."
+say "Run the demo (compute node):  bash job.sh"

@@ -24,7 +24,7 @@ Three external pieces must exist before the steps below work:
    pip install -r server/requirements.txt       # PyPI deps (pymongo, redis, ...)
    pip install -e flowcept/                      # the flowcept submodule
    ```
-   `install/lock/requirements.lock` has the exact frozen set if you need to
+   `server/requirements.lock.txt` has the exact frozen set if you need to
    reproduce it. (mochi.mofka / pydiaspora come from the Spack view, not pip.)
 3. **`mongod`** for FlowCept's sink. Install the standalone tarball and set
    `MONGOD=/path/to/mongod` (see step 6). On Polaris it must live on a **shared

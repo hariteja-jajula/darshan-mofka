@@ -89,18 +89,18 @@ for the individual workloads.
 
 ## Automated setup (backup)
 
-If you'd rather not set up the layers by hand, the `install/` scripts stage and
-build everything from pinned versions (Polaris has no internet on compute nodes,
-so fetch runs on a login node):
+If you'd rather not set up the layers by hand, one script builds everything from
+pinned versions (spack stack + mongod + venv + darshan). Run it where you have
+internet (on Polaris: a login node):
 
 ```bash
-bash install/00-fetch.sh    # LOGIN node (internet): stage spack, mongod, wheels, submodules -> eagle
-bash install/10-build.sh    # LOGIN or COMPUTE node, offline: build from the staged sources
-bash job.sh                 # COMPUTE node: run + verify
+bash install/setup.sh    # spack install + mongod + venv + build diaspora/darshan/workload
+bash job.sh              # COMPUTE node: run + verify
 ```
 
-`install/config.yaml` holds versions/names; `install/lock/` holds the exact
-pinned concretization. See [`install/README.md`](install/README.md).
+`install/config.yaml` holds the versions/names it uses; the exact spack
+concretization is pinned in `server/spack/spack.lock`. See
+[`install/README.md`](install/README.md).
 
 ## Verifying the result
 
