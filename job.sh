@@ -149,8 +149,16 @@ trap 'bash server/stop-server.sh >/dev/null 2>&1 || true' EXIT
 # 5. live FlowCept consumer
 # ---------------------------------------------------------------------------
 say "5. FlowCept consumer"
+# Resolve mongod: honor $MONGOD, else PATH, else the known conda env fallback.
 MONGOD="${MONGOD:-$(command -v mongod || true)}"
+if [[ ! -x "$MONGOD" ]]; then
+    for c in "$HOME/miniconda3/envs/flowcept-mongo/bin/mongod" \
+             "$HOME"/miniconda3/envs/*/bin/mongod; do
+        [[ -x "$c" ]] && { MONGOD="$c"; break; }
+    done
+fi
 [[ -x "$MONGOD" ]] || die "mongod not found; set MONGOD=/path/to/mongod (README step 6)"
+echo "MONGOD=$MONGOD"
 RUN_DIR="$OUT/flowcept"; mkdir -p "$RUN_DIR"
 RUN_DIR="$RUN_DIR" MONGO_DB=darshan_stream MONGO_PORT=27017 MONGOD="$MONGOD" \
 MOFKA_GROUP="$GROUP" bash server/capture_flowcept.sh > "$RUN_DIR/flowcept.out" 2>&1 &
