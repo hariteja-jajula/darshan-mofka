@@ -21,17 +21,24 @@ cd "$REPO_ROOT"
 say "submodules"
 git submodule update --init --recursive
 
-# ---- 1. spack: clone (pinned) + fetch all sources ----------------------------
+# ---- 1. spack: clone at the EXACT commit that wrote spack.lock (v6) -----------
 SPACK_DIR="$(layout_path spack_dir)"
-SPACK_REF="$(cfg spack.git_ref)"
 SPACK_URL="$(cfg spack.git_url)"
+SPACK_COMMIT="$(cfg spack.git_commit)"
+SPACK_REF="$(cfg spack.git_ref)"
 if [[ ! -d "$SPACK_DIR/.git" ]]; then
-    say "clone spack ($SPACK_REF) -> $SPACK_DIR"
-    git clone --depth=1 --branch "$SPACK_REF" "$SPACK_URL" "$SPACK_DIR" \
-        || die "spack clone failed"
+    say "clone spack -> $SPACK_DIR (pin commit ${SPACK_COMMIT:0:12})"
+    git clone "$SPACK_URL" "$SPACK_DIR" || die "spack clone failed"
+    if [[ -n "$SPACK_COMMIT" ]]; then
+        if ! git -C "$SPACK_DIR" checkout -q "$SPACK_COMMIT" 2>/dev/null; then
+            echo "[install] WARN: commit $SPACK_COMMIT not found; falling back to $SPACK_REF"
+            git -C "$SPACK_DIR" checkout -q "$SPACK_REF" || die "spack checkout failed"
+        fi
+    fi
 else
-    say "spack already cloned at $SPACK_DIR"
+    say "spack already cloned at $SPACK_DIR ($(git -C "$SPACK_DIR" rev-parse --short HEAD))"
 fi
+say "spack at $(git -C "$SPACK_DIR" rev-parse --short HEAD)"
 # shellcheck disable=SC1091
 source "$SPACK_DIR/share/spack/setup-env.sh"
 
