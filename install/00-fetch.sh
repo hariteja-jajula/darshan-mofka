@@ -171,10 +171,20 @@ VENV_PY="$(pick_python)" || die "no python >= 3.11 found for the venv.
        cray-python') on the login node and re-run install/00-fetch.sh."
 say "venv python: $VENV_PY ($("$VENV_PY" -V 2>&1))"
 
-if [[ ! -x "$VENV/bin/python" ]]; then
-    say "create venv -> $VENV"
+# (Re)create the venv if missing OR if an existing one is too old. A leftover venv
+# from a prior failed run (e.g. python 3.6 with pip 21.x) will NOT see modern
+# packages (pymongo 4.17) no matter the index -- so rebuild it on VENV_PY.
+_venv_ok=0
+if [[ -x "$VENV/bin/python" ]]; then
+    "$VENV/bin/python" -c 'import sys; sys.exit(0 if sys.version_info[:2]>=(3,11) else 1)' 2>/dev/null \
+        && _venv_ok=1
+fi
+if [[ "$_venv_ok" != "1" ]]; then
+    [[ -e "$VENV" ]] && { say "removing stale/old venv at $VENV ($("$VENV/bin/python" -V 2>&1 || echo missing))"; rm -rf "$VENV"; }
+    say "create venv -> $VENV (on $VENV_PY)"
     "$VENV_PY" -m venv "$VENV" || die "venv create failed"
 fi
+say "venv is $("$VENV/bin/python" -V 2>&1)"
 say "pip install consumer deps + flowcept (editable)"
 # Force the real PyPI index: Polaris may have a site pip.conf / stale mirror that
 # only exposes old versions (seen: pymongo maxing at 4.1.1 instead of 4.17.0).
