@@ -1,24 +1,21 @@
 # darshan-mofka manual runbook
 
-The full, step-by-step pipeline for building and running the demo **by hand** --
-useful for debugging, partial rebuilds, or understanding what `job.sh` and the
-`install/` scripts automate. For the fast path see the top-level
-[README](../README.md); for the from-scratch pinned build see
-[install/README.md](../install/README.md).
+Manual steps for building and running the pipeline. Use this for debugging,
+partial rebuilds, or checking what `job.sh` and the `install/` scripts automate.
+For the fast path see the top-level [README](../README.md); for the pinned build
+from source see [install/README.md](../install/README.md).
 
 The steps below are validated on ALCF **Polaris**; the inline notes call out the
 Cray/eagle-specific workarounds.
 
 ## Prerequisites
 
-Three things live outside this repo and must exist before the steps below work:
+Three external pieces must exist before the steps below work:
 
 1. **A built Mofka/FlowCept Spack view** (Bedrock, Mochi, Mofka, Darshan). ~1 GB
    of compiled binaries, not committed. Rebuild them from the vendored spec in
    `server/spack/` (see `server/spack/README.md`), then point `MOFKA_SPACK_VIEW`
-   at the resulting view. `server/env_polaris.sh` also auto-detects it if it sits
-   at the author's default layout; on a fresh account set `MOFKA_SPACK_VIEW`
-   explicitly.
+   at the resulting view.
 2. **A Python venv** with the FlowCept consumer's deps, on top of the Spack
    view's python:
    ```bash
@@ -29,11 +26,10 @@ Three things live outside this repo and must exist before the steps below work:
    ```
    `install/lock/requirements.lock` has the exact frozen set if you need to
    reproduce it. (mochi.mofka / pydiaspora come from the Spack view, not pip.)
-3. **`mongod`** (MongoDB server) -- FlowCept's sink. External dep, not a pip
-   package; grab the standalone tarball and set `MONGOD=/path/to/mongod`
-   (see step 6). On Polaris it must live on a **shared filesystem (`eagle`)**,
-   not `$HOME` (compute nodes can't see `$HOME`), and be fetched on a **login
-   node** (compute nodes have no internet). Details in step 6.
+3. **`mongod`** for FlowCept's sink. Install the standalone tarball and set
+   `MONGOD=/path/to/mongod` (see step 6). On Polaris it must live on a **shared
+   filesystem (`eagle`)**, not `$HOME` (compute nodes can't see `$HOME`), and be
+   fetched on a **login node** (compute nodes have no internet). Details in step 6.
 
 The quickest path once all three exist: `bash job.sh` runs the whole pipeline
 below on a compute node in one shot.
@@ -212,9 +208,7 @@ Start FlowCept before the workload. It runs in the background and continuously
 drains the `darshan` Mofka topic into MongoDB.
 
 FlowCept's sink is a local MongoDB, so `mongod` must be reachable. It is an
-external dependency (not built by this repo, and not a pip package -- `mongod` is
-the MongoDB *server*; the venv only has `pymongo`, the client). It runs as its
-own process, so it never conflicts with the flowcept venv.
+external dependency and is not built by this repo.
 
 > **Polaris placement (important):** compute nodes **cannot see `$HOME`**, and
 > they have **no internet**. So `mongod` must (1) be *downloaded/created on a
@@ -437,8 +431,8 @@ bash server/stop-server.sh
 
 ## One-shot command block
 
-After everything has been built once, this block runs the full demo. (This is
-what `job.sh` automates -- prefer `bash job.sh` unless you need to tweak steps.)
+After everything has been built once, this block runs the full pipeline. This is
+what `job.sh` automates; use `bash job.sh` unless you need to tweak steps.
 
 ```bash
 source server/env.sh --polaris  # or: source server/env.sh --lcrc on LCRC/Improv

@@ -6,10 +6,60 @@ source "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 require_login_node
 cd "$REPO_ROOT"
 
+SPACK_DIR="$(layout_path spack_dir)"
+MONGO_ENV="$(layout_path mongo_env_dir)"
+VENV="$(layout_path venv_dir)"
+
+say "preflight"
+if [[ -d "$SPACK_DIR/.git" ]]; then
+    say "spack repo present: $SPACK_DIR"
+elif command -v spack >/dev/null 2>&1; then
+    say "system spack present: $(command -v spack)"
+    confirm_install "repo-local pinned spack" "this build uses the pinned Spack commit in install/config.yaml"
+else
+    confirm_install "spack" "the installer will clone the pinned Spack into $SPACK_DIR"
+fi
+
+if command -v module >/dev/null 2>&1; then
+    say "environment modules available"
+    if ! command -v cc >/dev/null 2>&1; then
+        confirm_install "compiler/MPI modules" "the installer will try: module swap PrgEnv-nvidia PrgEnv-gnu; module load gcc-native/13.2"
+        module swap PrgEnv-nvidia PrgEnv-gnu >/dev/null 2>&1 || module load PrgEnv-gnu >/dev/null 2>&1 || true
+        module load gcc-native/13.2 >/dev/null 2>&1 || true
+    fi
+else
+    say "environment modules not available; continuing if required compilers/MPI are already on PATH"
+fi
+command -v cc >/dev/null 2>&1 || die "cc compiler wrapper not found; load compiler/MPI modules before running install/00-fetch.sh"
+[[ -x /usr/bin/gcc-12 ]] || die "missing /usr/bin/gcc-12 required by server/spack/spack.yaml"
+
+missing=()
+for path in /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3 /opt/cray/libfabric/2.2.0rc1 /usr/include/rdma; do
+    [[ -e "$path" ]] || missing+=("$path")
+done
+if ((${#missing[@]})); then
+    die "missing Polaris external libraries/modules required by server/spack/spack.yaml: ${missing[*]}"
+fi
+say "compiler and Polaris externals present"
+
+if [[ -x "$MONGO_ENV/bin/mongod" || -n "$(command -v mongod 2>/dev/null || true)" ]]; then
+    say "mongod present"
+else
+    confirm_install "mongod" "the installer will reuse an existing conda or create $MONGO_ENV"
+fi
+
+if [[ -x "$VENV/bin/python" ]]; then
+    say "python venv present: $VENV"
+elif PY311="$(have_python_311)"; then
+    say "python >= 3.11 present: $PY311"
+    confirm_install "FlowCept python venv" "the installer will create $VENV and install server/requirements.txt"
+else
+    die "no python >= 3.11 found; load a Python module before running install/00-fetch.sh"
+fi
+
 say "submodules"
 git submodule update --init --recursive
 
-SPACK_DIR="$(layout_path spack_dir)"
 SPACK_URL="$(cfg spack.git_url)"; SPACK_COMMIT="$(cfg spack.git_commit)"; SPACK_REF="$(cfg spack.git_ref)"
 if [[ ! -d "$SPACK_DIR/.git" ]]; then
     say "clone spack -> $SPACK_DIR (pin ${SPACK_COMMIT:0:12})"

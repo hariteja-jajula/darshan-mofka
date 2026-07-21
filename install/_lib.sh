@@ -12,6 +12,34 @@ CONFIG="$INSTALL_DIR/config.yaml"
 say() { printf '\n[install] %s\n' "$*"; }
 die() { printf '\n[install] FATAL: %s\n' "$*" >&2; exit 1; }
 
+confirm_install() {
+    local item="$1" details="${2:-}"
+    if [[ "${INSTALL_ASSUME_YES:-}" == 1 || "${INSTALL_ASSUME_YES:-}" == yes ]]; then
+        say "$item missing; INSTALL_ASSUME_YES set, continuing"
+        return 0
+    fi
+    [[ -n "$details" ]] && say "$item missing: $details" || say "$item missing"
+    if [[ ! -t 0 ]]; then
+        die "$item missing; rerun interactively or set INSTALL_ASSUME_YES=1 to allow install/setup"
+    fi
+    local ans
+    read -r -p "Install/setup $item now? [y/N] " ans
+    case "$ans" in
+        y|Y|yes|YES) return 0 ;;
+        *) die "$item not installed; stopping before dependency build" ;;
+    esac
+}
+
+have_python_311() {
+    local c
+    for c in "${PY:-}" python3.14 python3.13 python3.12 python3.11 python3 python; do
+        [[ -n "$c" ]] && command -v "$c" >/dev/null 2>&1 || continue
+        "$c" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 11) else 1)' 2>/dev/null \
+            && { command -v "$c"; return 0; }
+    done
+    return 1
+}
+
 # cfg <dotted.key> -- read a scalar from config.yaml. Uses python (always present
 # via the spack view or system) so we need no yaml CLI dependency.
 cfg() {

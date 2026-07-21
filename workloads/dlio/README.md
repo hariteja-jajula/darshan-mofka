@@ -1,12 +1,11 @@
 # workloads/dlio/ -- DLIO benchmark workload (optional)
 
-[DLIO](https://github.com/argonne-lcf/dlio_benchmark) is a realistic deep-learning
-I/O benchmark. Run it under the Darshan-Mofka connector to stream a more
-representative POSIX workload than the tiny C smoke test.
+Run [DLIO](https://github.com/argonne-lcf/dlio_benchmark) under the
+Darshan-Mofka connector to exercise the POSIX path with a benchmark workload.
 
 Prereqs: the stack is built, the broker is up, and a FlowCept consumer is
-draining the topic. Because DLIO is a separate run, use a **separate**
-`MONGO_DB` and `EVENTS_JSONL` so its events don't mix with other workloads.
+draining the topic. Because DLIO is a separate run, use a separate `MONGO_DB` and
+`EVENTS_JSONL` so its events don't mix with other workloads.
 
 ## Install DLIO
 
