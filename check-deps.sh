@@ -10,7 +10,7 @@
 #
 # Intended for Darshan devs on Polaris who already have most of the stack. If a
 # row is MISSING, the top-level README's "Dependencies & Environments" section
-# says how to get it (or run the automated backup: bash install/00-fetch.sh).
+# says how to get it (or run the automated backup: bash install/setup.sh).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
@@ -109,6 +109,6 @@ if [[ "$MISSING" == 0 ]]; then
 else
     echo "Some dependencies are MISSING (see rows above)."
     echo "Fix them per the README 'Dependencies & Environments' section,"
-    echo "or run the automated backup:  bash install/00-fetch.sh && bash install/10-build.sh"
+    echo "or run the automated backup:  bash install/setup.sh"
     exit 1
 fi

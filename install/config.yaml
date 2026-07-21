@@ -1,14 +1,9 @@
-# install/config.yaml -- SINGLE source of truth for the from-scratch build.
+# install/config.yaml -- versions + names for the automated setup (install/setup.sh).
 #
 # Only VERSIONS and NAMES live here. NO hardcoded paths, accounts, or usernames:
-# paths are derived at run time from the repo location (which is on eagle) and the
-# active user's environment. Edit versions here; the install/*.sh scripts read them.
-#
-# Reproducibility model (Polaris has NO internet on compute nodes):
-#   phase 1  install/00-fetch.sh   LOGIN node  -- download everything to eagle
-#   phase 2  install/10-build.sh   login/compute -- compile from the fetched sources
-#   phase 3  install/20-freeze.sh  compute node -- snapshot exact versions -> lock/
-# See install/README.md.
+# paths are derived at run time from the repo location and the active user's
+# environment. Edit versions here; install/setup.sh reads them. See
+# install/README.md (and the top-level README for the manual setup).
 
 # ---- where things get created (RELATIVE to repo root, which is on eagle) -------
 # These are names only; the scripts prefix them with the detected repo root.

@@ -8,7 +8,7 @@ Two C workloads for exercising the connector's POSIX, STDIO, and MPI-IO paths.
 | `mofka_forward_mpiio.c` | MPIIO (incl. `MPI_File_close`) | yes |
 
 Prereqs: the stack is built (see the top-level [README](../../README.md)
-"Dependencies & Environments", or `bash install/10-build.sh`), the broker is up
+"Dependencies & Environments", or `bash install/setup.sh`), the broker is up
 (`bash server/start-server.sh`), and a FlowCept consumer is draining the topic.
 See also [docs/RUNBOOK.md](../../docs/RUNBOOK.md).
 

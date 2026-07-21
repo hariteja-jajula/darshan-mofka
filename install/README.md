@@ -3,70 +3,51 @@
 This is the **automated backup** to the manual setup in the top-level
 [README](../README.md). Prefer the README's "Dependencies & Environments" steps
 if you already have parts of the stack (run `bash check-deps.sh` first to see what
-you're missing). Use these scripts when you'd rather stage and build everything
-from pinned versions in one shot.
+you're missing). Use `setup.sh` when you'd rather build everything in one shot.
 
-Builds the darshan-mofka stack from source: the native spack stack
-(Bedrock/Mochi/Mofka/cmake/darshan-util deps), `mongod`, the python consumer, and
-the project source (darshan + diaspora). Paths, accounts, and usernames are not
-hardcoded.
-
-## Why it's phased (Polaris has no internet on compute nodes)
-
-Polaris compute nodes cannot download dependencies, so the build is split:
-
-| Phase | Script | Where | Does |
-|-------|--------|-------|------|
-| 1 fetch | `00-fetch.sh` | **login node** (internet) | submodules, clone+`spack fetch`, conda `mongod`, pip wheels → all onto **eagle** |
-| 2 build | `10-build.sh` | login **or** compute (offline) | `spack install`, diaspora, darshan runtime, darshan-util, workload |
-| 3 freeze | `20-freeze.sh` | compute (after a good run) | snapshot exact versions → `install/lock/` |
-
-Everything created lands under the repo (which is on **eagle**), so the compute-node
-build phase and the runtime both see it.
-
-## config.yaml
-
-`install/config.yaml` contains versions and names (spack ref, mongodb version,
-env/dir names). Paths are derived at run time from the repo location. To change a
-version, edit `config.yaml`; the scripts read it via `install/_lib.sh`.
+`install/setup.sh` builds the darshan-mofka stack from source: the native spack
+stack (Bedrock/Mochi/Mofka/cmake/darshan-util deps), `mongod`, the python
+consumer, and the project source (darshan + diaspora). Paths, accounts, and
+usernames are not hardcoded.
 
 ## Usage
 
-`install/00-fetch.sh` starts with a preflight check for Spack, environment
-modules, compiler/MPI wrappers, Polaris externals, `mongod`, and Python >= 3.11.
-For missing pieces the installer can create under the repo (pinned Spack,
-`mongod`, venv), it asks before doing so. Set `INSTALL_ASSUME_YES=1` for
-non-interactive runs.
+Run where you have internet (on Polaris: a login node). It clones/pins spack,
+creates the env from `server/spack/spack.yaml`, installs it, sets up `mongod` and
+the python venv, and builds diaspora + darshan + the workload:
 
 ```bash
-# --- phase 1: LOGIN node (has internet) ---
-bash install/00-fetch.sh
+bash install/setup.sh
+```
 
-# --- phase 2: compute node (offline OK) ---
+Then run the demo end to end on a compute node:
+
+```bash
 qsub -I -q debug -A <proj> -l select=1 -l walltime=01:00:00 -l filesystems=home:eagle
 cd <repo>
-bash install/10-build.sh
-
-# --- run the demo end to end ---
 bash job.sh
-
-# --- phase 3: freeze exact versions for shipping ---
-bash install/20-freeze.sh
-git add install/lock && git commit -m "pin build"
 ```
+
+`setup.sh` reuses whatever already exists (spack env, `mongod`, venv, diaspora
+install), so re-running it is cheap.
+
+## config.yaml
+
+`install/config.yaml` holds versions and names (spack commit, mongodb version,
+env/dir names). Paths are derived at run time from the repo location. To change a
+version, edit `config.yaml`; `setup.sh` reads it via `install/_lib.sh`.
 
 ## What is / isn't committed
 
-- **Committed:** `config.yaml` (names+versions), the phase scripts, and after a
-  freeze, `install/lock/` (exact `spack.lock`, `requirements.lock`,
-  `mongo.lock.yml`, `versions.txt`).
-- **Not committed** (large/host-specific, rebuilt from the above): `_spack/`,
-  `_venv/`, `server/_mongo_env/`, `darshan/install*`, `diaspora-stream-api/install`.
+- **Committed:** `config.yaml` (names+versions), `setup.sh`, `_lib.sh`. The exact
+  spack concretization is pinned in `server/spack/spack.lock`.
+- **Not committed** (large/host-specific, rebuilt by `setup.sh`): `_spack/`,
+  `_venv/`, `_mofka/`, `server/_mongo_env/`, `darshan/install*`,
+  `diaspora-stream-api/install`.
 
 ## Relationship to the rest of the repo
 
-- Reuses `server/spack/spack.yaml` + `spack.lock` as the spack spec (config points
-  at them) — no duplication.
+- Reuses `server/spack/spack.yaml` (+ `spack.lock`) as the spack spec — no duplication.
 - Reuses `server/requirements.txt` for the python deps.
 - `mongod` resolution: `server/env_polaris.sh` auto-detects `server/_mongo_env`.
-- After building, `bash job.sh` runs the validated README pipeline end to end.
+- After building, `bash job.sh` runs the full pipeline end to end.

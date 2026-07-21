@@ -42,10 +42,10 @@ export PYTHONSAFEPATH=1
 # mongod (MongoDB *server*, FlowCept's sink) is an external dep -- not pip, not in
 # the spack view. It MUST live on a shared FS (eagle); compute nodes cannot see
 # $HOME. Resolve in a documented order so the demo is self-sufficient:
-#   1. explicit $MONGOD  2. install/00-fetch.sh's env (server/_mongo_env)
+#   1. explicit $MONGOD  2. install/setup.sh's env (server/_mongo_env)
 #   3. known-good conda envs already on eagle  4. PATH
 if [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]]; then
-    # 1. installer's env dir (created by install/00-fetch.sh, symlink or real)
+    # 1. installer's env dir (created by install/setup.sh, symlink or real)
     if [[ -x "$ROOT/server/_mongo_env/bin/mongod" ]]; then
         MONGOD="$ROOT/server/_mongo_env/bin/mongod"
     else
