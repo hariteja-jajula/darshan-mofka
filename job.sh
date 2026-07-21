@@ -112,6 +112,9 @@ say "5. FlowCept consumer"
 RUN_DIR="$ROOT/server/_flowcept_run"
 MONGO_DB=darshan_stream; MONGO_PORT=27017
 EVENTS_JSONL="/tmp/darshan-mofka-events.jsonl"
+# fresh run dir each time: capture_flowcept.sh keeps mongo_data here; a stale one
+# makes the NEXT run re-count leftover docs (seen: 13 sends but 26 exported).
+rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
 RUN_DIR="$RUN_DIR" MONGO_DB="$MONGO_DB" MONGO_PORT="$MONGO_PORT" MONGOD="$MONGOD" \
 MOFKA_GROUP="$GROUP" \
