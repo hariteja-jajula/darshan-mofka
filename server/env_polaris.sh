@@ -45,14 +45,22 @@ export PYTHONSAFEPATH=1
 #   1. explicit $MONGOD  2. install/00-fetch.sh's env (server/_mongo_env)
 #   3. known-good conda envs already on eagle  4. PATH
 if [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]]; then
-    for _m in \
-        "$ROOT/server/_mongo_env/bin/mongod" \
-        "$_PROJECT_ROOT/../miniconda3_polaris/envs/cll-mongo/bin/mongod" \
-        "$_PROJECT_ROOT/../miniconda3/envs/flowcept-mongo/bin/mongod" \
-        "$(command -v mongod 2>/dev/null || true)"; do
-        [[ -n "$_m" && -x "$_m" ]] && { MONGOD="$_m"; break; }
-    done
-    unset _m
+    # 1. installer's env dir (created by install/00-fetch.sh, symlink or real)
+    if [[ -x "$ROOT/server/_mongo_env/bin/mongod" ]]; then
+        MONGOD="$ROOT/server/_mongo_env/bin/mongod"
+    else
+        # 2. search a few ancestors of the repo for miniconda*/envs/*/bin/mongod
+        #    (location-independent: works no matter where the repo is cloned).
+        _p="$ROOT"
+        for _ in 1 2 3 4; do
+            _p="$(dirname "$_p")"
+            _m="$(compgen -G "$_p/miniconda3*/envs/*/bin/mongod" 2>/dev/null | head -1)"
+            [[ -n "$_m" && -x "$_m" ]] && { MONGOD="$_m"; break; }
+        done
+        # 3. PATH
+        [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]] && MONGOD="$(command -v mongod 2>/dev/null || true)"
+        unset _p _m
+    fi
 fi
 export MONGOD
 
