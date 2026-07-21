@@ -76,6 +76,7 @@ Then edit `server/env.local.sh` to load modules or set paths for your cluster.
 If `diaspora-stream-api/install` already exists, skip this step.
 
 ```bash
+source server/env.sh --polaris  # sets $MOFKA_SPACK_VIEW, $CC, and the pkg-config env
 cd diaspora-stream-api
 cmake -S . -B _build -DENABLE_C_API=ON -DENABLE_PYTHON=ON \
       -DCMAKE_PREFIX_PATH="$MOFKA_SPACK_VIEW" \
@@ -104,6 +105,7 @@ PY
 Build the Darshan fork with Mofka support.
 
 ```bash
+source server/env.sh --polaris  # re-source: step 2's refresh re-adds the system darshan path
 ./build.sh
 ```
 
@@ -234,6 +236,7 @@ done
 Run any workload under Darshan while FlowCept is draining the topic. This example uses the C smoke workload:
 
 ```bash
+source server/env.sh --polaris  # provides $ROOT, $DARSHAN_LOGPATH, darshan_lib, darshan_ensure_logdir
 darshan_ensure_logdir
 
 env \
@@ -267,6 +270,7 @@ real MPI job, so do **not** set `DARSHAN_ENABLE_NONMPI`. Use more than one rank 
 the shared-file / cross-rank behavior is exercised:
 
 ```bash
+source server/env.sh --polaris  # provides $ROOT, $DARSHAN_LOGPATH, darshan_lib, darshan_ensure_logdir
 darshan_ensure_logdir
 
 mpiexec -n 4 env \
