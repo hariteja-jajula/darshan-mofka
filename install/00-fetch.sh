@@ -146,14 +146,34 @@ fi
 
 # ---- 3. python venv + download wheels ----------------------------------------
 # We create the venv here (login node) so pip can reach PyPI; the build phase just
-# reuses it. Built on the spack view's python (matches the consumer runtime).
+# reuses it. During FETCH the spack view python may not be built yet, so $PY can
+# fall back to the ancient system python3 (3.6) -- too old for pymongo 4.x. Pick a
+# python >= 3.11 explicitly and fail clearly if none is available.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/server/env.sh" --polaris 2>/dev/null || true
 VENV="$(layout_path venv_dir)"
 REQS="$REPO_ROOT/$(cfg python.requirements)"
+
+pick_python() {
+    local cand
+    for cand in "$PY" python3.14 python3.13 python3.12 python3.11 python3; do
+        [[ -n "$cand" ]] || continue
+        command -v "$cand" >/dev/null 2>&1 || continue
+        if "$cand" -c 'import sys; sys.exit(0 if sys.version_info[:2]>=(3,11) else 1)' 2>/dev/null; then
+            command -v "$cand"; return 0
+        fi
+    done
+    return 1
+}
+VENV_PY="$(pick_python)" || die "no python >= 3.11 found for the venv.
+       The spack view python isn't built yet during fetch and the system
+       python3 is too old. Load a newer python module (e.g. 'module load
+       cray-python') on the login node and re-run install/00-fetch.sh."
+say "venv python: $VENV_PY ($("$VENV_PY" -V 2>&1))"
+
 if [[ ! -x "$VENV/bin/python" ]]; then
-    say "create venv -> $VENV (on ${PY:-python3})"
-    "${PY:-python3}" -m venv "$VENV" || die "venv create failed"
+    say "create venv -> $VENV"
+    "$VENV_PY" -m venv "$VENV" || die "venv create failed"
 fi
 say "pip install consumer deps + flowcept (editable)"
 "$VENV/bin/python" -m pip install --upgrade pip >/dev/null
