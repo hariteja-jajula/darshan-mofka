@@ -1,13 +1,13 @@
-# install/ -- from-scratch reproducible build
+# install/ -- reproducible build from source
 
-Builds the entire darshan-mofka stack from nothing: the native spack stack
+Builds the darshan-mofka stack from source: the native spack stack
 (Bedrock/Mochi/Mofka/cmake/darshan-util deps), `mongod`, the python consumer, and
-the project source (darshan + diaspora) — driven by one config file with **no
-hardcoded paths, accounts, or usernames**.
+the project source (darshan + diaspora). Paths, accounts, and usernames are not
+hardcoded.
 
 ## Why it's phased (Polaris has no internet on compute nodes)
 
-You are right: **compute nodes cannot download anything.** So the build is split:
+Polaris compute nodes cannot download dependencies, so the build is split:
 
 | Phase | Script | Where | Does |
 |-------|--------|-------|------|
@@ -18,13 +18,19 @@ You are right: **compute nodes cannot download anything.** So the build is split
 Everything created lands under the repo (which is on **eagle**), so the compute-node
 build phase and the runtime both see it.
 
-## config.yaml -- the single source of truth
+## config.yaml
 
-Only **versions and names** live in `install/config.yaml` (spack ref, mongodb
-version, env/dir names). Paths are derived at run time from the repo location. To
-change a version, edit `config.yaml`; the scripts read it (via `install/_lib.sh`).
+`install/config.yaml` contains versions and names (spack ref, mongodb version,
+env/dir names). Paths are derived at run time from the repo location. To change a
+version, edit `config.yaml`; the scripts read it via `install/_lib.sh`.
 
 ## Usage
+
+`install/00-fetch.sh` starts with a preflight check for Spack, environment
+modules, compiler/MPI wrappers, Polaris externals, `mongod`, and Python >= 3.11.
+For missing pieces the installer can create under the repo (pinned Spack,
+`mongod`, venv), it asks before doing so. Set `INSTALL_ASSUME_YES=1` for
+non-interactive runs.
 
 ```bash
 # --- phase 1: LOGIN node (has internet) ---

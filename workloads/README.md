@@ -1,8 +1,7 @@
 # workloads/
 
-Demo workloads run under `LD_PRELOAD=libdarshan.so` so the Darshan-Mofka
-connector streams their I/O events into the `darshan` Mofka topic. Each
-subdirectory has its own README with build + run + verify steps.
+Workloads for exercising the Darshan-Mofka connector. Each subdirectory has its
+own README with build, run, and verify steps.
 
 | Workload | Directory | Exercises | Notes |
 |---|---|---|---|

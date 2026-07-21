@@ -1,21 +1,20 @@
 # darshan-mofka
 
-Stream Darshan runtime I/O events into a Mofka topic, in real time.
+Stream Darshan runtime I/O events into a Mofka topic.
 
-An application runs under `LD_PRELOAD=libdarshan.so`. Darshan intercepts its
-POSIX / STDIO / MPI-IO calls, builds JSON metadata events, and pushes them to a
-Mofka topic; FlowCept drains the topic into MongoDB. If the job dies before
-Darshan writes its final log, a **partial `.darshan` log can be reconstructed
-from the stream**.
+The connector emits JSON metadata events from the Darshan runtime to Mofka;
+FlowCept drains the topic into MongoDB. If the job exits before Darshan writes
+its final log, a partial `.darshan` log can be reconstructed from the captured
+stream.
 
-## What this artifact demonstrates
+## What it does
 
-- **Live event streaming** of an application's I/O to Mofka as it runs -- POSIX,
-  STDIO, and MPI-IO, including the STDIO and `MPI_File_close` close events.
-- **Log reconstruction from the stream:** the reconstructed log's OPENS match a
-  natively-produced Darshan log (only cosmetic overlay/unknown-label differences).
-- **Reproducibility:** the entire stack rebuilds from nothing with pinned
-  versions and no hardcoded paths/accounts (see [`install/`](install/README.md)).
+- Streams POSIX, STDIO, and MPI-IO events to Mofka, including STDIO close and
+  `MPI_File_close` events.
+- Reconstructs a partial Darshan log from the stream; reconstructed OPENS match
+  the native Darshan log, aside from overlay/unknown-label differences.
+- Rebuilds the stack from source with pinned versions and no hardcoded
+  paths/accounts (see [`install/`](install/README.md)).
 
 ## Quickstart
 
@@ -90,8 +89,7 @@ from this branch. Recover them from the study branch if needed.
 
 ## What gets streamed
 
-The connector streams JSON **metadata** events only -- it does **not** stream the
-application's actual file contents.
+The connector streams JSON metadata events only, not application file contents.
 
 The `rec_hex` field, when present, is a hex-encoded copy of Darshan's internal
 module record at the time of the event. It is profiling/record state, not user

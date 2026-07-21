@@ -1,9 +1,6 @@
 # workloads/c/ -- C smoke + MPI-IO workloads
 
-Two tiny C programs that do only local file I/O. Run under
-`LD_PRELOAD=libdarshan.so` with the Mofka connector enabled, they make Darshan
-fire its module hooks and stream the events to the `darshan` topic. Neither
-program knows anything about Mofka itself.
+Two C workloads for exercising the connector's POSIX, STDIO, and MPI-IO paths.
 
 | Source | Module(s) | MPI? |
 |---|---|---|
