@@ -52,24 +52,30 @@ echo "CC=$CC"
 echo "PY=$PY"
 
 # ---------------------------------------------------------------------------
-# 2. build diaspora-stream-api (skip if already installed)
+# 2. build diaspora-stream-api  (README step 2 -- always build, then re-source)
 # ---------------------------------------------------------------------------
 say "2. diaspora-stream-api"
-if [[ -e "diaspora-stream-api/install/include/diaspora/diaspora_c.h" ]]; then
-    echo "already installed -> skip"
-else
-    ( cd diaspora-stream-api \
-      && cmake -S . -B _build -DENABLE_C_API=ON -DENABLE_PYTHON=ON \
-            -DCMAKE_PREFIX_PATH="$MOFKA_SPACK_VIEW" \
-            -DCMAKE_INSTALL_PREFIX="$PWD/install" \
-      && cmake --build _build -j \
-      && cmake --install _build ) || die "diaspora build failed"
-    # re-source so the freshly-installed python site-packages land on PYTHONPATH
-    # shellcheck disable=SC1091
-    source server/env.sh --polaris
-    module unload darshan 2>/dev/null || true
-    export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
-fi
+( cd diaspora-stream-api \
+  && cmake -S . -B _build -DENABLE_C_API=ON -DENABLE_PYTHON=ON \
+        -DCMAKE_PREFIX_PATH="$MOFKA_SPACK_VIEW" \
+        -DCMAKE_INSTALL_PREFIX="$PWD/install" \
+  && cmake --build _build -j \
+  && cmake --install _build ) || die "diaspora build failed"
+
+# README step 2: re-source env AFTER installing diaspora so its python
+# site-packages (pydiaspora_stream_api) land on PYTHONPATH for the consumer,
+# then re-apply the Polaris pkg-config fix (re-sourcing re-adds the bad path).
+# shellcheck disable=SC1091
+source server/env.sh --polaris
+module unload darshan 2>/dev/null || true
+export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
+
+say "2b. verify diaspora + mofka python imports (README step 2)"
+"$PY" - <<'PY' || die "python cannot import pydiaspora_stream_api / mochi.mofka -- check PYTHONPATH"
+import pydiaspora_stream_api
+import mochi.mofka.client
+print("mochi.mofka import OK")
+PY
 
 # ---------------------------------------------------------------------------
 # 3. build the MPI Darshan runtime (the whole point) + util + workload
