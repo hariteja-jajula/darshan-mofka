@@ -84,6 +84,13 @@ echo "DIASPORA_C=$DIASPORA_C"
 # configured from a PRE-fix Makefile.in gets reused and the static-lib Mofka
 # include fix (commit e9d860c1) never takes -> 'diaspora/diaspora_c.h not found'.
 rm -rf darshan/_build-mpi
+# BULLETPROOF FIX for "diaspora/diaspora_c.h: No such file" on the STATIC lib:
+# the per-target libdarshan_a_CPPFLAGS += $(MOFKA_CFLAGS) fix can be lost when
+# Polaris' maintainer-mode automake regenerates lib/Makefile.in. configure feeds
+# $CPPFLAGS to EVERY compile (both shared and static libs), so put the diaspora
+# include there directly -- independent of any per-target Makefile wiring.
+export CPPFLAGS="-I$DIASPORA_C/include ${CPPFLAGS:-}"
+echo "CPPFLAGS=$CPPFLAGS"
 # Polaris' Cray cc wrapper is MPI-aware, so pin CC/CXX to it (build.sh would
 # otherwise reach for mpicc, which isn't the Cray wrapper here).
 ( cd darshan && DARSHAN_MPI=1 CC="$CC" CXX="${CXX:-CC}" ./build.sh ) \
