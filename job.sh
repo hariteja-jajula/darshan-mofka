@@ -131,11 +131,21 @@ echo "  OK   darshan_lib -> $LIB"
 # the runtime lib links diaspora-c + (transitively) mofka/mochi from the view;
 # make sure none resolve to a system/$HOME location.
 if command -v ldd >/dev/null 2>&1; then
-    # allowed: the repo, the spack view, the project tree on eagle, and system dirs.
-    _view_root="${MOFKA_SPACK_VIEW%/view}"    # .../.spack-env
-    BAD="$(ldd "$LIB" 2>/dev/null | awk '/=>/{print $3}' \
-        | grep -vE "^($ROOT|$PROJECT_ROOT|${MOFKA_SPACK_VIEW}|${_view_root}|/lib|/lib64|/usr/lib|/opt/cray|/soft)" \
-        | grep -vE "^\s*$" || true)"
+    # allowed: the repo, the spack view/stack, the project tree on eagle, system.
+    # Canonicalize the view path: MOFKA_SPACK_VIEW may contain '..' (e.g. test/..)
+    # while ldd reports the resolved real path -- compare on real paths.
+    _view_real="$(readlink -f "$MOFKA_SPACK_VIEW" 2>/dev/null || echo "$MOFKA_SPACK_VIEW")"
+    _spackroot_real="$(readlink -f "$PROJECT_ROOT/.." 2>/dev/null || echo "$PROJECT_ROOT")"
+    BAD=""
+    while IFS= read -r solib; do
+        [[ -z "$solib" ]] && continue
+        real="$(readlink -f "$solib" 2>/dev/null || echo "$solib")"
+        case "$real" in
+            "$ROOT"/*|"$_spackroot_real"/*|"$_view_real"/*|\
+            /lib/*|/lib64/*|/usr/lib/*|/opt/cray/*|/soft/*) ;;   # allowed
+            *) BAD+="$solib"$'\n' ;;
+        esac
+    done < <(ldd "$LIB" 2>/dev/null | awk '/=>/{print $3}')
     if [[ -n "$BAD" ]]; then
         echo "  WARN: some linked libs resolve outside project/system dirs:"
         echo "$BAD" | sed 's/^/    /'
