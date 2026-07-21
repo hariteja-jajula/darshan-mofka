@@ -70,8 +70,8 @@ say "build darshan-util"
 
 # ---- 5. smoke workload -------------------------------------------------------
 say "build smoke workload"
-"$CC" -O2 "$REPO_ROOT/workloads/mofka_forward_smoke.c" \
-    -o "$REPO_ROOT/workloads/mofka_forward_smoke" || die "workload compile failed"
+"$CC" -O2 "$REPO_ROOT/workloads/c/mofka_forward_smoke.c" \
+    -o "$REPO_ROOT/workloads/c/mofka_forward_smoke" || die "workload compile failed"
 
 say "BUILD PHASE COMPLETE."
 say "Run the demo:  bash job.sh    (or freeze exact versions: bash install/20-freeze.sh)"

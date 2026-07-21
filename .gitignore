@@ -8,7 +8,8 @@
 /diaspora-stream-api/install/
 
 # demo build outputs
-/workloads/mofka_forward_smoke
+/workloads/c/mofka_forward_smoke
+/workloads/c/mofka_forward_mpiio
 
 # broker runtime outputs
 /server/mofka.json
