@@ -24,6 +24,10 @@
 /install/_mofka/
 /server/_mongo_env/
 
+# env-snapshot: diagnostic dump (contains machine-specific PATH/user paths).
+# Regenerate with server/capture-env.sh; do not commit (would leak user paths).
+/server/env-snapshot/
+
 # job run outputs and artifacts
 /server/_pbs_*/
 /server/_diag_*/
