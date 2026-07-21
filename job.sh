@@ -101,7 +101,7 @@ else
     fi
 
     say "2b. build darshan runtime (non-MPI)"
-    ( cd darshan && ./build.sh ) || die "darshan build failed"
+    ./build.sh || die "darshan build failed"
     echo "darshan_lib=$(darshan_lib)"
     [[ -e "$(darshan_lib)" ]] || die "libdarshan.so missing after build"
 

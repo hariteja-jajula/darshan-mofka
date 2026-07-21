@@ -53,7 +53,7 @@ fi
 
 # ---- 3. darshan runtime (non-MPI) --------------------------------------------
 say "build darshan runtime"
-( cd "$REPO_ROOT/$(cfg project.darshan_dir)" && ./build.sh ) || die "darshan build failed"
+( cd "$REPO_ROOT" && ./build.sh ) || die "darshan build failed"
 export DARSHAN_PREFIX="$REPO_ROOT/$(cfg layout.darshan_prefix)"
 [[ -e "$(darshan_lib)" ]] || die "libdarshan.so missing after build"
 say "darshan_lib=$(darshan_lib)"
