@@ -40,6 +40,37 @@ have_python_311() {
     return 1
 }
 
+# spack_external_prefixes -- print the external `prefix:` paths declared in
+# server/spack/spack.yaml, one per line. This is the SINGLE source of truth for
+# Polaris system externals (mpich, libfabric, rdma, gcc, ...); do NOT hardcode
+# these paths anywhere else. If Polaris bumps a version, edit spack.yaml only.
+spack_external_prefixes() {
+    local yaml="$REPO_ROOT/$(cfg spack.env_spec)"
+    [[ -f "$yaml" ]] || return 0
+    "${PY:-python3}" - "$yaml" <<'PY'
+import sys, re
+try:
+    import yaml
+    data = yaml.safe_load(open(sys.argv[1]))
+    pkgs = (data.get("spack", {}) or {}).get("packages", {}) or {}
+    seen = set()
+    for _name, spec in pkgs.items():
+        if not isinstance(spec, dict):
+            continue
+        for ext in spec.get("externals", []) or []:
+            p = ext.get("prefix")
+            if p and p not in seen:
+                seen.add(p)
+                print(p)
+except Exception:
+    # regex fallback: grab every `prefix: <path>` under packages/externals
+    for line in open(sys.argv[1]):
+        m = re.match(r'\s*prefix:\s*(\S+)', line)
+        if m:
+            print(m.group(1).strip().strip('"').strip("'"))
+PY
+}
+
 # cfg <dotted.key> -- read a scalar from config.yaml. Uses python (always present
 # via the spack view or system) so we need no yaml CLI dependency.
 cfg() {

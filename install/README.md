@@ -1,4 +1,10 @@
-# install/ -- reproducible build from source
+# install/ -- automated setup (backup path)
+
+This is the **automated backup** to the manual setup in the top-level
+[README](../README.md). Prefer the README's "Dependencies & Environments" steps
+if you already have parts of the stack (run `bash check-deps.sh` first to see what
+you're missing). Use these scripts when you'd rather stage and build everything
+from pinned versions in one shot.
 
 Builds the darshan-mofka stack from source: the native spack stack
 (Bedrock/Mochi/Mofka/cmake/darshan-util deps), `mongod`, the python consumer, and

@@ -31,16 +31,18 @@ else
     say "environment modules not available; continuing if required compilers/MPI are already on PATH"
 fi
 command -v cc >/dev/null 2>&1 || die "cc compiler wrapper not found; load compiler/MPI modules before running install/00-fetch.sh"
-[[ -x /usr/bin/gcc-12 ]] || die "missing /usr/bin/gcc-12 required by server/spack/spack.yaml"
 
+# Externals are declared in server/spack/spack.yaml (single source of truth);
+# check every external prefix exists so the offline spack build won't fail later.
 missing=()
-for path in /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3 /opt/cray/libfabric/2.2.0rc1 /usr/include/rdma; do
+while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
     [[ -e "$path" ]] || missing+=("$path")
-done
+done < <(spack_external_prefixes)
 if ((${#missing[@]})); then
-    die "missing Polaris external libraries/modules required by server/spack/spack.yaml: ${missing[*]}"
+    die "missing external paths required by server/spack/spack.yaml: ${missing[*]}"
 fi
-say "compiler and Polaris externals present"
+say "compiler and spack externals present"
 
 if [[ -x "$MONGO_ENV/bin/mongod" || -n "$(command -v mongod 2>/dev/null || true)" ]]; then
     say "mongod present"

@@ -13,32 +13,94 @@ stream.
   `MPI_File_close` events.
 - Reconstructs a partial Darshan log from the stream; reconstructed OPENS match
   the native Darshan log, aside from overlay/unknown-label differences.
-- Rebuilds the stack from source with pinned versions and no hardcoded
-  paths/accounts (see [`install/`](install/README.md)).
+- Builds from source with pinned versions and no hardcoded paths/accounts.
 
-## Quickstart
+## Check your setup
 
-The build has no compute-node internet dependency, so on Polaris only the final
-run needs a compute node (the Mofka broker's fabric transport doesn't come up on
-login nodes).
+Darshan devs on Polaris usually already have most of the stack. Before setting up
+anything, see what you have and what's missing (this downloads nothing):
 
 ```bash
-# 1. LOGIN node (internet): stage everything (spack, mongod, wheels, submodules) onto eagle
-bash install/00-fetch.sh
+bash check-deps.sh
+```
 
-# 2. LOGIN or COMPUTE node, OFFLINE: build from the staged sources
-bash install/10-build.sh
+It prints a PRESENT/MISSING row per dependency and exits 0 when everything is
+ready (then just `bash job.sh`). For anything MISSING, follow the section below.
 
-# 3. COMPUTE node: run + verify the pipeline end to end
+## Dependencies & Environments
+
+Four layers. Each is declared in-repo; get them however you prefer (reuse an
+existing build, module load, spack, conda, pip). Then `source server/env.sh
+--polaris` so the demo finds them.
+
+**1. Native HPC stack (spack view): Bedrock, Mochi, Mofka, Darshan-util deps.**
+Spec: [`server/spack/spack.yaml`](server/spack/spack.yaml) (+ `spack.lock` for the
+exact pinned concretization). See [`server/spack/README.md`](server/spack/README.md).
+
+```bash
+git clone --depth=1 https://github.com/spack/spack.git
+. spack/share/spack/setup-env.sh
+spack env create flowcept-mofka-polaris server/spack/spack.yaml
+spack env activate flowcept-mofka-polaris
+# edit spack.yaml: point develop.mofka.path at a mofka checkout, then:
+spack install -j4            # -j4: Polaris login-node fork cap
+export MOFKA_SPACK_VIEW="$(spack location --env flowcept-mofka-polaris)/.spack-env/view"
+```
+
+**2. Python consumer venv (>= 3.11).** Deps: [`server/requirements.txt`](server/requirements.txt)
+(exact pins in `server/requirements.lock.txt`).
+
+```bash
+python -m venv ../envs/flowcept-py314
+source ../envs/flowcept-py314/bin/activate
+pip install -r server/requirements.txt
+pip install -e flowcept/          # the flowcept submodule
+```
+
+(mochi.mofka / pydiaspora come from the spack view, not pip.)
+
+**3. MongoDB server (`mongod`) — FlowCept's sink.** External dep, not pip. Reuse
+one on a shared filesystem, or install a standalone tarball / conda `mongodb`,
+then `export MONGOD=/path/to/mongod`. On Polaris it must live on **eagle** (compute
+nodes can't see `$HOME`). Details in [`docs/RUNBOOK.md`](docs/RUNBOOK.md) step 6.
+
+**4. Project source (submodules) + the Darshan fork.**
+
+```bash
+git submodule update --init --recursive
+source server/env.sh --polaris
+DIASPORA_C="$DIASPORA_C" ./build.sh      # builds darshan/install (the Mofka connector)
+```
+
+## Run
+
+Once `check-deps.sh` is green, run end to end on a **compute node** (the Mofka
+broker's fabric transport doesn't come up on login nodes):
+
+```bash
 qsub -I -q debug -A <project> -l select=1 -l walltime=01:00:00 -l filesystems=home:eagle
 cd <repo>
 bash job.sh
 ```
 
+See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for the full manual pipeline (broker +
+consumer + workload + export), and [`workloads/README.md`](workloads/README.md)
+for the individual workloads.
+
+## Automated setup (backup)
+
+If you'd rather not set up the layers by hand, the `install/` scripts stage and
+build everything from pinned versions (Polaris has no internet on compute nodes,
+so fetch runs on a login node):
+
+```bash
+bash install/00-fetch.sh    # LOGIN node (internet): stage spack, mongod, wheels, submodules -> eagle
+bash install/10-build.sh    # LOGIN or COMPUTE node, offline: build from the staged sources
+bash job.sh                 # COMPUTE node: run + verify
+```
+
 `install/config.yaml` holds versions/names; `install/lock/` holds the exact
-pinned concretization. See [`install/README.md`](install/README.md) for the
-phase model, and [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for the full manual
-pipeline (useful for debugging or partial rebuilds).
+pinned concretization. See [`install/README.md`](install/README.md).
 
 ## Verifying the result
 
@@ -73,8 +135,9 @@ darshan-mofka/
 ├── diaspora-stream-api/  Diaspora C API submodule used by the connector
 ├── flowcept/             FlowCept submodule (the live consumer)
 ├── build.sh              build the vendored darshan fork into darshan/install
+├── check-deps.sh         read-only dependency check (skip setup you already have)
 ├── job.sh                one-shot end-to-end demo on a compute node
-├── install/              from-scratch reproducible build (config-driven, pinned)
+├── install/              automated setup backup (config-driven, pinned)
 ├── docs/RUNBOOK.md       full manual pipeline + Polaris workarounds
 ├── server/               environment, broker start/stop, capture consumer
 │   ├── spack/            Spack spec to rebuild the Mofka/FlowCept stack
@@ -115,6 +178,7 @@ Mofka send hook, the connector forwards the event.
 
 ## More documentation
 
-- [`install/README.md`](install/README.md) -- from-scratch reproducible build (phased, pinned).
+- [`server/spack/README.md`](server/spack/README.md) -- rebuild the native Mofka/FlowCept stack.
 - [`docs/RUNBOOK.md`](docs/RUNBOOK.md) -- full manual pipeline, one-shot block, troubleshooting, Polaris workarounds.
 - [`workloads/README.md`](workloads/README.md) -- how to run each workload type (C smoke, MPI-IO, DLIO).
+- [`install/README.md`](install/README.md) -- automated setup backup (phased, pinned).

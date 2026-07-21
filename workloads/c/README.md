@@ -7,10 +7,10 @@ Two C workloads for exercising the connector's POSIX, STDIO, and MPI-IO paths.
 | `mofka_forward_smoke.c` | POSIX + STDIO (incl. STDIO close) | no |
 | `mofka_forward_mpiio.c` | MPIIO (incl. `MPI_File_close`) | yes |
 
-Prereqs: the stack is built (`bash install/10-build.sh`), the broker is up
+Prereqs: the stack is built (see the top-level [README](../../README.md)
+"Dependencies & Environments", or `bash install/10-build.sh`), the broker is up
 (`bash server/start-server.sh`), and a FlowCept consumer is draining the topic.
-See the top-level [README](../../README.md) or
-[docs/RUNBOOK.md](../../docs/RUNBOOK.md).
+See also [docs/RUNBOOK.md](../../docs/RUNBOOK.md).
 
 `$CC` is set by `server/env.sh`. On Polaris the Cray `cc` wrapper is MPI-aware,
 so it links MPI automatically; on other systems use `mpicc` for the MPI-IO build.
