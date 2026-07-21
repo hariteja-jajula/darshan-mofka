@@ -22,7 +22,9 @@
 /server/_pbs_*/
 /server/_diag_*/
 /server/_scale_*/
+/server/_split_*/
 /server/_flowcept_run/
+/server/_mongo_env/
 *.o[0-9]*
 /data/
 /hydra_log/

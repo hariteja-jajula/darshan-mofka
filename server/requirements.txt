@@ -9,6 +9,9 @@
 #   - mochi.mofka / py-mochi-margo / pydiaspora_stream_api  -> from the Spack view
 #   - flowcept                                              -> pip install -e flowcept/
 #   - pydarshan                                             -> optional, from darshan/darshan-util/pydarshan
+#   - mongod (MongoDB *server*, FlowCept's sink)            -> NOT a pip package;
+#         reproduce via conda: server/mongo-environment.yml (install to a prefix on
+#         eagle so compute nodes can see it). env_polaris.sh auto-detects it.
 #
 # Versions below are the ones validated on Polaris (2026-07). Loosen if you need to.
 pymongo==4.17.0          # FlowCept's MongoDB sink

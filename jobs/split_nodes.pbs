@@ -1,0 +1,113 @@
+#!/bin/bash
+# split_nodes.pbs -- run the darshan-mofka demo SPLIT across nodes:
+#   node 0            = SERVER role  (broker + mongod + FlowCept consumer)
+#   nodes 1..N-1      = WORKLOAD role (darshan-instrumented workloads)
+#
+# The two roles coordinate ONLY through a shared (eagle) run dir:
+#   $RUN_DIR/mofka.json  broker address    $RUN_DIR/READY  server up
+#   $RUN_DIR/DONE        workloads finished $RUN_DIR/events.jsonl  result
+#
+# Submit (self-submits to a compute allocation if run on a login node):
+#   PBS_ACCOUNT=<proj> NNODES=2 bash jobs/split_nodes.pbs
+#   # or directly:
+#   qsub -A <proj> -l select=2:ncpus=64 -l walltime=00:30:00 \
+#        -l filesystems=home:eagle jobs/split_nodes.pbs
+#
+# Requires >= 2 nodes (1 server + >=1 workload). mongod must be resolvable
+# (server/mongo-environment.yml or $MONGOD; env_polaris.sh auto-detects the
+# on-eagle conda envs).
+#PBS -N darshan_mofka_split
+#PBS -q debug
+#PBS -l select=2:ncpus=64
+#PBS -l walltime=00:30:00
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+set -uo pipefail
+
+# --- self-submit from a login node -------------------------------------------
+if [[ -z "${PBS_JOBID:-}" ]]; then
+    cd "$(dirname "${BASH_SOURCE[0]}")/.."
+    ACCOUNT="${PBS_ACCOUNT:-}"
+    [[ -n "$ACCOUNT" ]] || { echo "set PBS_ACCOUNT=<project>"; exit 1; }
+    NNODES="${NNODES:-2}"
+    exec qsub -A "$ACCOUNT" -l select="${NNODES}":ncpus=64 \
+              -l walltime=00:30:00 -l filesystems=home:eagle jobs/split_nodes.pbs
+fi
+
+ROOT="${PBS_O_WORKDIR:-$(pwd)}"; cd "$ROOT"
+export TERM="${TERM:-xterm}"
+
+# --- shared run dir on eagle (visible to every node) --------------------------
+RUN_DIR="$ROOT/server/_split_${PBS_JOBID%%.*}"
+mkdir -p "$RUN_DIR"
+echo "[split] RUN_DIR=$RUN_DIR"
+
+# --- node list ----------------------------------------------------------------
+mapfile -t NODES < "$PBS_NODEFILE"
+# PBS_NODEFILE repeats a host per rank; collapse to unique hosts in order.
+UNIQ_NODES=(); declare -A seen
+for h in "${NODES[@]}"; do [[ -n "${seen[$h]:-}" ]] || { UNIQ_NODES+=("$h"); seen[$h]=1; }; done
+NTOTAL=${#UNIQ_NODES[@]}
+[[ "$NTOTAL" -ge 2 ]] || { echo "[split] need >=2 nodes, got $NTOTAL"; exit 1; }
+SERVER_NODE="${UNIQ_NODES[0]}"
+WORKLOAD_NODES=("${UNIQ_NODES[@]:1}")
+echo "[split] server=$SERVER_NODE  workloads=${WORKLOAD_NODES[*]}"
+
+# --- launch SERVER role on node 0 (background) --------------------------------
+# one process on exactly the server node; it publishes READY then idles for DONE.
+RUN_DIR="$RUN_DIR" MONGO_DB=darshan_stream MONGO_PORT=27017 TOPIC=darshan \
+mpiexec --np 1 --ppn 1 --hosts "$SERVER_NODE" \
+    bash "$ROOT/server/roles/server-node.sh" > "$RUN_DIR/server.out" 2>&1 &
+SERVER_LAUNCH=$!
+echo "[split] server role launched (pid $SERVER_LAUNCH); waiting for READY"
+
+# --- wait for server READY (or FAILED) ----------------------------------------
+for _ in $(seq 1 300); do
+    [[ -f "$RUN_DIR/READY"  ]] && break
+    [[ -f "$RUN_DIR/FAILED" ]] && { echo "[split] server FAILED:"; cat "$RUN_DIR/server.out"; exit 1; }
+    kill -0 "$SERVER_LAUNCH" 2>/dev/null || { echo "[split] server exited early:"; cat "$RUN_DIR/server.out"; exit 1; }
+    sleep 2
+done
+[[ -f "$RUN_DIR/READY" ]] || { echo "[split] timed out waiting for server READY"; cat "$RUN_DIR/server.out"; exit 1; }
+echo "[split] server READY"
+
+# --- build the smoke workload (once, on the shared FS) ------------------------
+# shellcheck disable=SC1091
+source server/env.sh --polaris
+"$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
+
+# --- run WORKLOAD role on the remaining nodes ---------------------------------
+WHOSTS="$(IFS=,; echo "${WORKLOAD_NODES[*]}")"
+NW=${#WORKLOAD_NODES[@]}
+echo "[split] launching workload on $NW node(s): $WHOSTS"
+RUN_DIR="$RUN_DIR" TOPIC=darshan WORKLOAD_IS_MPI=0 \
+mpiexec --np "$NW" --ppn 1 --hosts "$WHOSTS" \
+    bash "$ROOT/server/roles/workload-node.sh" \
+        ./workloads/mofka_forward_smoke "$RUN_DIR/smoke" \
+    > "$RUN_DIR/workload.out" 2>&1
+echo "[split] workloads finished; signaling DONE"
+touch "$RUN_DIR/DONE"
+
+# --- wait for server to export + finish ---------------------------------------
+for _ in $(seq 1 120); do [[ -f "$RUN_DIR/EXPORTED" ]] && break; sleep 2; done
+wait "$SERVER_LAUNCH" 2>/dev/null || true
+
+# --- report -------------------------------------------------------------------
+echo "==================== SPLIT RUN RESULT ===================="
+echo "server.out (tail):";   tail -15 "$RUN_DIR/server.out"   2>/dev/null
+echo "workload.out (tail):"; tail -15 "$RUN_DIR/workload.out" 2>/dev/null
+EV="$RUN_DIR/events.jsonl"
+if [[ -s "$EV" ]]; then
+    echo "exported JSONL: $EV ($(wc -l < "$EV") lines)"
+    "$PY" - "$EV" <<'PY'
+import json, sys
+from collections import Counter
+mods, ops = Counter(), Counter()
+for line in open(sys.argv[1]):
+    ev = json.loads(line); mods[ev.get('module')] += 1; ops[ev.get('op')] += 1
+print("modules:", dict(mods)); print("ops:", dict(ops))
+PY
+else
+    echo "NO events.jsonl -- see logs above"
+fi
+echo "artifacts in: $RUN_DIR"

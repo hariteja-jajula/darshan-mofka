@@ -39,6 +39,26 @@ export BEDROCK_PROTOCOL=ofi+tcp
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 export PYTHONSAFEPATH=1
 
+# mongod (MongoDB *server*, FlowCept's sink) is an external dep -- not pip, not in
+# the spack view. It MUST live on a shared FS (eagle): Polaris compute nodes cannot
+# see $HOME. Resolve it in a documented order so the demo is self-sufficient:
+#   1. an explicit $MONGOD (honored as-is)
+#   2. the conda env created from server/mongo-environment.yml, on eagle
+#   3. known-good conda envs already on eagle
+#   4. whatever is on PATH
+# See server/mongo-environment.yml for how to create (2).
+if [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]]; then
+    for _m in \
+        "$ROOT/server/_mongo_env/bin/mongod" \
+        "$_PROJECT_ROOT/../miniconda3_polaris/envs/cll-mongo/bin/mongod" \
+        "$_PROJECT_ROOT/../miniconda3/envs/flowcept-mongo/bin/mongod" \
+        "$(command -v mongod 2>/dev/null || true)"; do
+        [[ -n "$_m" && -x "$_m" ]] && { MONGOD="$_m"; break; }
+    done
+    unset _m
+fi
+export MONGOD
+
 [[ -d "$_VENV/bin" ]] && export PATH="$_VENV/bin:$PATH"
 [[ -d "$_VIEW/bin" ]] && export PATH="$_VIEW/bin:$PATH"
 [[ -n "$_CMAKE_BIN" ]] && export PATH="$(dirname "$_CMAKE_BIN"):$PATH"

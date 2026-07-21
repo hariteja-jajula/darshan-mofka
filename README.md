@@ -6,6 +6,12 @@ The demo runs one small C program under `LD_PRELOAD=libdarshan.so`. Darshan
 intercepts the program's POSIX/STDIO I/O calls, builds JSON metadata events, pushes
 them to Mofka, and FlowCept drains the topic into MongoDB.
 
+> **Shipping / reproducing this stack:** see [`DEPLOY.md`](DEPLOY.md) for the
+> four-layer dependency map (spack stack, python venv, `mongod`, project source),
+> a fresh-account bring-up checklist, and the **split-node** run model
+> (server node + workload nodes coordinating through a shared `mofka.json` on
+> eagle). `server/capture-env.sh` snapshots the actual environment for review.
+
 ## Prerequisites
 
 Three things live outside this repo and must exist before the steps below work:

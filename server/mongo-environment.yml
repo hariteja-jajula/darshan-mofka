@@ -1,0 +1,29 @@
+# mongo-environment.yml -- reproducible spec for the MongoDB *server* (mongod).
+#
+# WHY THIS FILE EXISTS
+#   mongod is FlowCept's sink. It is the MongoDB *server* binary, NOT a Python
+#   package, so it cannot live in server/requirements.txt (pip has no MongoDB
+#   server). This conda spec is the reproducible equivalent: it pins the exact
+#   server version validated for this demo.
+#
+# WHERE TO INSTALL IT (critical on HPC)
+#   Polaris compute nodes CANNOT see your $HOME. Install to a prefix on a shared
+#   filesystem (eagle) so both the server node and any tooling can reach mongod:
+#
+#     # on a LOGIN node (compute nodes have no internet):
+#     conda env create -p /eagle/<proj>/<user>/.../server/_mongo_env \
+#                      -f server/mongo-environment.yml
+#     export MONGOD=/eagle/<proj>/<user>/.../server/_mongo_env/bin/mongod
+#
+#   env_polaris.sh auto-detects server/_mongo_env/bin/mongod (and a couple of
+#   known conda envs on eagle), so once installed there you don't need to export
+#   MONGOD by hand.
+#
+# VALIDATED VERSION
+#   mongodb 7.0.34 (conda-forge) -- verified on a Polaris compute node:
+#   `mongod --version` -> v7.0.34, all shared libs resolved from the env.
+name: darshan-mofka-mongo
+channels:
+  - conda-forge
+dependencies:
+  - mongodb=7.0.34
