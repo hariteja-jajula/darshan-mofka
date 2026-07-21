@@ -21,11 +21,15 @@ layout:
   util_prefix:      "darshan/darshan-util/install"
 
 # ---- spack (native HPC stack: bedrock/mochi/mofka/darshan-util deps + cmake) ---
+# IMPORTANT: server/spack/spack.lock is lockfile-version 6, written by spack
+# 1.2.0.dev0 (commit cd9936355). Older spack (e.g. 0.23) CANNOT read a v6 lock, so
+# we pin the exact commit that produced it for byte-identical reproduction.
 spack:
-  git_url:   "https://github.com/spack/spack.git"
-  git_ref:   "releases/v0.23"      # pin the spack release used to concretize
-  env_spec:  "server/spack/spack.yaml"   # the committed spec (specs + externals)
-  env_lock:  "server/spack/spack.lock"   # the committed pinned concretization
+  git_url:    "https://github.com/spack/spack.git"
+  git_commit: "cd9936355d77a6617c83056fe3a54056bab21909"  # wrote spack.lock (v6)
+  git_ref:    "develop"            # fallback branch if the commit is unfetchable
+  env_spec:   "server/spack/spack.yaml"  # the committed spec (specs + externals)
+  env_lock:   "server/spack/spack.lock"  # the committed pinned concretization (v6)
   build_jobs: 4                    # -j4: Polaris login-node fork cap
 
 # ---- mongodb server (mongod) -- conda, NOT pip -------------------------------
