@@ -27,6 +27,9 @@ Three things live outside this repo and must exist before the steps below work:
    (mochi.mofka / pydiaspora come from the Spack view, not pip.)
 3. **`mongod`** (MongoDB server) — FlowCept's sink. External dep, not a pip package;
    grab the standalone tarball and set `MONGOD=/path/to/mongod` (see step 6).
+   On Polaris it must live on a **shared filesystem (`eagle`)**, not `$HOME`
+   (compute nodes can't see `$HOME`), and be fetched on a **login node** (compute
+   nodes have no internet). Details in step 6.
 
 The quickest path once all three exist: `PBS_ACCOUNT=<your_project> bash jobs/job.sh`
 runs the whole pipeline below on a compute node in one shot.
@@ -219,17 +222,44 @@ Start FlowCept before the workload. It runs in the background and continuously d
 FlowCept's sink is a local MongoDB, so `mongod` must be reachable. It is an external
 dependency (not built by this repo, and not a pip package — `mongod` is the MongoDB
 *server*; the venv only has `pymongo`, the client). It runs as its own process, so it
-never conflicts with the flowcept venv. Get it either way, then point `MONGOD` at it:
+never conflicts with the flowcept venv.
+
+> **Polaris placement (important):** compute nodes **cannot see `$HOME`**, and they
+> have **no internet**. So `mongod` must (1) be *downloaded/created on a login node*
+> and (2) live on a **shared filesystem the compute nodes can see (`eagle`)** — not
+> under `$HOME`. A `mongod` in a `$HOME` conda env will fail the `[[ -x ]]` check on
+> a compute node. Put it under the repo (which is on `eagle`) and point `MONGOD` at it.
+
+First check whether a usable `mongod` already exists on `eagle`:
 
 ```bash
-# Option A (portable, no root/conda): standalone MongoDB server tarball
-cd "$ROOT"
+find "$ROOT/.." -maxdepth 4 -name mongod -type f 2>/dev/null   # e.g. a prior conda env on eagle
+```
+
+If one is found and runs (`"$MONGOD" --version` prints and `ldd "$MONGOD" | grep -i "not found"` is empty), just point at it:
+
+```bash
+export MONGOD=/eagle/<proj>/<user>/.../envs/<mongo-env>/bin/mongod
+```
+
+Otherwise get one — **on a login node** (internet + `$HOME` both available there),
+installing INTO the repo on `eagle`:
+
+```bash
+# Option A (portable, no root/conda): standalone MongoDB server tarball -> eagle
+cd "$ROOT"                                   # $ROOT is on eagle
 curl -sL https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-7.0.14.tgz | tar xz
 export MONGOD="$PWD/mongodb-linux-x86_64-ubuntu2204-7.0.14/bin/mongod"
 
-# Option B (if you already use conda): a separate env just for the server binary
-# conda create -y -n mongo -c conda-forge mongodb
-# export MONGOD="$(conda run -n mongo which mongod)"
+# Option B (conda): create the env at a prefix ON EAGLE (not the default ~/ location)
+# conda create -y -p "$ROOT/server/_mongo_env" -c conda-forge mongodb
+# export MONGOD="$ROOT/server/_mongo_env/bin/mongod"
+```
+
+Then, back on the compute node, confirm it before starting the consumer:
+
+```bash
+[[ -x "$MONGOD" ]] && "$MONGOD" --version | head -1 || echo "MONGOD not set/visible on this node"
 ```
 
 ```bash
