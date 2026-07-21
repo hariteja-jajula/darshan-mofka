@@ -2,8 +2,8 @@
 # job.sh -- one-shot end-to-end smoke test of the README pipeline (non-MPI).
 #
 # Run on a Polaris COMPUTE node from the repo root:
-#     qsub -I -q debug -A radix-io -l select=1 -l walltime=01:00:00 -l filesystems=home:eagle
-#     cd /eagle/radix-io/hjajula/test/darshan-mofka
+#     qsub -I -q debug -A <project> -l select=1 -l walltime=01:00:00 -l filesystems=home:eagle
+#     cd <repo root on eagle>
 #     bash job.sh
 #
 # It follows README sections 1-12 for the POSIX/STDIO smoke workload:
@@ -40,6 +40,44 @@ echo "DIASPORA_C=$DIASPORA_C"
 echo "CC=$CC"; echo "PY=$PY"
 echo "MONGOD=${MONGOD:-<unresolved>}"
 pkg-config --exists zlib && echo "zlib OK" || echo "WARN: zlib not visible to pkg-config"
+
+# ---------------------------------------------------------------------------
+# 1b. PROVENANCE CHECKS -- fail if we'd use something from OUTSIDE the project.
+# Guards against strays: ~/.local python, /usr/bin/python, a $HOME conda mongod,
+# a system spack view, etc. Everything must resolve under the repo, the project's
+# spack/venv, or eagle (the shared FS this project lives on).
+# ---------------------------------------------------------------------------
+say "1b. provenance checks (no stray tools from outside the project)"
+PROJECT_ROOT="$(cd "$ROOT/.." && pwd)"          # e.g. /eagle/<proj>/<user>/test
+# allowed roots: the repo, its parent tree (spack view/venv/mongo on eagle)
+_allowed() {  # _allowed <label> <path> <allowed-substr-1> [more...]
+    local label="$1" path="$2"; shift 2
+    [[ -n "$path" ]] || die "$label is empty/unresolved"
+    local ok=0 pat
+    for pat in "$@"; do [[ "$path" == *"$pat"* ]] && ok=1; done
+    if [[ "$ok" = "1" ]]; then
+        echo "  OK   $label -> $path"
+    else
+        die "$label resolves OUTSIDE the project: $path
+       (expected under one of: $*)
+       Fix your environment (source server/env.sh --polaris in a clean shell)."
+    fi
+}
+# hard failures on known strays
+case "$PY" in
+    *"/.local/"*|/usr/bin/python*|/bin/python*)
+        die "PY is a stray interpreter: $PY (expected the project venv or spack view)";;
+esac
+[[ "$(command -v cmake)" == *"$PROJECT_ROOT"* || "$(command -v cmake)" == *"/spack/"* ]] \
+    || die "cmake is not from the spack view: $(command -v cmake)"
+
+_allowed "PY (python)"        "$PY"               "$PROJECT_ROOT" "$ROOT"
+_allowed "MOFKA_SPACK_VIEW"   "$MOFKA_SPACK_VIEW" "$PROJECT_ROOT" "/spack/"
+_allowed "DIASPORA_C"         "$DIASPORA_C"       "$ROOT"
+_allowed "DARSHAN_PREFIX"     "$DARSHAN_PREFIX"   "$ROOT"
+_allowed "cmake"              "$(command -v cmake)" "$PROJECT_ROOT" "/spack/"
+[[ -n "${MONGOD:-}" ]] && _allowed "MONGOD" "$MONGOD" "$PROJECT_ROOT" "$ROOT"
+echo "  provenance OK: all tools resolve inside the project/eagle"
 
 # ---------------------------------------------------------------------------
 # 2. build darshan (non-MPI) + darshan-util + workload  (README sections 2-3)
@@ -84,6 +122,37 @@ fi
 B="$ROOT/darshan/darshan-util/install/bin"
 [[ -x "$B/darshan-parser" && -x "$B/darshan-mofka-reconstruct" ]] \
     || die "darshan-util tools missing at $B (run without SKIP_BUILD)"
+
+# ---- provenance: the built lib + its linked libs must come from the project ---
+say "2e. provenance: darshan lib + linked libs"
+LIB="$(darshan_lib)"
+[[ "$LIB" == "$ROOT"/* ]] || die "darshan_lib is not in the repo: $LIB"
+echo "  OK   darshan_lib -> $LIB"
+# the runtime lib links diaspora-c + (transitively) mofka/mochi from the view;
+# make sure none resolve to a system/$HOME location.
+if command -v ldd >/dev/null 2>&1; then
+    # allowed: the repo, the spack view/stack, the project tree on eagle, system.
+    # Canonicalize the view path: MOFKA_SPACK_VIEW may contain '..' (e.g. test/..)
+    # while ldd reports the resolved real path -- compare on real paths.
+    _view_real="$(readlink -f "$MOFKA_SPACK_VIEW" 2>/dev/null || echo "$MOFKA_SPACK_VIEW")"
+    _spackroot_real="$(readlink -f "$PROJECT_ROOT/.." 2>/dev/null || echo "$PROJECT_ROOT")"
+    BAD=""
+    while IFS= read -r solib; do
+        [[ -z "$solib" ]] && continue
+        real="$(readlink -f "$solib" 2>/dev/null || echo "$solib")"
+        case "$real" in
+            "$ROOT"/*|"$_spackroot_real"/*|"$_view_real"/*|\
+            /lib/*|/lib64/*|/usr/lib/*|/opt/cray/*|/soft/*) ;;   # allowed
+            *) BAD+="$solib"$'\n' ;;
+        esac
+    done < <(ldd "$LIB" 2>/dev/null | awk '/=>/{print $3}')
+    if [[ -n "$BAD" ]]; then
+        echo "  WARN: some linked libs resolve outside project/system dirs:"
+        echo "$BAD" | sed 's/^/    /'
+    else
+        echo "  OK   linked libs resolve inside project/eagle or system dirs"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # 3. resolve mongod (README section 6; env.sh already tried)
