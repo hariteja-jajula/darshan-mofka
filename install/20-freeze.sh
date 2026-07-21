@@ -82,22 +82,29 @@ say "write versions.txt"
 {
     echo "# frozen $(date -u +%Y-%m-%dT%H:%M:%SZ) on $(hostname -s)"
     echo "## toolchain"
-    # apply the Polaris pkg-config fix so 'cc --version' doesn't trip the system
-    # darshan-runtime pkg-config hook ("Error invoking pkg-config!").
-    PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}" \
-        "${CC:-cc}" --version >/tmp/_ccver 2>/dev/null && echo "cc:      $(head -1 /tmp/_ccver)" \
-        || echo "cc:      ${CC:-cc} (version probe skipped)"
-    rm -f /tmp/_ccver
+    # Cray 'cc' is a wrapper; its --version needs the full PE module env. Record the
+    # wrapper path + the craype version from the path (stable, reproducible).
+    _craype_ver="$(printf '%s\n' "${CC:-cc}" | sed -n 's|.*/craype/\([^/]*\)/.*|\1|p')"
+    echo "cc:      ${CC:-cc}${_craype_ver:+  (craype $_craype_ver)}"
     echo "cmake:   $(command -v cmake) $(cmake --version 2>&1 | head -1)"
     echo "python:  $("${PY:-python3}" -V 2>&1)"
     echo "mongod:  $("$MONGO_ENV/bin/mongod" --version 2>&1 | head -1)"
     echo "## spack components (view, with versions)"
-    if [[ -n "${ENV_NAME:-}" ]]; then
-        # --format prints each installed spec as name@version (no hashes)
-        spack -e "$ENV_NAME" find --format '{name}@{version}' 2>/dev/null \
-            | grep -iE 'mofka|bedrock|margo|mercury|thallium|warabi|yokan|flock|darshan|diaspora' \
-            | sort -u \
-            || spack -e "$ENV_NAME" find 2>/dev/null | grep -iE 'mofka|darshan|diaspora' || true
+    # Pull name@version straight from the concretized lock (authoritative, no spack
+    # invocation quirks). Covers the key mochi/mofka/darshan/diaspora components.
+    if [[ -s "$LOCK/spack.lock" ]]; then
+        "${PY:-python3}" - "$LOCK/spack.lock" <<'PY' 2>/dev/null || true
+import json, sys, re
+d = json.load(open(sys.argv[1]))
+want = re.compile(r'mofka|bedrock|margo|mercury|thallium|warabi|yokan|flock|darshan|diaspora', re.I)
+seen = set()
+for s in d.get("concrete_specs", {}).values():
+    n, v = s.get("name",""), s.get("version","")
+    if n and want.search(n):
+        seen.add(f"{n}@{v}")
+for spec in sorted(seen):
+    print(f"  {spec}")
+PY
     fi
     echo "## darshan submodule"
     echo "darshan: $(git -C "$REPO_ROOT/$(cfg project.darshan_dir)" rev-parse --short HEAD 2>/dev/null)"
