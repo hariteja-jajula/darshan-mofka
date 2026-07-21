@@ -174,7 +174,6 @@ explicitly (must be on a shared filesystem like `eagle`, not `$HOME`):
 
 ```bash
 source server/env.sh --polaris
-[[ -x "$MONGOD" ]] && "$MONGOD" --version | head -1 || export MONGOD=/path/to/mongod
 ```
 
 Start the consumer:
