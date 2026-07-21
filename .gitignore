@@ -21,6 +21,7 @@
 # from-scratch installer build outputs (rebuilt from install/config.yaml + lock/)
 /install/_spack/
 /install/_venv/
+/install/_mofka/
 /server/_mongo_env/
 
 # job run outputs and artifacts

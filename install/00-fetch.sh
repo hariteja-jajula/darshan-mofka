@@ -42,19 +42,32 @@ say "spack at $(git -C "$SPACK_DIR" rev-parse --short HEAD)"
 # shellcheck disable=SC1091
 source "$SPACK_DIR/share/spack/setup-env.sh"
 
+# ---- 1b. mofka source checkout (spack builds it via `develop`) ----------------
+# server/spack/spack.yaml has `develop: mofka path: ../../../mofka`; that path is
+# a placeholder. Clone mofka here and point spack's develop at our clone.
+MOFKA_DIR="$REPO_ROOT/$(cfg mofka.dir)"
+MOFKA_URL="$(cfg mofka.git_url)"; MOFKA_REF="$(cfg mofka.git_ref)"
+if [[ ! -d "$MOFKA_DIR/.git" ]]; then
+    say "clone mofka ($MOFKA_REF) -> $MOFKA_DIR"
+    git clone --branch "$MOFKA_REF" "$MOFKA_URL" "$MOFKA_DIR" || die "mofka clone failed"
+else
+    say "mofka already cloned at $MOFKA_DIR"
+fi
+
+# ---- 1c. create env from spack.yaml (carries repos: + develop:), not the lock --
+# The lock alone omits the git package repos (mochi/diaspora), so `mofka` is
+# unknown. Create from the yaml spec; register the repos; point develop at our
+# mofka clone; then concretize + fetch for an offline build.
 ENV_NAME="$(cfg layout.spack_env_name)"
-ENV_LOCK="$REPO_ROOT/$(cfg spack.env_lock)"
 ENV_SPEC="$REPO_ROOT/$(cfg spack.env_spec)"
 if ! spack env list 2>/dev/null | grep -qx "$ENV_NAME"; then
-    if [[ -s "$ENV_LOCK" ]]; then
-        say "create spack env '$ENV_NAME' from pinned lock"
-        spack env create "$ENV_NAME" "$ENV_LOCK" || die "spack env create (lock) failed"
-    else
-        say "create spack env '$ENV_NAME' from spec"
-        spack env create "$ENV_NAME" "$ENV_SPEC" || die "spack env create (spec) failed"
-    fi
+    say "create spack env '$ENV_NAME' from spec (repos + develop)"
+    spack env create "$ENV_NAME" "$ENV_SPEC" || die "spack env create (spec) failed"
 fi
-say "spack fetch (download all sources for offline build)"
+say "point spack develop at the mofka clone"
+spack -e "$ENV_NAME" develop -p "$MOFKA_DIR" "mofka@$MOFKA_REF" 2>/dev/null || true
+
+say "spack concretize + fetch (download all sources for offline build)"
 spack -e "$ENV_NAME" concretize -f || die "spack concretize failed"
 spack -e "$ENV_NAME" fetch || echo "[install] WARN: spack fetch had misses (some pkgs fetch at build)"
 
