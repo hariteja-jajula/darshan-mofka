@@ -75,18 +75,6 @@ Then edit `server/env.local.sh` to load modules or set paths for your cluster.
 
 If `diaspora-stream-api/install` already exists, skip this step.
 
-> **Polaris note (validated):** the Cray `cc` wrapper injects a `darshan-runtime`
-> pkg-config hook from the system `darshan` module, which fails the CMake compiler
-> check with `Package 'zlib' ... required by 'darshan-runtime', not found`. Unload
-> the module and put zlib on `PKG_CONFIG_PATH` **before** this build (the same hook
-> also affects step 3):
->
-> ```bash
-> module unload darshan
-> export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
-> pkg-config --exists zlib && echo "zlib OK"   # sanity check
-> ```
-
 ```bash
 cd diaspora-stream-api
 cmake -S . -B _build -DENABLE_C_API=ON -DENABLE_PYTHON=ON \
@@ -114,15 +102,6 @@ PY
 ## 3. Build Darshan And The Demo Workload
 
 Build the Darshan fork with Mofka support.
-
-> **Polaris note (validated):** re-sourcing `server/env.sh` after step 2 re-adds
-> the system darshan pkg-config path, so re-apply the fix from step 2 before
-> building the runtime:
->
-> ```bash
-> module unload darshan   # avoids Cray cc wrapper's darshan-runtime pkg-config hook
-> export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
-> ```
 
 ```bash
 ./build.sh
