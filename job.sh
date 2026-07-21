@@ -75,6 +75,15 @@ fi
 # 3. build the MPI Darshan runtime (the whole point) + util + workload
 # ---------------------------------------------------------------------------
 say "3a. Darshan MPI runtime (DARSHAN_MPI=1)"
+# DIASPORA_C must resolve to a real install; if empty/missing, MOFKA_CFLAGS will
+# be empty and darshan-mofka.c won't find diaspora/diaspora_c.h.
+echo "DIASPORA_C=$DIASPORA_C"
+[[ -f "$DIASPORA_C/include/diaspora/diaspora_c.h" ]] \
+    || die "DIASPORA_C invalid: no include/diaspora/diaspora_c.h under '$DIASPORA_C' (build diaspora first)"
+# Wipe any stale _build-mpi: build.sh only re-wipes on srcdir mismatch, so a tree
+# configured from a PRE-fix Makefile.in gets reused and the static-lib Mofka
+# include fix (commit e9d860c1) never takes -> 'diaspora/diaspora_c.h not found'.
+rm -rf darshan/_build-mpi
 # Polaris' Cray cc wrapper is MPI-aware, so pin CC/CXX to it (build.sh would
 # otherwise reach for mpicc, which isn't the Cray wrapper here).
 ( cd darshan && DARSHAN_MPI=1 CC="$CC" CXX="${CXX:-CC}" ./build.sh ) \
