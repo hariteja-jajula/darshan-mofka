@@ -105,7 +105,10 @@ PY
 Build the Darshan fork with Mofka support.
 
 ```bash
-source server/env.sh --polaris  # re-source: step 2's refresh re-adds the system darshan path
+source server/env.sh --polaris  # re-source
+module unload darshan
+export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
+pkg-config --exists zlib && echo "zlib OK"   # sanity check
 ./build.sh
 ```
 
