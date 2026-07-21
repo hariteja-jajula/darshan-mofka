@@ -6,59 +6,6 @@ The demo runs one small C program under `LD_PRELOAD=libdarshan.so`. Darshan
 intercepts the program's POSIX/STDIO I/O calls, builds JSON metadata events, pushes
 them to Mofka, and FlowCept drains the topic into MongoDB.
 
-## Reproducible from-scratch build (recommended)
-
-To rebuild the **entire** stack from nothing (spack stack, `mongod`, python
-consumer, project source) with pinned versions and no hardcoded paths, use the
-phased installer in [`install/`](install/README.md). It is split for Polaris'
-no-internet-on-compute-nodes constraint:
-
-```bash
-# 1. LOGIN node (internet): download everything onto eagle
-bash install/00-fetch.sh
-
-# 2. COMPUTE node (offline): build from the fetched sources
-qsub -I -q debug -A <project> -l select=1 -l walltime=01:00:00 -l filesystems=home:eagle
-cd <repo>
-bash install/10-build.sh
-
-# 3. run the demo end to end
-bash job.sh
-```
-
-`install/config.yaml` holds the versions/names; `install/lock/` holds the exact
-pinned concretization. See [`install/README.md`](install/README.md) for details.
-The sections below document the same steps **manually** (useful for debugging or
-partial rebuilds).
-
-## Prerequisites
-
-Three things live outside this repo and must exist before the steps below work:
-
-1. **A built Mofka/FlowCept Spack view** (Bedrock, Mochi, Mofka, Darshan). These are
-   ~1 GB of compiled binaries, not committed. Rebuild them from the vendored spec in
-   `server/spack/` (see `server/spack/README.md`), then point `MOFKA_SPACK_VIEW` at the
-   resulting view. `server/env_polaris.sh` also auto-detects it if it sits at the
-   author's default layout, but on a fresh account set `MOFKA_SPACK_VIEW` explicitly.
-2. **A Python venv** with the FlowCept consumer's deps. Create it on top of the Spack
-   view's python and install the requirements plus the flowcept submodule:
-   ```bash
-   python -m venv ../envs/flowcept-py314        # or anywhere; see env_polaris.sh
-   source ../envs/flowcept-py314/bin/activate
-   pip install -r server/requirements.txt       # PyPI deps (pymongo, redis, ...)
-   pip install -e flowcept/                      # the flowcept submodule
-   ```
-   `server/requirements.lock.txt` has the exact frozen set if you need to reproduce it.
-   (mochi.mofka / pydiaspora come from the Spack view, not pip.)
-3. **`mongod`** (MongoDB server) — FlowCept's sink. External dep, not a pip package;
-   grab the standalone tarball and set `MONGOD=/path/to/mongod` (see step 6).
-   On Polaris it must live on a **shared filesystem (`eagle`)**, not `$HOME`
-   (compute nodes can't see `$HOME`), and be fetched on a **login node** (compute
-   nodes have no internet). Details in step 6.
-
-The quickest path once all three exist: `PBS_ACCOUNT=<your_project> bash jobs/job.sh`
-runs the whole pipeline below on a compute node in one shot.
-
 ## Polaris Allocation
 
 ```bash
