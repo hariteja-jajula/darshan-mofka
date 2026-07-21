@@ -176,9 +176,26 @@ if [[ ! -x "$VENV/bin/python" ]]; then
     "$VENV_PY" -m venv "$VENV" || die "venv create failed"
 fi
 say "pip install consumer deps + flowcept (editable)"
-"$VENV/bin/python" -m pip install --upgrade pip >/dev/null
-"$VENV/bin/python" -m pip install -r "$REQS" || die "pip install requirements failed"
-"$VENV/bin/python" -m pip install -e "$REPO_ROOT/$(cfg python.flowcept_editable)" \
+# Force the real PyPI index: Polaris may have a site pip.conf / stale mirror that
+# only exposes old versions (seen: pymongo maxing at 4.1.1 instead of 4.17.0).
+# Ignore any inherited index config for this venv.
+PYPI="https://pypi.org/simple"
+PIPFLAGS=(--index-url "$PYPI" --disable-pip-version-check)
+# don't let a site/user pip.conf redirect us
+export PIP_CONFIG_FILE=/dev/null
+
+"$VENV/bin/python" -m pip install "${PIPFLAGS[@]}" --upgrade pip \
+    || die "pip self-upgrade failed (check network / index $PYPI)"
+# diagnose the index if the pinned pymongo isn't visible
+if ! "$VENV/bin/python" -m pip index versions pymongo "${PIPFLAGS[@]}" 2>/dev/null \
+        | grep -q '4\.17\.0'; then
+    echo "[install] NOTE: pymongo 4.17.0 not seen from $PYPI; showing pip config:"
+    "$VENV/bin/python" -m pip config list 2>/dev/null | sed 's/^/    /' || true
+fi
+"$VENV/bin/python" -m pip install "${PIPFLAGS[@]}" -r "$REQS" \
+    || die "pip install requirements failed (index=$PYPI). If versions look stale,
+       a site pip.conf or PIP_INDEX_URL is overriding PyPI; unset it and re-run."
+"$VENV/bin/python" -m pip install "${PIPFLAGS[@]}" -e "$REPO_ROOT/$(cfg python.flowcept_editable)" \
     || die "pip install -e flowcept failed"
 
 say "FETCH PHASE COMPLETE. Next: on a COMPUTE node run  bash install/10-build.sh"
