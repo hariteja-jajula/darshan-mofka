@@ -115,7 +115,7 @@ else
       ( cd _build_util && make -j4 && make install ) ) || die "darshan-util build failed"
 
     say "2d. build smoke workload"
-    "$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke \
+    "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke \
         || die "workload compile failed"
 fi
 
@@ -204,7 +204,7 @@ env \
   DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
   DARSHAN_MOFKA_TIMING=1 DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 \
   DARSHAN_LOGPATH="$DARSHAN_LOGPATH" LD_PRELOAD="$(darshan_lib)" \
-  ./workloads/mofka_forward_smoke /tmp/mofka-forward-smoke \
+  ./workloads/c/mofka_forward_smoke /tmp/mofka-forward-smoke \
   > /tmp/darshan-mofka-workload.out 2> /tmp/darshan-mofka-workload.err
 cat /tmp/darshan-mofka-workload.out
 SENDS="$(grep -c 'darshan-mofka\[timing\] send' /tmp/darshan-mofka-workload.err || true)"

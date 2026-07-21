@@ -6,11 +6,11 @@
  * Mofka group file. It intentionally does not know anything about Mofka itself.
  *
  * Build:
- *   cc -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
+ *   cc -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
  *
  * Run shape:
  *   env DARSHAN_ENABLE_NONMPI=1 DARSHAN_MOFKA_ENABLE=1 ... \
- *       LD_PRELOAD=/path/to/libdarshan.so ./workloads/mofka_forward_smoke /tmp/smoke-dir
+ *       LD_PRELOAD=/path/to/libdarshan.so ./workloads/c/mofka_forward_smoke /tmp/smoke-dir
  */
 #include <errno.h>
 #include <fcntl.h>

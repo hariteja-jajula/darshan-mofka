@@ -70,8 +70,8 @@ run_instrumented() {
 }
 
 # --- 3. workload A: C smoke test -------------------------------------------
-"$CC" -O2 workloads/mofka_forward_smoke.c -o workloads/mofka_forward_smoke
-run_instrumented ./workloads/mofka_forward_smoke "$RUN_DIR/c_smoke" \
+"$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
+run_instrumented ./workloads/c/mofka_forward_smoke "$RUN_DIR/c_smoke" \
     > "$RUN_DIR/c.out" 2> "$RUN_DIR/c.err"
 echo "C workload sends: $(grep -c 'darshan-mofka\[timing\] send' "$RUN_DIR/c.err")"
 

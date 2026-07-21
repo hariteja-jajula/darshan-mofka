@@ -8,14 +8,14 @@
  * Mofka itself.
  *
  * Build (use the MPI compiler wrapper):
- *   cc -O2 workloads/mofka_forward_mpiio.c -o workloads/mofka_forward_mpiio
- *   # or: mpicc -O2 workloads/mofka_forward_mpiio.c -o workloads/mofka_forward_mpiio
+ *   cc -O2 workloads/c/mofka_forward_mpiio.c -o workloads/c/mofka_forward_mpiio
+ *   # or: mpicc -O2 workloads/c/mofka_forward_mpiio.c -o workloads/c/mofka_forward_mpiio
  *
  * Run shape (note: NO DARSHAN_ENABLE_NONMPI here -- this is a real MPI job):
  *   mpiexec -n 4 env DARSHAN_MOFKA_ENABLE=1 \
  *       DARSHAN_MOFKA_GROUP_FILE=$PWD/server/mofka.json DARSHAN_MOFKA_TOPIC=darshan \
  *       LD_PRELOAD=/path/to/libdarshan.so \
- *       ./workloads/mofka_forward_mpiio /tmp/mofka-forward-mpiio
+ *       ./workloads/c/mofka_forward_mpiio /tmp/mofka-forward-mpiio
  */
 #include <errno.h>
 #include <stdio.h>
