@@ -1,20 +1,4 @@
 #!/bin/bash
-# build.sh -- build the vendored darshan (the mofka / diaspora-c fork) into a
-# standalone install. Self-contained: the only hard dependency is a diaspora-c
-# install and a C compiler. Run it from the repo root:
-#
-#   DIASPORA_C=/path/to/diaspora-c-install ./build.sh
-#
-# Env knobs (only DIASPORA_C is required):
-#   DIASPORA_C            diaspora-c install prefix (has include/diaspora/diaspora_c.h + lib/)
-#   PREFIX               install dir                       (default: ./darshan/install)
-#   CC / CXX             compilers                         (default: gcc/g++, else cc/c++)
-#   DARSHAN_INCREMENTAL=1 reuse a matching _build for fast same-machine rebuilds
-#
-# The log-file location is intentionally NOT baked in: we configure with
-# --with-log-path-by-env=DARSHAN_LOGPATH, so the CONSUMER (the harness) chooses
-# the log dir at run time via $DARSHAN_LOGPATH. That keeps this build independent
-# of any particular harness layout.
 set -e
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DARSHAN="$HERE/darshan"
