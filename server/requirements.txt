@@ -20,4 +20,6 @@ msgpack==1.1.2
 ormsgpack==1.12.2
 orjson==3.11.9
 numpy==2.4.6
+pandas==2.3.3
+pyarrow==22.0.0
 psutil==7.2.2

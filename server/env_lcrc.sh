@@ -16,11 +16,14 @@ if [[ -f "$HOME/mofka_tests/spack/share/spack/setup-env.sh" ]]; then
     source "$HOME/mofka_tests/spack/share/spack/setup-env.sh"
     spack env activate flowcept-mofka
 fi
+_CMAKE_BIN="$(compgen -G "$HOME/mofka_tests/spack/opt/spack/*/cmake-3.31*/bin/cmake" 2>/dev/null | head -1)"
+[[ -n "$_CMAKE_BIN" ]] && export PATH="$(dirname "$_CMAKE_BIN"):$PATH"
 
-# Use the Python from the active Spack environment. A stale PY from a previous
-# shell can point at a different Python ABI, which will not see the cpython-314
-# pydiaspora_stream_api extension built below.
-if command -v python3 >/dev/null 2>&1; then
+_VENV="$ROOT/install/_venv"
+if [[ -x "$_VENV/bin/python3" ]]; then
+    export PATH="$_VENV/bin:$PATH"
+    export PY="$_VENV/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
     export PY="$(command -v python3)"
 fi
 
@@ -36,6 +39,15 @@ if [[ -z "${DARSHAN_PREFIX:-}" || ! -e "$DARSHAN_PREFIX/lib/libdarshan.so" ]]; t
     DARSHAN_PREFIX="$ROOT/darshan/install"
 fi
 export DARSHAN_PREFIX
+if [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]]; then
+    if [[ -x "$ROOT/server/_mongo_env/bin/mongod" ]]; then
+        MONGOD="$ROOT/server/_mongo_env/bin/mongod"
+    else
+        MONGOD="$(command -v mongod 2>/dev/null || true)"
+    fi
+fi
+export MONGOD
+
 export MOFKA_PROTOCOL=verbs
 export CC="${CC:-$(command -v gcc || true)}"
 export CXX="${CXX:-$(command -v g++ || true)}"
@@ -46,9 +58,14 @@ if command -v spack >/dev/null 2>&1; then
     _mofka_prefix="$(spack location -i mofka+python 2>/dev/null || true)"
     if [[ -n "$_mofka_prefix" && -d "$_mofka_prefix" ]]; then
         export MOFKA_SPACK_VIEW="${MOFKA_SPACK_VIEW:-$_mofka_prefix}"
+        [[ -d "$MOFKA_SPACK_VIEW/bin" ]] && export PATH="$MOFKA_SPACK_VIEW/bin:$PATH"
         _python_site="$_mofka_prefix/lib/python3.14/site-packages"
         _diaspora_python_site="$DIASPORA_C/lib/python3.14/site-packages"
         [[ -d "$_diaspora_python_site" ]] && _python_site="$_diaspora_python_site:$_python_site"
         export MOFKA_PYTHONPATH="$_python_site"
     fi
 fi
+
+_GXX_LIB="$(g++ -print-file-name=libstdc++.so.6 2>/dev/null || true)"
+[[ -n "$_GXX_LIB" && -e "$_GXX_LIB" ]] && export DARSHAN_MOFKA_CXX_RUNTIME_DIR="$(dirname "$_GXX_LIB")"
+unset _GXX_LIB _CMAKE_BIN _VENV _mofka_prefix _python_site _diaspora_python_site

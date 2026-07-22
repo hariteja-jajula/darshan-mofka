@@ -4,7 +4,6 @@
 #PBS -q debug
 #PBS -l select=1:ncpus=32
 #PBS -l walltime=00:30:00
-#PBS -l filesystems=home:eagle
 #PBS -j oe
 #
 # End-to-end README demo on a compute node:
@@ -33,7 +32,15 @@ if [[ -z "${PBS_JOBID:-}" ]]; then
 fi
 
 ROOT="${PBS_O_WORKDIR:-$(pwd)}"; cd "$ROOT"
-source server/env.sh --polaris
+PROFILE="${DARSHAN_MOFKA_PROFILE:-${DARSHAN_MOFKA_ENV:-}}"
+if [[ -z "$PROFILE" ]]; then
+    if [[ -d /gpfs/fs1/soft/improv ]] || hostname 2>/dev/null | grep -qi 'ilogin\|improv'; then
+        PROFILE=lcrc
+    else
+        PROFILE=polaris
+    fi
+fi
+source server/env.sh "--$PROFILE"
 
 # Per-job broker + FlowCept run dir so concurrent jobs never collide.
 export MOFKA_SERVER_DIR="$ROOT/server/_pbs_${PBS_JOBID%%.*}/mofka"

@@ -25,61 +25,82 @@ cd "$REPO_ROOT"
 SPACK_DIR="$(layout_path spack_dir)"
 MONGO_ENV="$(layout_path mongo_env_dir)"
 VENV="$(layout_path venv_dir)"
+PROFILE="${DARSHAN_MOFKA_PROFILE:-${DARSHAN_MOFKA_ENV:-}}"
+if [[ -z "$PROFILE" ]]; then
+    if [[ -d /gpfs/fs1/soft/improv ]] || hostname 2>/dev/null | grep -qi 'ilogin\|improv'; then
+        PROFILE=lcrc
+    else
+        PROFILE=polaris
+    fi
+fi
+case "$PROFILE" in polaris|lcrc) ;; *) die "unknown profile '$PROFILE' (use polaris or lcrc)" ;; esac
+ENV_ARG="--$PROFILE"
 
 # ---- 0. preflight (fail fast on missing system deps) -------------------------
 say "preflight"
+say "profile: $PROFILE"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/server/env.sh" "$ENV_ARG" || die "could not source server/env.sh $ENV_ARG"
 if command -v module >/dev/null 2>&1 && ! command -v cc >/dev/null 2>&1; then
     module swap PrgEnv-nvidia PrgEnv-gnu >/dev/null 2>&1 || module load PrgEnv-gnu >/dev/null 2>&1 || true
 fi
 command -v cc >/dev/null 2>&1 || die "cc compiler wrapper not found; load a compiler/MPI PrgEnv first"
 
-# externals are declared in server/spack/spack.yaml (single source of truth)
-missing=()
-while IFS= read -r path; do
-    [[ -z "$path" ]] && continue
-    [[ -e "$path" ]] || missing+=("$path")
-done < <(spack_external_prefixes)
-((${#missing[@]})) && die "missing external paths required by server/spack/spack.yaml: ${missing[*]}"
-say "compiler and spack externals present"
+if [[ "$PROFILE" == polaris ]]; then
+    missing=()
+    while IFS= read -r path; do
+        [[ -z "$path" ]] && continue
+        [[ -e "$path" ]] || missing+=("$path")
+    done < <(spack_external_prefixes)
+    ((${#missing[@]})) && die "missing external paths required by server/spack/spack.yaml: ${missing[*]}"
+    say "compiler and spack externals present"
+else
+    command -v bedrock >/dev/null 2>&1 || die "bedrock not found after server/env.sh $ENV_ARG"
+    [[ -n "${MOFKA_SPACK_VIEW:-}" && -d "$MOFKA_SPACK_VIEW" ]] || die "MOFKA_SPACK_VIEW not set after server/env.sh $ENV_ARG"
+    say "compiler and LCRC Mofka stack present"
+fi
 
 # ---- 1. submodules -----------------------------------------------------------
 say "submodules"
 git submodule update --init --recursive
 
-# ---- 2. spack: clone (pinned) -> env -> install ------------------------------
-SPACK_URL="$(cfg spack.git_url)"; SPACK_COMMIT="$(cfg spack.git_commit)"; SPACK_REF="$(cfg spack.git_ref)"
-if [[ ! -d "$SPACK_DIR/.git" ]]; then
-    say "clone spack -> $SPACK_DIR (pin ${SPACK_COMMIT:0:12})"
-    git clone "$SPACK_URL" "$SPACK_DIR" || die "spack clone failed"
-    if [[ -n "$SPACK_COMMIT" ]]; then
-        git -C "$SPACK_DIR" checkout -q "$SPACK_COMMIT" 2>/dev/null \
-            || git -C "$SPACK_DIR" checkout -q "$SPACK_REF" || die "spack checkout failed"
-    fi
-fi
-say "spack at $(git -C "$SPACK_DIR" rev-parse --short HEAD)"
-# shellcheck disable=SC1091
-source "$SPACK_DIR/share/spack/setup-env.sh"
-
-MOFKA_DIR="$REPO_ROOT/$(cfg mofka.dir)"; MOFKA_URL="$(cfg mofka.git_url)"; MOFKA_REF="$(cfg mofka.git_ref)"
-[[ -d "$MOFKA_DIR/.git" ]] || { say "clone mofka ($MOFKA_REF)"; git clone --branch "$MOFKA_REF" "$MOFKA_URL" "$MOFKA_DIR" || die "mofka clone failed"; }
-
-ENV_NAME="$(cfg layout.spack_env_name)"; ENV_SPEC="$REPO_ROOT/$(cfg spack.env_spec)"
-if [[ -f "$SPACK_DIR/var/spack/environments/$ENV_NAME/spack.yaml" ]]; then
-    say "spack env '$ENV_NAME' exists -> reuse"
-else
-    say "create spack env '$ENV_NAME' from spec"
-    spack env create "$ENV_NAME" "$ENV_SPEC" || die "spack env create failed"
-fi
-spack -e "$ENV_NAME" develop -p "$MOFKA_DIR" "mofka@$MOFKA_REF" 2>/dev/null || true
-
-say "spack concretize"
-spack -e "$ENV_NAME" concretize -f || die "spack concretize failed"
-
 JOBS="$(cfg spack.build_jobs)"
-say "spack install (-j$JOBS)"
-spack -e "$ENV_NAME" install -j"$JOBS" || die "spack install failed"
-MOFKA_SPACK_VIEW="$(spack location -e "$ENV_NAME")/.spack-env/view"
-export MOFKA_SPACK_VIEW
+if [[ "$PROFILE" == polaris ]]; then
+    SPACK_URL="$(cfg spack.git_url)"; SPACK_COMMIT="$(cfg spack.git_commit)"; SPACK_REF="$(cfg spack.git_ref)"
+    if [[ ! -d "$SPACK_DIR/.git" ]]; then
+        say "clone spack -> $SPACK_DIR (pin ${SPACK_COMMIT:0:12})"
+        git clone "$SPACK_URL" "$SPACK_DIR" || die "spack clone failed"
+        if [[ -n "$SPACK_COMMIT" ]]; then
+            git -C "$SPACK_DIR" checkout -q "$SPACK_COMMIT" 2>/dev/null \
+                || git -C "$SPACK_DIR" checkout -q "$SPACK_REF" || die "spack checkout failed"
+        fi
+    fi
+    say "spack at $(git -C "$SPACK_DIR" rev-parse --short HEAD)"
+    # shellcheck disable=SC1091
+    source "$SPACK_DIR/share/spack/setup-env.sh"
+
+    MOFKA_DIR="$REPO_ROOT/$(cfg mofka.dir)"; MOFKA_URL="$(cfg mofka.git_url)"; MOFKA_REF="$(cfg mofka.git_ref)"
+    [[ -d "$MOFKA_DIR/.git" ]] || { say "clone mofka ($MOFKA_REF)"; git clone --branch "$MOFKA_REF" "$MOFKA_URL" "$MOFKA_DIR" || die "mofka clone failed"; }
+
+    ENV_NAME="$(cfg layout.spack_env_name)"; ENV_SPEC="$REPO_ROOT/$(cfg spack.env_spec)"
+    if [[ -f "$SPACK_DIR/var/spack/environments/$ENV_NAME/spack.yaml" ]]; then
+        say "spack env '$ENV_NAME' exists -> reuse"
+    else
+        say "create spack env '$ENV_NAME' from spec"
+        spack env create "$ENV_NAME" "$ENV_SPEC" || die "spack env create failed"
+    fi
+    spack -e "$ENV_NAME" develop -p "$MOFKA_DIR" "mofka@$MOFKA_REF" 2>/dev/null || true
+
+    say "spack concretize"
+    spack -e "$ENV_NAME" concretize -f || die "spack concretize failed"
+
+    say "spack install (-j$JOBS)"
+    spack -e "$ENV_NAME" install -j"$JOBS" || die "spack install failed"
+    MOFKA_SPACK_VIEW="$(spack location -e "$ENV_NAME")/.spack-env/view"
+    export MOFKA_SPACK_VIEW
+else
+    say "using LCRC Mofka stack: $MOFKA_SPACK_VIEW"
+fi
 say "spack view: $MOFKA_SPACK_VIEW"
 
 # ---- 3. mongod: reuse existing, else conda-create ----------------------------
@@ -112,7 +133,7 @@ fi
 
 # ---- 4. python venv (>=3.11) + consumer deps ---------------------------------
 # shellcheck disable=SC1091
-source "$REPO_ROOT/server/env.sh" --polaris 2>/dev/null || true
+source "$REPO_ROOT/server/env.sh" "$ENV_ARG" 2>/dev/null || true
 REQS="$REPO_ROOT/$(cfg python.requirements)"
 pick_python() {
     local c; for c in "${PY:-}" python3.14 python3.13 python3.12 python3.11 python3; do
@@ -140,9 +161,9 @@ say "pip install consumer deps + flowcept"
 # refresh env so the freshly built view + venv are picked up
 export MONGOD="$MONGO_ENV/bin/mongod"
 # shellcheck disable=SC1091
-source "$REPO_ROOT/server/env.sh" --polaris
+source "$REPO_ROOT/server/env.sh" "$ENV_ARG"
 module unload darshan 2>/dev/null || true
-export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
+export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 DIA="$REPO_ROOT/$(cfg project.diaspora_dir)"
 if [[ -e "$DIA/install/include/diaspora/diaspora_c.h" ]]; then
@@ -155,9 +176,9 @@ else
             -DCMAKE_INSTALL_PREFIX="$PWD/install" \
       && cmake --build _build -j && cmake --install _build ) || die "diaspora build failed"
     # shellcheck disable=SC1091
-    source "$REPO_ROOT/server/env.sh" --polaris
+    source "$REPO_ROOT/server/env.sh" "$ENV_ARG"
     module unload darshan 2>/dev/null || true
-    export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
+    export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 fi
 
 say "build darshan runtime"

@@ -84,6 +84,8 @@ try:
     cur = data
     for part in sys.argv[2].split('.'):
         cur = cur[part]
+    if isinstance(cur, str):
+        cur = cur.split(' #', 1)[0].strip()
     print(cur)
 except ImportError:
     # minimal fallback parser (nested key: value) if pyyaml isn't importable yet
@@ -98,7 +100,7 @@ except ImportError:
             m = re.match(r'\s*([\w_]+):\s*(.*)', line)
             if not m:
                 continue
-            k, v = m.group(1), m.group(2).strip().strip('"').strip("'")
+            k, v = m.group(1), m.group(2).split(' #', 1)[0].strip().strip('"').strip("'")
             level = indent // 2
             depth_keys = depth_keys[:level] + [k]
             if depth_keys == want and v:

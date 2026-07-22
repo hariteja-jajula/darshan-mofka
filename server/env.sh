@@ -56,6 +56,22 @@ if [[ -n "${DIASPORA_C:-}" ]]; then
     _prepend LD_LIBRARY_PATH "$DIASPORA_C/lib"
     _prepend LD_LIBRARY_PATH "$DIASPORA_C/lib64"
 fi
+if [[ -n "${DARSHAN_MOFKA_CXX_RUNTIME_DIR:-}" && -d "$DARSHAN_MOFKA_CXX_RUNTIME_DIR" ]]; then
+    _ldpath=":${LD_LIBRARY_PATH:-}:"
+    _ldpath="${_ldpath//:$DARSHAN_MOFKA_CXX_RUNTIME_DIR:/:}"
+    _ldpath="${_ldpath#:}"
+    _ldpath="${_ldpath%:}"
+    export LD_LIBRARY_PATH="$DARSHAN_MOFKA_CXX_RUNTIME_DIR${_ldpath:+:$_ldpath}"
+    if [[ -e "$DARSHAN_MOFKA_CXX_RUNTIME_DIR/libstdc++.so.6" ]]; then
+        _preload=":${LD_PRELOAD:-}:"
+        _preload="${_preload//:$DARSHAN_MOFKA_CXX_RUNTIME_DIR\/libstdc++.so.6:/:}"
+        _preload="${_preload#:}"
+        _preload="${_preload%:}"
+        export LD_PRELOAD="$DARSHAN_MOFKA_CXX_RUNTIME_DIR/libstdc++.so.6${_preload:+:$_preload}"
+        unset _preload
+    fi
+    unset _ldpath
+fi
 if [[ -n "${MOFKA_PYTHONPATH:-}" ]]; then
     _pythonpath=":${PYTHONPATH:-}:"
     _pythonpath="${_pythonpath//:$MOFKA_PYTHONPATH:/:}"

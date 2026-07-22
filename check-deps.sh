@@ -17,10 +17,20 @@ cd "$HERE"
 
 QUIET=0; [[ "${1:-}" == "--quiet" ]] && QUIET=1
 MISSING=0
+PROFILE="${DARSHAN_MOFKA_PROFILE:-${DARSHAN_MOFKA_ENV:-}}"
+if [[ -z "$PROFILE" ]]; then
+    if [[ -d /gpfs/fs1/soft/improv ]] || hostname 2>/dev/null | grep -qi 'ilogin\|improv'; then
+        PROFILE=lcrc
+    else
+        PROFILE=polaris
+    fi
+fi
+case "$PROFILE" in polaris|lcrc) ;; *) PROFILE=polaris ;; esac
+ENV_ARG="--$PROFILE"
 
 # Source the project env (best effort) so we probe the SAME tools the demo uses.
 # shellcheck disable=SC1091
-source "$HERE/server/env.sh" --polaris >/dev/null 2>&1 || true
+source "$HERE/server/env.sh" "$ENV_ARG" >/dev/null 2>&1 || true
 
 row() { # row <PRESENT|MISSING|WARN> <label> <detail>
     local st="$1" label="$2" detail="${3:-}"
@@ -29,7 +39,7 @@ row() { # row <PRESENT|MISSING|WARN> <label> <detail>
     printf '  %-7s %-22s %s\n' "$st" "$label" "$detail"
 }
 
-echo "== darshan-mofka dependency check (nothing is downloaded) =="
+echo "== darshan-mofka dependency check (nothing is downloaded; profile=$PROFILE) =="
 
 # --- submodules ---------------------------------------------------------------
 if [[ -e "$HERE/darshan/darshan-runtime/configure.ac" && -e "$HERE/diaspora-stream-api/CMakeLists.txt" ]]; then
@@ -46,8 +56,7 @@ else
 fi
 
 # --- spack externals (declared in server/spack/spack.yaml) --------------------
-if [[ -f "$HERE/install/_lib.sh" ]]; then
-    # reuse the single-source-of-truth parser (no subshell, so `row` updates MISSING)
+if [[ "$PROFILE" == polaris && -f "$HERE/install/_lib.sh" ]]; then
     # shellcheck disable=SC1091
     source "$HERE/install/_lib.sh" >/dev/null 2>&1
     ext_miss=()
@@ -60,6 +69,8 @@ if [[ -f "$HERE/install/_lib.sh" ]]; then
     else
         row PRESENT "spack externals" "all prefixes from spack.yaml present"
     fi
+else
+    row PRESENT "spack externals" "not required for profile=$PROFILE"
 fi
 
 # --- spack view (native stack: bedrock/mochi/mofka/darshan) -------------------

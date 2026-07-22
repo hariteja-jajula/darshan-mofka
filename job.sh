@@ -18,6 +18,16 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; cd "$ROOT"
 SKIP_BUILD="${SKIP_BUILD:-0}"
+PROFILE="${DARSHAN_MOFKA_PROFILE:-${DARSHAN_MOFKA_ENV:-}}"
+if [[ -z "$PROFILE" ]]; then
+    if [[ -d /gpfs/fs1/soft/improv ]] || hostname 2>/dev/null | grep -qi 'ilogin\|improv'; then
+        PROFILE=lcrc
+    else
+        PROFILE=polaris
+    fi
+fi
+case "$PROFILE" in polaris|lcrc) ;; *) die "unknown profile '$PROFILE' (use polaris or lcrc)" ;; esac
+ENV_ARG="--$PROFILE"
 
 say()  { printf '\n########## %s ##########\n' "$*"; }
 die()  { printf '\nFATAL: %s\n' "$*" >&2; exit 1; }
@@ -28,9 +38,9 @@ die()  { printf '\nFATAL: %s\n' "$*" >&2; exit 1; }
 say "1. environment"
 export TERM="${TERM:-xterm}"
 # shellcheck disable=SC1091
-source server/env.sh --polaris || die "could not source server/env.sh --polaris"
+source server/env.sh "$ENV_ARG" || die "could not source server/env.sh $ENV_ARG"
 module unload darshan 2>/dev/null || true
-export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
+export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 export DARSHAN_LOGPATH="${DARSHAN_LOGPATH:-$ROOT/darshan-logs}"
 darshan_ensure_logdir >/dev/null
 export DARSHAN_PREFIX="$ROOT/darshan/install"
@@ -60,7 +70,7 @@ _allowed() {  # _allowed <label> <path> <allowed-substr-1> [more...]
     else
         die "$label resolves OUTSIDE the project: $path
        (expected under one of: $*)
-       Fix your environment (source server/env.sh --polaris in a clean shell)."
+       Fix your environment (source server/env.sh "$ENV_ARG" in a clean shell)."
     fi
 }
 # hard failures on known strays
@@ -68,12 +78,14 @@ case "$PY" in
     *"/.local/"*|/usr/bin/python*|/bin/python*)
         die "PY is a stray interpreter: $PY (expected the project venv or spack view)";;
 esac
-[[ "$(command -v cmake)" == *"$PROJECT_ROOT"* || "$(command -v cmake)" == *"/spack/"* ]] \
-    || die "cmake is not from the spack view: $(command -v cmake)"
+if [[ ! -e "diaspora-stream-api/install/include/diaspora/diaspora_c.h" ]]; then
+    [[ "$(command -v cmake)" == *"$PROJECT_ROOT"* || "$(command -v cmake)" == *"/spack/"* ]] \
+        || die "cmake is not from the spack view: $(command -v cmake)"
+fi
 
 _allowed "PY (python)"        "$PY"               "$PROJECT_ROOT" "$ROOT"
 _allowed "MOFKA_SPACK_VIEW"   "$MOFKA_SPACK_VIEW" "$PROJECT_ROOT" "/spack/"
-_allowed "DIASPORA_C"         "$DIASPORA_C"       "$ROOT"
+_allowed "DIASPORA_C"         "$DIASPORA_C"       "$PROJECT_ROOT" "$ROOT"
 _allowed "DARSHAN_PREFIX"     "$DARSHAN_PREFIX"   "$ROOT"
 _allowed "cmake"              "$(command -v cmake)" "$PROJECT_ROOT" "/spack/"
 [[ -n "${MONGOD:-}" ]] && _allowed "MONGOD" "$MONGOD" "$PROJECT_ROOT" "$ROOT"
@@ -95,9 +107,9 @@ else
                 -DCMAKE_INSTALL_PREFIX="$PWD/install" \
           && cmake --build _build -j && cmake --install _build ) || die "diaspora build failed"
         # shellcheck disable=SC1091
-        source server/env.sh --polaris
+        source server/env.sh "$ENV_ARG"
         module unload darshan 2>/dev/null || true
-        export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
+        export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
     fi
 
     say "2b. build darshan runtime (non-MPI)"
