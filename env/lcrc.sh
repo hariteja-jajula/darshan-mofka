@@ -6,13 +6,15 @@
 
 export MOFKA_PROTOCOL="${MOFKA_PROTOCOL:-verbs}"
 
-# Native Mofka/Bedrock stack (spack env). Repo-local install/_spack first
-# (built by build.sh on this branch), else the legacy ~/mofka_tests/spack.
-for _sp in "$ENV_ROOT/install/_spack/share/spack/setup-env.sh" \
-           "$HOME/mofka_tests/spack/share/spack/setup-env.sh"; do
-    if [[ -f "$_sp" ]]; then
-        . "$_sp"
-        spack env activate "${ENV_SPACK_ENV:-flowcept-mofka}" 2>/dev/null || true
+# Native Mofka/Bedrock stack (spack env). Prefer the repo-local install/_spack
+# built by install/setup.sh (env 'flowcept-mofka-lcrc'); else the legacy
+# ~/mofka_tests/spack (env 'flowcept-mofka'). ENV_SPACK_ENV overrides the name.
+for _sp in "$ENV_ROOT/install/_spack/share/spack/setup-env.sh|flowcept-mofka-lcrc" \
+           "$HOME/mofka_tests/spack/share/spack/setup-env.sh|flowcept-mofka"; do
+    _path="${_sp%|*}"; _envname="${_sp##*|}"
+    if [[ -f "$_path" ]]; then
+        . "$_path"
+        spack env activate "${ENV_SPACK_ENV:-$_envname}" 2>/dev/null || true
         break
     fi
 done

@@ -124,7 +124,8 @@ case "$WORKLOAD" in
     mpi)
         DARSHAN_MPI=1 ./build.sh || die "MPI darshan build failed"
         MPILIB="$ROOT/darshan/install-mpi/lib/libdarshan.so"
-        "$CC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile failed"
+        MPICC="$(command -v mpicc || echo "$CC")"   # MPI-IO needs the MPI compiler wrapper
+        "$MPICC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile failed"
         env DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
             DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 DARSHAN_MOFKA_TIMING=1 \
             DARSHAN_MOFKA_FLUSH_MS=10000 DARSHAN_LOGPATH="$DARSHAN_LOGPATH" LD_PRELOAD="$MPILIB" \

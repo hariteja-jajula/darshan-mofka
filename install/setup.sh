@@ -57,9 +57,13 @@ if [[ "$PROFILE" == polaris ]]; then
     ((${#missing[@]})) && die "missing external paths required by server/spack/spack.yaml: ${missing[*]}"
     say "compiler and spack externals present"
 else
-    command -v bedrock >/dev/null 2>&1 || die "bedrock not found after env/server.sh $ENV_ARG"
-    [[ -n "${MOFKA_SPACK_VIEW:-}" && -d "$MOFKA_SPACK_VIEW" ]] || die "MOFKA_SPACK_VIEW not set after env/server.sh $ENV_ARG"
-    say "compiler and LCRC Mofka stack present"
+    # LCRC: we build the Mofka stack from source into install/_spack if it isn't
+    # already present, so no pre-existing stack is required.
+    if command -v bedrock >/dev/null 2>&1 && [[ -n "${MOFKA_SPACK_VIEW:-}" && -d "${MOFKA_SPACK_VIEW:-}" ]]; then
+        say "LCRC Mofka stack already present: $MOFKA_SPACK_VIEW"
+    else
+        say "LCRC Mofka stack absent -> will build it from source into $SPACK_DIR"
+    fi
 fi
 
 # ---- 1. submodules -----------------------------------------------------------
@@ -100,8 +104,39 @@ if [[ "$PROFILE" == polaris ]]; then
     spack -e "$ENV_NAME" install -j"$JOBS" || die "spack install failed"
     MOFKA_SPACK_VIEW="$(spack location -e "$ENV_NAME")/.spack-env/view"
     export MOFKA_SPACK_VIEW
+elif command -v bedrock >/dev/null 2>&1 && [[ -n "${MOFKA_SPACK_VIEW:-}" && -d "${MOFKA_SPACK_VIEW:-}" ]]; then
+    say "using existing LCRC Mofka stack: $MOFKA_SPACK_VIEW"
 else
-    say "using LCRC Mofka stack: $MOFKA_SPACK_VIEW"
+    # LCRC from-scratch: build the native stack into install/_spack from the
+    # committed spec (server/spack/spack-lcrc.yaml). Env name: flowcept-mofka-lcrc.
+    SPACK_URL="$(cfg spack.git_url)"; SPACK_COMMIT="$(cfg spack.git_commit)"; SPACK_REF="$(cfg spack.git_ref)"
+    if [[ ! -d "$SPACK_DIR/.git" ]]; then
+        say "clone spack -> $SPACK_DIR (pin ${SPACK_COMMIT:0:12})"
+        git clone "$SPACK_URL" "$SPACK_DIR" || die "spack clone failed"
+        git -C "$SPACK_DIR" checkout -q "$SPACK_COMMIT" 2>/dev/null \
+            || git -C "$SPACK_DIR" checkout -q "$SPACK_REF" || die "spack checkout failed"
+    fi
+    say "spack at $(git -C "$SPACK_DIR" rev-parse --short HEAD)"
+    # shellcheck disable=SC1091
+    source "$SPACK_DIR/share/spack/setup-env.sh"
+    # fetch via system curl (this login node's python-urllib fails cert verify to
+    # some GNU mirrors; curl trusts them; spack still sha256-checks every source).
+    spack config add "config:url_fetch_method:curl" 2>/dev/null || true
+    ENV_NAME=flowcept-mofka-lcrc
+    if [[ ! -f "$SPACK_DIR/var/spack/environments/$ENV_NAME/spack.yaml" ]]; then
+        # substitute the repo-local spack-repos path into the committed spec
+        REPOS_DIR="$REPO_ROOT/install/spack-repos"; mkdir -p "$REPOS_DIR"
+        SPEC_SRC="$REPO_ROOT/server/spack/spack-lcrc.yaml"; SPEC_GEN="$SPACK_DIR/spack-lcrc.gen.yaml"
+        sed "s|__SPACK_REPOS__|$REPOS_DIR|g" "$SPEC_SRC" > "$SPEC_GEN"
+        say "create spack env '$ENV_NAME' from spec"
+        spack env create "$ENV_NAME" "$SPEC_GEN" || die "spack env create failed"
+    fi
+    say "spack concretize (lcrc)"
+    spack -e "$ENV_NAME" concretize -f || die "spack concretize failed"
+    say "spack install (-j$JOBS) -- this builds the full Mofka stack, takes a while"
+    spack -e "$ENV_NAME" install -j"$JOBS" || die "spack install failed"
+    MOFKA_SPACK_VIEW="$(spack location -e "$ENV_NAME")/.spack-env/view"
+    export MOFKA_SPACK_VIEW
 fi
 say "spack view: $MOFKA_SPACK_VIEW"
 
