@@ -1,6 +1,6 @@
 # Rebuilding the Mofka / FlowCept stack on Polaris
 
-`server/env_polaris.sh` expects a **built Spack view** containing Bedrock, the Mochi
+`env/polaris.sh` expects a **built Spack view** containing Bedrock, the Mochi
 libraries (margo, mercury, thallium, warabi, yokan, flock), Mofka, and Darshan. Those
 binaries are ~1 GB of compiled artifacts and are **not** committed. This directory holds
 the dependency spec so you can rebuild them natively on Polaris:
@@ -32,7 +32,7 @@ spack install -j4
 
 ```bash
 export MOFKA_SPACK_VIEW="$(spack location --env flowcept-mofka-polaris)/.spack-env/view"
-source server/env.sh --polaris
+source env/server.sh --polaris
 ```
 
 `env_polaris.sh` honors `$MOFKA_SPACK_VIEW`, so once it points at this view the rest of

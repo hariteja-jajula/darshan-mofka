@@ -49,5 +49,5 @@ version, edit `config.yaml`; `setup.sh` reads it via `install/_lib.sh`.
 
 - Reuses `server/spack/spack.yaml` (+ `spack.lock`) as the spack spec — no duplication.
 - Reuses `server/requirements.txt` for the python deps.
-- `mongod` resolution: `server/env_polaris.sh` auto-detects `server/_mongo_env`.
+- `mongod` resolution: `env/polaris.sh` auto-detects `server/_mongo_env`.
 - After building, `bash job.sh` runs the full pipeline end to end.
