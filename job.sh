@@ -15,7 +15,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; cd "$ROOT"
 SKIP_BUILD="${SKIP_BUILD:-0}"
-WORKLOAD="${1:-${WORKLOAD:-c}}"
+[ -n "${1:-}" ] && export WORKLOAD="$1"    # positional arg overrides workloads/workload.config
 
 say()  { printf '\n########## %s ##########\n' "$*"; }
 die()  { printf '\nFATAL: %s\n' "$*" >&2; exit 1; }
@@ -23,7 +23,7 @@ die()  { printf '\nFATAL: %s\n' "$*" >&2; exit 1; }
 # ---------------------------------------------------------------------------
 # 1. environment (server: broker/consumer/mongod/PY ; workload: CC/darshan)
 # ---------------------------------------------------------------------------
-say "1. environment (workload=$WORKLOAD)"
+say "1. environment"
 export TERM="${TERM:-xterm}"
 # shellcheck disable=SC1091
 source env/server.sh   || die "could not source env/server.sh"
@@ -32,10 +32,15 @@ source env/workload.sh || die "could not source env/workload.sh"
 module unload darshan 2>/dev/null || true          # never the system darshan
 export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 darshan_ensure_logdir >/dev/null
+# resolve the run from the two config files (all knobs live there, not inline here)
+# shellcheck disable=SC1091
+source lib/run.sh || die "could not source lib/run.sh"
+load_run_config
+WORKLOAD="$WL_TYPE"
 echo "profile=$ENV_PROFILE  ROOT=$ROOT"
 echo "MOFKA_SPACK_VIEW=$MOFKA_SPACK_VIEW"
-echo "DIASPORA_C=$DIASPORA_C  DARSHAN_PREFIX=$DARSHAN_PREFIX"
 echo "CC=$CC  PY=$PY  MONGOD=${MONGOD:-<unresolved>}"
+echo "run: workload=$WL_TYPE events=$WL_EVENTS checkpoints=$WL_CHECKPOINTS | topic=$SRV_TOPIC partitions=$SRV_PARTITIONS/$SRV_PART_TYPE protocol=$SRV_PROTOCOL mongo=$SRV_MONGO_DB:$SRV_MONGO_PORT"
 
 # ---------------------------------------------------------------------------
 # 2. build darshan (Mofka connector) + darshan-util + workload binary
@@ -87,13 +92,14 @@ trap 'bash server/stop_server.sh >/dev/null 2>&1 || true' EXIT
 # ---------------------------------------------------------------------------
 # 5. results dir + live FlowCept consumer (drains topic -> MongoDB)
 # ---------------------------------------------------------------------------
-RES="$ROOT/results/${WORKLOAD}_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$RES"
+# descriptive results dir (results/README.md convention): <TAG>_1NODE_1PROC_1Broker-colocated/RUN<n>
+RES="$(next_run_dir "$ROOT/results/$(workload_tag)_1NODE_1PROC_1Broker-colocated")"; mkdir -p "$RES"
 say "5. FlowCept consumer  (results -> $RES)"
 RUN_DIR="$ROOT/server/_flowcept_run"; rm -rf "$RUN_DIR"; mkdir -p "$RUN_DIR"
-MONGO_DB=darshan_stream; MONGO_PORT=27017
+MONGO_DB="$SRV_MONGO_DB"; MONGO_PORT="$SRV_MONGO_PORT"
 EVENTS="$RES/events.jsonl"
 RUN_DIR="$RUN_DIR" MONGO_DB="$MONGO_DB" MONGO_PORT="$MONGO_PORT" MONGOD="$MONGOD" \
-MOFKA_GROUP="$GROUP" bash Client/capture_flowcept.sh > "$RUN_DIR/flowcept.out" 2>&1 &
+TOPIC="$SRV_TOPIC" MOFKA_GROUP="$GROUP" bash Client/capture_flowcept.sh > "$RUN_DIR/flowcept.out" 2>&1 &
 FC=$!
 until grep -q 'consumer alive' "$RUN_DIR/flowcept.out"; do
     kill -0 "$FC" 2>/dev/null || { cat "$RUN_DIR/flowcept.out"; die "consumer failed to start"; }
@@ -105,11 +111,12 @@ echo "consumer alive (pid $FC)"
 # 6. run the selected workload under the Darshan -> Mofka connector
 # ---------------------------------------------------------------------------
 say "6. run workload: $WORKLOAD"
+connector_env "$GROUP"   # -> CONNECTOR_ENV: the ONE producer DARSHAN_MOFKA_* block (from config)
+workload_env             # -> WORKLOAD_ENV: EPOCHS/CHECKPOINT_EVERY (c) or ML_* (python-ml)
 run_instrumented() {   # run_instrumented <extra env-assignments...> -- <cmd...>
     local pre=(); while [[ "$1" != "--" ]]; do pre+=("$1"); shift; done; shift
-    env DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
-        DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 DARSHAN_MOFKA_TIMING=1 \
-        DARSHAN_LOGPATH="$DARSHAN_LOGPATH" LD_PRELOAD="$(darshan_lib)" \
+    env DARSHAN_LOGPATH="$DARSHAN_LOGPATH" LD_PRELOAD="$(darshan_lib)" \
+        "${CONNECTOR_ENV[@]}" "${WORKLOAD_ENV[@]}" \
         "${pre[@]}" "$@"
 }
 NATIVE_GLOB="*.darshan"
@@ -134,9 +141,7 @@ case "$WORKLOAD" in
         # is Darshan's supported MPI mode: LINK libdarshan into the binary (darshan's
         # compiler wrapper) instead of preloading. --oversubscribe fits 4 ranks/node.
         mpiexec --oversubscribe -n 4 --mca pml ob1 --mca btl tcp,self \
-            env DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
-            DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 DARSHAN_MOFKA_TIMING=1 \
-            DARSHAN_MOFKA_FLUSH_MS=10000 DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
+            env "${CONNECTOR_ENV[@]}" DARSHAN_MOFKA_FLUSH_MS=10000 DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
             LD_PRELOAD="$ROOT/darshan/install-mpi/lib/libdarshan.so" \
             ./workloads/mpi/mofka_forward_mpiio /tmp/mofka-forward-mpiio \
             > "$RES/workload.out" 2> "$RES/workload.err" || die "mpi workload failed"
