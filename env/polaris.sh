@@ -1,6 +1,6 @@
 #!/bin/bash
 # env/polaris.sh -- ALCF Polaris profile. Sourced by env/server.sh and
-# env/workload.sh AFTER env/common.sh. Sets MOFKA_SPACK_VIEW, MOFKA_PYTHONPATH,
+# env/workload.sh AFTER env/common.sh. Sets MOFKA_SPACK_VIEW,
 # MOFKA_PROTOCOL_DEFAULT/BEDROCK_PROTOCOL, cmake on PATH, and libfabric via its module.
 
 # Profile default transport, used when server.config says protocol: auto.
@@ -9,7 +9,6 @@ export BEDROCK_PROTOCOL="${BEDROCK_PROTOCOL:-ofi+tcp}"
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 
 # Native stack: repo-local install/_spack first, else legacy transferred view.
-_envs="$ENV_ROOT/install/_spack/var/spack/environments"
 if [[ -f "$ENV_ROOT/install/_spack/share/spack/setup-env.sh" ]]; then
     . "$ENV_ROOT/install/_spack/share/spack/setup-env.sh"
     spack env activate "${ENV_SPACK_ENV:-flowcept-mofka-polaris}" 2>/dev/null || true
@@ -33,4 +32,4 @@ if ! command -v cmake >/dev/null 2>&1; then
     [[ -d "$MOFKA_SPACK_VIEW/bin" ]] && env_prepend PATH "$MOFKA_SPACK_VIEW/bin"
 fi
 
-unset _envs _legacy _n
+unset _legacy _n
