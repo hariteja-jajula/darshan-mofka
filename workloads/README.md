@@ -1,31 +1,31 @@
 # workloads/
 
-Workloads for exercising the Darshan-Mofka connector. Each subdirectory has its
-own README with build, run, and verify steps.
+Workloads for exercising the Darshan→Mofka connector, plus the one runner that drives
+the whole pipeline.
 
-## Choosing what to run: `workload.config`
+- **[`workload.config`](workload.config)** — pick the workload, its size, and the topology
+  (nodes / tasks / placement / brokers). The one file you edit to say *what to run and where*.
+- **[`job.sh`](job.sh)** — the runner. Reads `workload.config` + `../server/server.config`,
+  stands up the broker + FlowCept consumer for the topology, runs the workload, reconstructs
+  the `.darshan` log from the stream, and compares it 1:1 to the native log.
 
-You pick the workload and its size in one place — [`workload.config`](workload.config) —
-and `job.sh` reads it. Two knobs control the size, and the event count is derived from
-them (no wall-clock knob):
+**To run, see [`../WORKFLOW.md`](../WORKFLOW.md)** — the short edit-config → `submit.sh` →
+`results/` guide. In brief:
 
-```yaml
-workload: c        # c | python-ml | mpi | dlio
-events: 8          # training steps / epochs
-checkpoints: 2     # how many checkpoints to write across the run
+```bash
+# edit workloads/workload.config, then:
+PBS_ACCOUNT=radix-io bash submit.sh
 ```
 
-For the C workload that means `events + 2` POSIX events plus `3 x checkpoints` STDIO
-events; for python-ml, `events` becomes epochs and `checkpoints` the number of
-checkpoint files. Override any key for a single run with an env var of the same
-uppercase name, e.g. `EVENTS=50000 CHECKPOINTS=50 bash job.sh`.
+## The workloads
 
-| Workload | Directory | Exercises | Notes |
-|---|---|---|---|
-| C smoke (non-MPI) | [`c/`](c/README.md) | POSIX + STDIO modules (incl. STDIO close) | the default `job.sh` workload |
-| MPI-IO | [`c/`](c/README.md) | MPIIO module (incl. `MPI_File_close`) | real MPI job; run under `mpiexec` |
-| DLIO | [`dlio/`](dlio/README.md) | POSIX via a realistic DL I/O benchmark | optional; external benchmark |
+| Workload | Directory | Exercises |
+|---|---|---|
+| C (non-MPI) | [`c/`](c/README.md) | POSIX + STDIO (models an ML train loop: writes per epoch, STDIO checkpoints) |
+| python-ml | [`python-ml/`](python-ml/README.md) | POSIX + STDIO from a small ML-style train/eval |
+| MPI-IO | [`mpi/`](c/README.md) | MPIIO module (real MPI job) |
+| DLIO | [`dlio/`](dlio/README.md) | POSIX via a realistic DL I/O benchmark (optional) |
 
-Before running any workload you need the stack built and a Mofka broker +
-FlowCept consumer up. See the top-level [`README.md`](../README.md) quickstart,
-or [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for the full manual pipeline.
+Size is controlled by `events` + `checkpoints` in `workload.config` (no wall-clock knob) —
+the C workload prints the exact event count before it runs. Any config key can be overridden
+for one run with an env var of the same UPPERCASE name (e.g. `EVENTS=50000 bash submit.sh`).
