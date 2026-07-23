@@ -56,7 +56,16 @@ spack:
     mochi-yokan:
       require: +rocksdb
     mercury:
-      require: ['~boostsys ~checksum +ofi ~ucx +hwloc']
+      # ~hwloc on purpose: the mochi spack repo's mercury package.py declares the
+      # `hwloc` variant but is MISSING `depends_on('hwloc', when='+hwloc')` (cf. the
+      # ucx variant which has it), so +hwloc sets -DNA_OFI_USE_HWLOC=ON without
+      # putting hwloc (+ its Requires.private pciaccess/libxml2) on PKG_CONFIG_PATH,
+      # and mercury's cmake fails "Could NOT find HWLOC" in a from-scratch build.
+      # hwloc here is only NIC-topology detection, not needed by the connector, so
+      # ~hwloc is the clean, verified fix (mercury~hwloc builds; +hwloc does not).
+      # The legacy eagle stack built +hwloc only because those pkgconfigs were
+      # ambient. See docs/FROM_SCRATCH_STATUS.md.
+      require: ['~boostsys ~checksum +ofi ~ucx ~hwloc']
 
     # ---- Polaris MPI: cray-mpich (gnu/12.3 build, matches gcc@12.3.0) ----
     mpi:
