@@ -85,10 +85,12 @@ the PR. (It also lines up with the overhead finding that finalize is the variabl
 phase.) The workload itself used the plain-Python path since PyTorch has no 3.14 wheel.
 
 ### Multi-node / partitions (P9, your extra ask) — partial
-`results/multinode_20260723_011303/`. On a single broker, partition count matters:
-1 partition 0.77 s, 2 partitions 0.41 s, 4 partitions 0.41 s (2 is the sweet spot;
-4 didn't help and raised per-push cost). **The true multi-node broker (flock MPI
-bootstrap across 2 nodes) did not come up**: openmpi tries to launch the second
+`results/multinode_20260723_011303/`. On a single broker, one sample each:
+1 partition 0.77 s, 2 partitions 0.41 s, 4 partitions 0.41 s. Treat this as a hint,
+not a result — it's a single run per point and well within run-to-run noise, so I
+would not claim a "best" partition count without repeated reps. **The true
+multi-node broker (flock MPI bootstrap across 2 nodes) did not come up**: openmpi
+tries to launch the second
 bedrock over SSH and hits `Host key verification failed` — a site launcher issue,
 not a config problem. The exact, doc-grounded recipe for it is in
 `docs/MOFKA_NOTES.md` §3c and the config is `server/bedrock-config-mpi.json`; it
