@@ -13,8 +13,9 @@ _RUN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$_RUN_LIB_DIR/config.sh"
 REPO_ROOT="${REPO:-$(dirname "$_RUN_LIB_DIR")}"
-WORKLOAD_CONFIG="${WORKLOAD_CONFIG:-$REPO_ROOT/workloads/workload.config}"
-SERVER_CONFIG="${SERVER_CONFIG:-$REPO_ROOT/server/server.config}"
+WORKLOAD_CONFIG="${WORKLOAD_CONFIG:-$REPO_ROOT/workloads/workload.config}"   # producer/workload
+SERVER_CONFIG="${SERVER_CONFIG:-$REPO_ROOT/server/server.config}"           # broker
+CLIENT_CONFIG="${CLIENT_CONFIG:-$REPO_ROOT/Client/client.config}"           # consumer + mongo sink
 
 # read key from a config file, but let an env var of the given NAME override it.
 # NB: the indirect expansion must be on its own `local` line (see the bash gotcha where
@@ -45,24 +46,26 @@ load_run_config() {
     SRV_PART_TYPE=$(_cfg_env MOFKA_PARTITION_TYPE "$SERVER_CONFIG" partition_type memory)
     SRV_PROTOCOL=$(_cfg_env MOFKA_PROTOCOL "$SERVER_CONFIG" protocol auto)
     [ "$SRV_PROTOCOL" = auto ] && SRV_PROTOCOL="${MOFKA_PROTOCOL_DEFAULT:-tcp}"   # profile default
-    C_ENABLE=$(_cfg_env DARSHAN_MOFKA_ENABLE "$SERVER_CONFIG" connector.enable 1)
-    C_BATCH=$(_cfg_env DARSHAN_MOFKA_BATCH "$SERVER_CONFIG" connector.batch 0)
-    C_MAX_BATCHES=$(_cfg_env DARSHAN_MOFKA_MAX_BATCHES "$SERVER_CONFIG" connector.max_batches 64)
-    C_FLUSH_MS=$(_cfg_env DARSHAN_MOFKA_FLUSH_MS "$SERVER_CONFIG" connector.flush_ms 5000)
-    C_TIMING=$(_cfg_env DARSHAN_MOFKA_TIMING "$SERVER_CONFIG" connector.timing 1)
-    D_NONMPI=$(_cfg_env DARSHAN_ENABLE_NONMPI "$SERVER_CONFIG" darshan.enable_nonmpi 1)
-    D_MODMEM=$(_cfg_env DARSHAN_MODMEM "$SERVER_CONFIG" darshan.modmem "")
-    D_MOD_ENABLE=$(_cfg_env DARSHAN_MOD_ENABLE "$SERVER_CONFIG" darshan.mod_enable "")
-    D_MOD_DISABLE=$(_cfg_env DARSHAN_MOD_DISABLE "$SERVER_CONFIG" darshan.mod_disable "")
-    D_INTERNAL_TIMING=$(_cfg_env DARSHAN_INTERNAL_TIMING "$SERVER_CONFIG" darshan.internal_timing "")
-    SRV_MONGO_DB=$(_cfg_env MONGO_DB "$SERVER_CONFIG" mongo.db darshan_stream)
-    SRV_MONGO_PORT=$(_cfg_env MONGO_PORT "$SERVER_CONFIG" mongo.port 27017)
-    SRV_MONGO_CACHE_GB=$(_cfg_env MONGO_CACHE_GB "$SERVER_CONFIG" mongo.cache_gb "")
-    SRV_MONGO_DBPATH=$(_cfg_env MONGO_DBPATH "$SERVER_CONFIG" mongo.dbpath "")
-    CONS_MQ_BUF=$(_cfg_env MQ_BUFFER_SIZE "$SERVER_CONFIG" consumer.mq_buffer_size 50)
-    CONS_MQ_FLUSH=$(_cfg_env MQ_FLUSH_SECS "$SERVER_CONFIG" consumer.mq_flush_secs 5)
-    CONS_DB_BUF=$(_cfg_env DB_BUFFER_SIZE "$SERVER_CONFIG" consumer.db_buffer_size 50)
-    CONS_DB_FLUSH=$(_cfg_env DB_FLUSH_SECS "$SERVER_CONFIG" consumer.db_flush_secs 5)
+    # connector + darshan env are producer-side -> workload.config
+    C_ENABLE=$(_cfg_env DARSHAN_MOFKA_ENABLE "$WORKLOAD_CONFIG" connector.enable 1)
+    C_BATCH=$(_cfg_env DARSHAN_MOFKA_BATCH "$WORKLOAD_CONFIG" connector.batch 0)
+    C_MAX_BATCHES=$(_cfg_env DARSHAN_MOFKA_MAX_BATCHES "$WORKLOAD_CONFIG" connector.max_batches 64)
+    C_FLUSH_MS=$(_cfg_env DARSHAN_MOFKA_FLUSH_MS "$WORKLOAD_CONFIG" connector.flush_ms 5000)
+    C_TIMING=$(_cfg_env DARSHAN_MOFKA_TIMING "$WORKLOAD_CONFIG" connector.timing 1)
+    D_NONMPI=$(_cfg_env DARSHAN_ENABLE_NONMPI "$WORKLOAD_CONFIG" darshan.enable_nonmpi 1)
+    D_MODMEM=$(_cfg_env DARSHAN_MODMEM "$WORKLOAD_CONFIG" darshan.modmem "")
+    D_MOD_ENABLE=$(_cfg_env DARSHAN_MOD_ENABLE "$WORKLOAD_CONFIG" darshan.mod_enable "")
+    D_MOD_DISABLE=$(_cfg_env DARSHAN_MOD_DISABLE "$WORKLOAD_CONFIG" darshan.mod_disable "")
+    D_INTERNAL_TIMING=$(_cfg_env DARSHAN_INTERNAL_TIMING "$WORKLOAD_CONFIG" darshan.internal_timing "")
+    # consumer + mongo sink are client-side -> client.config
+    SRV_MONGO_DB=$(_cfg_env MONGO_DB "$CLIENT_CONFIG" mongo.db darshan_stream)
+    SRV_MONGO_PORT=$(_cfg_env MONGO_PORT "$CLIENT_CONFIG" mongo.port 27017)
+    SRV_MONGO_CACHE_GB=$(_cfg_env MONGO_CACHE_GB "$CLIENT_CONFIG" mongo.cache_gb "")
+    SRV_MONGO_DBPATH=$(_cfg_env MONGO_DBPATH "$CLIENT_CONFIG" mongo.dbpath "")
+    CONS_MQ_BUF=$(_cfg_env MQ_BUFFER_SIZE "$CLIENT_CONFIG" consumer.mq_buffer_size 50)
+    CONS_MQ_FLUSH=$(_cfg_env MQ_FLUSH_SECS "$CLIENT_CONFIG" consumer.mq_flush_secs 5)
+    CONS_DB_BUF=$(_cfg_env DB_BUFFER_SIZE "$CLIENT_CONFIG" consumer.db_buffer_size 50)
+    CONS_DB_FLUSH=$(_cfg_env DB_FLUSH_SECS "$CLIENT_CONFIG" consumer.db_flush_secs 5)
     BRK_RPC_THREADS=$(_cfg_env RPC_THREAD_COUNT "$SERVER_CONFIG" broker.rpc_thread_count 4)
     BRK_PROGRESS=$(_cfg_env USE_PROGRESS_THREAD "$SERVER_CONFIG" broker.use_progress_thread true)
     BRK_MASTER_DB=$(_cfg_env MASTER_DB "$SERVER_CONFIG" broker.master_db map)
