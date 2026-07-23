@@ -126,7 +126,11 @@ case "$WORKLOAD" in
         "$MPICC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile failed"
         # env (incl. LD_PRELOAD) goes INSIDE mpiexec so only the ranks are
         # instrumented -- preloading the launcher (prterun) crashes it.
-        mpiexec --oversubscribe -n 4 env DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
+        # --oversubscribe: fit 4 ranks on one node. btl_vader_single_copy_mechanism=none:
+        # this node's Yama ptrace setting blocks cross-memory-attach shared memory, which
+        # crashes the default vader BTL at MPI_Init (same restriction as mercury ~sm).
+        mpiexec --oversubscribe -n 4 --mca btl_vader_single_copy_mechanism none \
+            env DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
             DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 DARSHAN_MOFKA_TIMING=1 \
             DARSHAN_MOFKA_FLUSH_MS=10000 DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
             LD_PRELOAD="$ROOT/darshan/install-mpi/lib/libdarshan.so" \

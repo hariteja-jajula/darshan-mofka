@@ -56,8 +56,8 @@ From the repository root, choose the cluster profile:
 
 ```bash
 git submodule update --init --recursive
-source server/env.sh --polaris  # Polaris
-# source server/env.sh --lcrc   # LCRC/Improv
+source env/server.sh --polaris  # Polaris
+# source env/server.sh --lcrc   # LCRC/Improv
 ```
 
 Check that the main tools are visible:
@@ -76,7 +76,7 @@ create a local machine config:
 
 ```bash
 cp server/env.local.sh.example server/env.local.sh
-source server/env.sh
+source env/server.sh
 ```
 
 Then edit `server/env.local.sh` to load modules or set paths for your cluster.
@@ -114,7 +114,7 @@ which must be on `PYTHONPATH` for Mofka's Python client to import
 `pydiaspora_stream_api`.
 
 ```bash
-source server/env.sh --polaris  # or: source server/env.sh --lcrc on LCRC/Improv
+source env/server.sh --polaris  # or: source env/server.sh --lcrc on LCRC/Improv
 printf 'PY=%s\n' "$PY"
 "$PY" -VV
 printf 'PYTHONPATH=%s\n' "$PYTHONPATH"
@@ -129,7 +129,7 @@ PY
 
 Build the Darshan fork with Mofka support.
 
-> **Polaris note (validated):** re-sourcing `server/env.sh` after step 2 re-adds
+> **Polaris note (validated):** re-sourcing `env/server.sh` after step 2 re-adds
 > the system darshan pkg-config path, so re-apply the fix from step 2 before
 > building the runtime:
 >
@@ -166,7 +166,7 @@ Expected: a path ending in `darshan/install/lib/libdarshan.so`.
 Start the local Bedrock/Mofka broker and create the `darshan` topic:
 
 ```bash
-bash server/start-server.sh
+bash server/start_server.sh
 ```
 
 Expected output looks like:
@@ -191,7 +191,7 @@ Pick where this run writes its FlowCept artifacts and exported JSONL. Use
 different `MONGO_DB` and `EVENTS_JSONL` values for different workload runs if you
 want to keep them separate.
 
-> Make sure `server/env.sh` is sourced in this shell (it sets `$ROOT`); otherwise
+> Make sure `env/server.sh` is sourced in this shell (it sets `$ROOT`); otherwise
 > these paths collapse and the watch loops silently grep the wrong file.
 
 ```bash
@@ -259,7 +259,7 @@ MONGO_DB="$MONGO_DB" \
 MONGO_PORT="$MONGO_PORT" \
 MONGOD="$MONGOD" \
 MOFKA_GROUP="$ROOT/server/mofka.json" \
-bash server/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
+bash Client/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
 FLOWCEPT_CAPTURE_PID=$!
 
 until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do
@@ -348,7 +348,7 @@ until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do
   sleep 1
 done
 
-"$PY" server/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
+"$PY" Client/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
   > "$EVENTS_JSONL" \
   2> "$RUN_DIR/export.count"
 
@@ -357,7 +357,7 @@ kill "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 wait "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
 ```
 
-`server/capture.py` is still available as a simple debug drain, but the FlowCept
+`Client/capture.py` is still available as a simple debug drain, but the FlowCept
 path above is the live consumer path.
 
 ## 9. Verify exported events
@@ -426,7 +426,7 @@ module record snapshots that reached Mofka, plus synthetic job/exe/mount metadat
 Stop the broker when done:
 
 ```bash
-bash server/stop-server.sh
+bash server/stop_server.sh
 ```
 
 ## One-shot command block
@@ -435,8 +435,8 @@ After everything has been built once, this block runs the full pipeline. This is
 what `job.sh` automates; use `bash job.sh` unless you need to tweak steps.
 
 ```bash
-source server/env.sh --polaris  # or: source server/env.sh --lcrc on LCRC/Improv
-bash server/start-server.sh
+source env/server.sh --polaris  # or: source env/server.sh --lcrc on LCRC/Improv
+bash server/start_server.sh
 "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
 
 RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
@@ -448,7 +448,7 @@ MONGOD="${MONGOD:-$(command -v mongod || true)}"
 [[ -x "$MONGOD" ]] || { echo "mongod not found; load MongoDB or set MONGOD=/path/to/mongod"; exit 1; }
 RUN_DIR="$RUN_DIR" MONGO_DB="$MONGO_DB" MONGO_PORT="$MONGO_PORT" MONGOD="$MONGOD" \
 MOFKA_GROUP="$ROOT/server/mofka.json" \
-bash server/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
+bash Client/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
 FLOWCEPT_CAPTURE_PID=$!
 until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do
   kill -0 "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || { cat "$RUN_DIR/flowcept_capture.out"; exit 1; }
@@ -476,7 +476,7 @@ until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do
   kill -0 "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || { cat "$RUN_DIR/flowcept_capture.out"; exit 1; }
   sleep 1
 done
-"$PY" server/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
+"$PY" Client/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
   > "$EVENTS_JSONL" \
   2> "$RUN_DIR/export.count"
 kill "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
@@ -493,7 +493,7 @@ grep -E '"op":"(read|write)"' "$EVENTS_JSONL" | head
   /tmp/job_partial.darshan
 ./darshan/install/bin/darshan-parser --show-incomplete /tmp/job_partial.darshan | head -80
 
-bash server/stop-server.sh
+bash server/stop_server.sh
 ```
 
 ## Job scripts
@@ -501,8 +501,8 @@ bash server/stop-server.sh
 - `job.sh` (repo root) -- the canonical one-shot: builds (non-MPI), starts a
   fresh broker, runs the C smoke workload, exports, and reconstructs +
   compares to native. Run on a compute node: `bash job.sh`.
-- `jobs/job.sh` -- an older PBS-submission variant that also runs DLIO. Self-
-  submits (`PBS_ACCOUNT=<project> bash jobs/job.sh`) or `qsub -A <project> jobs/job.sh`.
+- `job.sh` -- an older PBS-submission variant that also runs DLIO. Self-
+  submits (`PBS_ACCOUNT=<project> bash job.sh`) or `qsub -A <project> job.sh`.
 
 ## Troubleshooting
 

@@ -9,10 +9,10 @@ Two C workloads for exercising the connector's POSIX, STDIO, and MPI-IO paths.
 
 Prereqs: the stack is built (see the top-level [README](../../README.md)
 "Dependencies & Environments", or `bash install/setup.sh`), the broker is up
-(`bash server/start-server.sh`), and a FlowCept consumer is draining the topic.
+(`bash server/start_server.sh`), and a FlowCept consumer is draining the topic.
 See also [docs/RUNBOOK.md](../../docs/RUNBOOK.md).
 
-`$CC` is set by `server/env.sh`. On Polaris the Cray `cc` wrapper is MPI-aware,
+`$CC` is set by `env/server.sh`. On Polaris the Cray `cc` wrapper is MPI-aware,
 so it links MPI automatically; on other systems use `mpicc` for the MPI-IO build.
 
 ## C smoke (non-MPI)
