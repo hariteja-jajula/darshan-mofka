@@ -68,7 +68,26 @@ send-count gate would have falsely passed it. Fixing the `default` arm needs the
 partition-add to pass an abt-io instance (`--abt-io`) or a partition path; logged
 as a follow-up.
 
-## Arm 3 — 2-node MPI broker ingest proof
+## Arm 3 — 2-node MPI broker ingest proof (job 7273475, exit 0, 51s) — PASS
 
-_pending — bedrock is linked to cray-mpich 8.1.28 (ABI OK), bedrock-config.mpi.json
-has bootstrap:mpi + rank-0 master gate. Go/no-go probe first._
+Stood up bedrock across **2 nodes** (`x3001c0s19b0n0` + `x3001c0s19b1n0`) via flock
+`bootstrap:mpi` (bedrock-config.mpi.json, master DB gated to rank 0), launched with
+PALS `mpiexec --ppn 1` from `server/start_server.mpi.sh`.
+
+- **2-member group formed** (2 distinct addresses in mofka.json) — the MPI bootstrap
+  works with the spack-built bedrock (linked to cray-mpich 8.1.28, ABI clean).
+- 2 memory partitions added round-robin (one per rank).
+- Ran the proven smoke workload + FlowCept consumer against the multi-node broker:
+  13 sends → `tasks total=13 darshan=13 modules={POSIX:4, STDIO:9}` → **INGEST: PASS**.
+
+**This proves the full Darshan→Mofka→FlowCept→Mongo pipeline works end-to-end
+against a genuine multi-node MPI-bootstrapped broker on Polaris**, not just the
+single-node `bootstrap:self` case. A 2-node *throughput* sweep (loop workload
+across both ranks' partitions) is the natural next step, now that the broker is
+proven — deferred to a debug-scaling session.
+
+## Budget
+
+All jobs charged `radix-io`, debug queue. Total real node-hours tonight ≈ 0.1
+(e2e ×2 + overhead + partsweep on 1 node, MPI proof on 2 nodes — each 19–56 s).
+Far under the ~100 NH available.
