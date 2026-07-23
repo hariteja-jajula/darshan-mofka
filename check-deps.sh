@@ -30,7 +30,9 @@ ENV_ARG="--$PROFILE"
 
 # Source the project env (best effort) so we probe the SAME tools the demo uses.
 # shellcheck disable=SC1091
-source "$HERE/server/env.sh" "$ENV_ARG" >/dev/null 2>&1 || true
+source "$HERE/env/server.sh" "$ENV_ARG" >/dev/null 2>&1 || true
+# shellcheck disable=SC1091
+source "$HERE/env/workload.sh" "$ENV_ARG" >/dev/null 2>&1 || true
 
 row() { # row <PRESENT|MISSING|WARN> <label> <detail>
     local st="$1" label="$2" detail="${3:-}"
