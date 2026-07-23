@@ -140,7 +140,8 @@ Experiments (results in `docs/POLARIS_RESULTS.md`), PBS scripts in `jobs/`:
   flat ~20-22k evt/s).
 - MPI broker ingest: `jobs/mpi_broker_polaris.pbs` — job 7273475 (2-node INGEST PASS).
 - MPI throughput: `jobs/mpi_throughput_polaris.pbs` — job 7274785 (flat ~19k).
-- overhead (python): `jobs/overhead_python_polaris.pbs` — job 7275260 (io_ml).
+- overhead (python): `jobs/overhead_python_polaris.pbs` — job 7275260 (io_ml,
+  +314%, ~32 µs/push, all reps PASS).
 
 Headline scientific finding: throughput is **producer-bound** — a single producer
 plateaus at ~20k events/s regardless of partition count or number of broker nodes.

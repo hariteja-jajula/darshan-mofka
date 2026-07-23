@@ -10,7 +10,7 @@ Authoritative log for each run is the PBS `.oNNNN` file (archived per results di
 | 7273369 | e2e with explicit `--polaris` | INGEST: PASS, 13 docs, modules={POSIX:4,STDIO:9}, reconstructed OPENS match native (overlay/unknown mount diff only) |
 | 7273397 | e2e config-driven (no flag, `cluster: polaris`) | INGEST: PASS — proves the config knob drives the pipeline |
 
-## Arm 1 — connector overhead (job 7273451, exit 0, 19s)
+## Arm 1 — connector overhead, C workload (job 7273451, exit 0, 19s)
 
 Workload: `mofka_forward_loop` 1 file × 8000 writes × 4096 B (~8006 events).
 Baseline = `env -u DARSHAN_MOFKA_ENABLE` (native Darshan, connector OFF, because
@@ -29,6 +29,25 @@ takes ~0.45 s). It is NOT a realistic whole-application overhead — it is the p
 of streaming every event with no aggregation. The ~32 µs/push figure is the one
 that transfers; a real workload's overhead depends on its event rate. Matches the
 historical producer-side cost model (~15–52 µs/event).
+
+## Arm 1b — connector overhead, Python/ML workload (job 7275260, all reps PASS)
+
+Workload: `workloads/python/io_ml.py` (64 shards × 256 KiB, 3 epochs of
+sharded-read + checkpoint; ~1434 events). Same method (baseline `env -u
+DARSHAN_MOFKA_ENABLE`, N=3). No torch (no py3.14 wheel) — pure POSIX/STDIO I/O.
+
+- baseline wall: mean 0.114 s (stddev 0.008)
+- mofka wall:    mean 0.472 s (stddev 0.128)
+- **overhead: +0.358 s absolute; +314 %**
+- **per-push latency: mean ~32 µs, p50 ~24 µs** — matches the C arm's ~32 µs,
+  confirming the per-event cost is stable across workload type.
+
+**Read honestly:** +314 % (vs the C microbench's +904 %) is lower precisely because
+io_ml does more real I/O per event, so streaming is a smaller fraction of wall
+time. This is the same point as Arm 1: the transferable number is ~32 µs/push;
+percentage overhead scales with how event-dense the workload is. Both arms are
+still microbenchmarks — a production app with heavier compute/I/O per event would
+see a far smaller percentage.
 
 ## Arm 2 — partition-count throughput curve (job 7273454, exit 0)
 
@@ -57,16 +76,29 @@ Single producer, LOOSE ordering (spreads events across partitions).
    write-loop at finalize; with ≥2 the events overlap-drain during the run so
    finalize is trivial. n_send=50006 in every case (no producer-side loss).
 
-**default (persistent) partitions: HEALTH=FAIL, all 12 runs.** Every push errored
-with `PartitionSelector has no target to select from`; broker log:
-`Could not create partition ... DefaultPartitionManager JSON validation`. The
-`default` manager needs an explicit abt-io/data target that `start_server.sh`'s
-bare `mofkactl partition add --type default` does not supply. The `default`
-throughput numbers in partcurve_result.txt are therefore meaningless (flagged
-FAIL). **The health gate correctly caught this** — n_send was still 50006, so a
-send-count gate would have falsely passed it. Fixing the `default` arm needs the
-partition-add to pass an abt-io instance (`--abt-io`) or a partition path; logged
-as a follow-up.
+**default (persistent) partitions:** in the FIRST run (7273454) all 12 default runs
+FAILED — `PartitionSelector has no target to select from` /
+`DefaultPartitionManager ... required property 'path' not found`. Root cause: the
+`default` manager needs an on-disk `path`, and `mofkactl partition add --type
+default` only supplies it via the extra-arg mechanism `--config.path <dir>` (the
+mofkactl equivalent of the docs' `diaspora-ctl --topic.config.partition.path`),
+which the bare call omitted. **The health gate correctly caught it** (n_send was
+still 50006, so a send-count gate would have falsely passed). **Fixed** in
+`start_server.sh` (pass `--config.path` for `default`, one subdir per partition,
+and stop swallowing add errors) and re-run:
+
+**Re-run with the fix — job 7274951 (both partition types PASS):**
+
+| type | 1 part | 2 | 4 | 8 |
+|---|---|---|---|---|
+| memory  | 19,723 | 21,392 | 20,449 | 20,520 evt/s |
+| default | 22,891 | 21,713 | 21,417 | 20,598 evt/s |
+
+Both flat ~20–22k evt/s across partition counts (same single-producer-bound
+conclusion). `default` (on-disk) is marginally faster at low partition counts —
+its buffer drains during the run rather than all at finalize. (The earlier
+memory-arm numbers above are from run 7273454; the re-run 7274951 reproduced them
+within noise after the gcc-runtime `sort -V` fix restored a clean libstdc++.)
 
 ## Arm 3 — 2-node MPI broker ingest proof (job 7273475, exit 0, 51s) — PASS
 
