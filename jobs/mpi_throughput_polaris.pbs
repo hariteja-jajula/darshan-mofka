@@ -1,0 +1,78 @@
+#!/bin/bash
+#PBS -N dm_mpi_thru
+#PBS -A radix-io
+#PBS -q debug-scaling
+#PBS -l select=2:ncpus=32
+#PBS -l walltime=00:40:00
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+# 2-node throughput sweep on the proven MPI-bootstrapped broker. Extends the Arm-3
+# ingest proof: bring up bedrock across 2 nodes (flock bootstrap:mpi), place
+# partitions across both ranks, and measure producer throughput vs partition
+# layout. Compares single-partition (1 rank) to partitions spread over 2 ranks --
+# does a cross-NODE partition spread raise throughput where single-node memory
+# partitions were flat (enqueue-bound)?
+set -uo pipefail
+R="${REPO:-/eagle/radix-io/hjajula/pv/darshan-mofka}"; cd "$R"
+source server/env.sh
+module unload darshan 2>/dev/null || true
+export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
+OUT="$R/results/mpithru_${PBS_JOBID%%.*}"; mkdir -p "$OUT"
+echo "${PBS_JOBID:-local}" > "$OUT/JOBID"
+DL="$(darshan_lib)"
+NODES=$(sort -u "$PBS_NODEFILE" | wc -l)
+NF=1; NW=50000; BS=4096
+REPS="${REPS:-3}"
+[ -x workloads/c/mofka_forward_loop ] || "$CC" -O2 workloads/c/mofka_forward_loop.c -o workloads/c/mofka_forward_loop
+echo "### $NODES-node allocation ###"; sort -u "$PBS_NODEFILE" | tee "$OUT/nodefile"
+
+# Sweep: 1 partition (1 rank) as the baseline, then NODES partitions (one per rank).
+: > "$OUT/summary.txt"
+for NP in 1 "$NODES"; do
+  for REP in $(seq 1 "$REPS"); do
+    export MOFKA_SERVER_DIR="$OUT/mofka_${NP}p_${REP}"
+    # stop any prior broker (kills the mpiexec launcher pid)
+    [ -f "$MOFKA_SERVER_DIR/bedrock.pid" ] && kill "$(cat "$MOFKA_SERVER_DIR/bedrock.pid")" 2>/dev/null || true
+    if ! MOFKA_NRANKS="$NODES" MOFKA_PARTITIONS="$NP" MOFKA_PART_TYPE=memory \
+         bash server/start_server.mpi.sh > "$MOFKA_SERVER_DIR.start.log" 2>&1; then
+      echo "parts=$NP rep=$REP START_FAIL" | tee -a "$OUT/summary.txt"; continue
+    fi
+    G="$MOFKA_SERVER_DIR/mofka.json"
+    NMEMB=$("$PY" - "$G" <<'PY'
+import json,sys
+print(len({m["address"] for m in json.load(open(sys.argv[1])).get("members",[])}))
+PY
+)
+    W="/tmp/mpithru_${NP}_${REP}_$$"
+    t0=$(date +%s.%N)
+    env DARSHAN_ENABLE_NONMPI=1 DARSHAN_MOFKA_ENABLE=1 \
+        DARSHAN_MOFKA_GROUP_FILE="$G" DARSHAN_MOFKA_TOPIC=darshan \
+        DARSHAN_MOFKA_TIMING=1 DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 \
+        DARSHAN_LOGPATH="$MOFKA_SERVER_DIR" LD_PRELOAD="$DL" \
+        ./workloads/c/mofka_forward_loop "$W" "$NF" "$NW" "$BS" \
+        2>"$OUT/run_${NP}p_${REP}.err" >/dev/null
+    t1=$(date +%s.%N)
+    WALL=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.6f", b-a}')
+    printf 'parts=%s members=%s rep=%s wall=%s ' "$NP" "$NMEMB" "$REP" "$WALL" | tee -a "$OUT/summary.txt"
+    "$PY" workloads/c/analyze.py "$OUT/run_${NP}p_${REP}.err" "$WALL" | tee -a "$OUT/summary.txt"
+    [ -f "$MOFKA_SERVER_DIR/bedrock.pid" ] && kill "$(cat "$MOFKA_SERVER_DIR/bedrock.pid")" 2>/dev/null || true
+    rm -rf "$W"
+  done
+done
+
+echo "### aggregate: throughput vs partition/node spread ###"
+"$PY" - "$OUT/summary.txt" <<'PY' | tee "$OUT/mpithru_result.txt"
+import sys, re, statistics as st
+rows={}
+for ln in open(sys.argv[1]):
+    m=re.search(r"parts=(\d+) members=(\d+) rep=\d+.*HEALTH=(\w+).*thr_evt_s=([\d.]+).*p50=([\d.]+).*p99=([\d.]+)", ln)
+    if m:
+        k=(int(m.group(1)),int(m.group(2))); rows.setdefault(k,{"h":[],"thr":[],"p50":[],"p99":[]})
+        rows[k]["h"].append(m.group(3)); rows[k]["thr"].append(float(m.group(4)))
+        rows[k]["p50"].append(float(m.group(5))); rows[k]["p99"].append(float(m.group(6)))
+print("parts,members,health,median_thr_evt_s,median_p50_us,median_p99_us,n")
+for k in sorted(rows):
+    d=rows[k]; h="PASS" if all(x=="PASS" for x in d["h"]) else "FAIL"
+    print(f"{k[0]},{k[1]},{h},{st.median(d['thr']):.0f},{st.median(d['p50']):.2f},{st.median(d['p99']):.2f},{len(d['thr'])}")
+PY
+echo "### DONE mpi-throughput; artifacts in $OUT ###"
