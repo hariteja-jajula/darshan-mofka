@@ -1,0 +1,49 @@
+
+########## 1. environment (workload=python-ml) ##########
+profile=lcrc  ROOT=/home/hjajula/darshan-mofka-flowcept/darshan-mofka
+MOFKA_SPACK_VIEW=/gpfs/fs1/home/hjajula/mofka_tests/spack/opt/spack/linux-zen3/mofka-main-avcbx7ph7tdk4xofebtrdxcotfmsxzib
+DIASPORA_C=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/diaspora-stream-api/install  DARSHAN_PREFIX=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/darshan/install
+CC=/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-x86_64/gcc-8.5.0/gcc-13.2.0-iyqxotb/bin/gcc  PY=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/install/_venv/bin/python3  MONGOD=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/_mongo_env/bin/mongod
+
+########## 2. build (SKIP_BUILD=1, using /home/hjajula/darshan-mofka-flowcept/darshan-mofka/darshan/install/lib/libdarshan.so) ##########
+
+########## 3. mongod ##########
+MONGOD=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/_mongo_env/bin/mongod  (db version v7.0.14)
+
+########## 4. fresh Mofka broker ##########
+starting bedrock (verbs) in /home/hjajula/darshan-mofka-flowcept/darshan-mofka/server ...
+mofka up: ofi+verbs;ofi_rxm://10.128.16.15:43486 | topic 'darshan' | groupfile /home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/mofka.json (pid 3632682)
+
+########## 5. FlowCept consumer  (results -> /home/hjajula/darshan-mofka-flowcept/darshan-mofka/results/python-ml_20260723_013313) ##########
+=== [flowcept-capture] topic=darshan db=darshan_stream run_dir=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/_flowcept_run ===
+=== [fc] mongod (port 27017, dbpath /home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/_flowcept_run/mongo_data) ===
+[fc] mongod ready 2s
+[fc] FLOWCEPT_SETTINGS_PATH=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/_flowcept_run/flowcept_settings.yaml
+        enabled: false
+      enabled: false                    # flowcept instruments nothing; darshan is the producer
+      enabled: true
+      type: mofka
+      channel: darshan                 # MUST match the producer's DARSHAN_MOFKA_TOPIC
+      group_file: /home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/mofka.json
+      same_as_kvdb: false
+    kv_db:
+      enabled: false                    # no Redis; the pinned fork null-guards this path
+      enabled: false
+      lmdb:
+        enabled: false
+      mongodb:
+        enabled: true
+        db: darshan_stream
+=== [fc] flowcept consumer (start-consumption-services) ===
+[fc] FAIL: consumer died on startup
+    [flowcept][INFO][i002.lcrc.anl.gov][pid=3632765][thread=23456247724992][function=_handle_control_message][I'm doc inserter 23454740239696. I received this control msg received: {'exec_bundle_id': None, 'info': 'stop_document_inserter', 'type': 'flowcept_control'}]
+    [flowcept][INFO][i002.lcrc.anl.gov][pid=3632765][thread=23456247724992][function=_handle_control_message][Document Inserter for exec_id None is stopping...]
+    [flowcept][INFO][i002.lcrc.anl.gov][pid=3632765][thread=23456247724992][function=thread_target][Ok, we broke the doc inserter message listen loop!]
+    Starting consumption services...
+      bundle_exec_id: None
+      check_safe_stops: False
+      consumers: []
+    Starting producer
+[fc] cleanup
+
+FATAL: consumer failed to start
