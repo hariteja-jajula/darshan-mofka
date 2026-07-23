@@ -38,9 +38,6 @@
 /data/
 /hydra_log/
 
-# local evaluation notes (not for commit)
-/EVALUATION.md
-
 # generated files and crashes
 *.o
 *.log
@@ -49,5 +46,3 @@ core
 core.*
 __pycache__/
 
-# local overnight plan/state (not for commit)
-/progress.md
