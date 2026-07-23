@@ -40,7 +40,9 @@ ENV_ARG="--$PROFILE"
 say "preflight"
 say "profile: $PROFILE"
 # shellcheck disable=SC1091
-source "$REPO_ROOT/server/env.sh" "$ENV_ARG" || die "could not source server/env.sh $ENV_ARG"
+source "$REPO_ROOT/env/server.sh" "$ENV_ARG" || die "could not source env/server.sh $ENV_ARG"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/env/workload.sh" "$ENV_ARG" || true
 if command -v module >/dev/null 2>&1 && ! command -v cc >/dev/null 2>&1; then
     module swap PrgEnv-nvidia PrgEnv-gnu >/dev/null 2>&1 || module load PrgEnv-gnu >/dev/null 2>&1 || true
 fi

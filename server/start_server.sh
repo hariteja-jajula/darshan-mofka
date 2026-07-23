@@ -1,15 +1,27 @@
 #!/bin/bash
+# start_server.sh -- bring up a fresh Mofka broker (bedrock) and create the topic
+# the Darshan connector streams to. Writes a group file (mofka.json) the producer
+# and consumer both read. Idempotent: stops any prior broker in the run dir first.
+#
+# Config knobs (env vars; sensible per-profile defaults, no YAML parser needed):
+#   MOFKA_PROTOCOL        fabric transport (default: profile's -- verbs on LCRC)
+#   MOFKA_TOPIC           topic to create              (default: darshan)
+#   MOFKA_PARTITION_TYPE  partition backend            (default: memory)
+#   MOFKA_SERVER_DIR      where mofka.json/bedrock live (default: this dir)
+# Usage:  bash server/start_server.sh [--lcrc|--polaris]
 set -e
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$HERE/env.sh"
+# shellcheck disable=SC1091
+source "$HERE/../env/server.sh" "$@"
 
+MOFKA_TOPIC="${MOFKA_TOPIC:-darshan}"
+MOFKA_PARTITION_TYPE="${MOFKA_PARTITION_TYPE:-memory}"
 SERVER_RUN_DIR="${MOFKA_SERVER_DIR:-$HERE}"
 mkdir -p "$SERVER_RUN_DIR"
-if [ "$HERE/bedrock-config.json" != "$SERVER_RUN_DIR/bedrock-config.json" ]; then
-    cp "$HERE/bedrock-config.json" "$SERVER_RUN_DIR/bedrock-config.json"
-fi
+[ "$HERE/bedrock-config.json" != "$SERVER_RUN_DIR/bedrock-config.json" ] \
+    && cp "$HERE/bedrock-config.json" "$SERVER_RUN_DIR/bedrock-config.json"
 cd "$SERVER_RUN_DIR"
-if [ -f bedrock.pid ]; then kill "$(cat bedrock.pid)" 2>/dev/null || true; fi
+[ -f bedrock.pid ] && kill "$(cat bedrock.pid)" 2>/dev/null || true
 sleep 1
 rm -f mofka.json bedrock.pid
 
@@ -17,10 +29,10 @@ echo "starting bedrock ($MOFKA_PROTOCOL) in $SERVER_RUN_DIR ..."
 bedrock "$MOFKA_PROTOCOL" -c bedrock-config.json -v info > bedrock.log 2>&1 &
 echo $! > bedrock.pid
 
-for i in $(seq 1 60); do [ -f mofka.json ] && break; sleep 0.5; done
-[ -f mofka.json ] || { echo "mofka.json never appeared; see bedrock.log"; exit 1; }
+for _ in $(seq 1 60); do [ -f mofka.json ] && break; sleep 0.5; done
+[ -f mofka.json ] || { echo "mofka.json never appeared; see $SERVER_RUN_DIR/bedrock.log"; exit 1; }
 
-mofkactl topic create darshan --groupfile mofka.json 2>/dev/null || true
-mofkactl partition add darshan --rank 0 --type memory --groupfile mofka.json 2>/dev/null || true
+mofkactl topic create "$MOFKA_TOPIC" --groupfile mofka.json 2>/dev/null || true
+mofkactl partition add "$MOFKA_TOPIC" --rank 0 --type "$MOFKA_PARTITION_TYPE" --groupfile mofka.json 2>/dev/null || true
 
-echo "mofka up: $(grep -oE '[a-z0-9+;_]+://[0-9.]+:[0-9]+' "$SERVER_RUN_DIR/mofka.json" | head -1) | topic 'darshan' | groupfile $SERVER_RUN_DIR/mofka.json (pid $(cat bedrock.pid))"
+echo "mofka up: $(grep -oE '[a-z0-9+;_]+://[0-9.]+:[0-9]+' mofka.json | head -1) | topic '$MOFKA_TOPIC' | groupfile $SERVER_RUN_DIR/mofka.json (pid $(cat bedrock.pid))"

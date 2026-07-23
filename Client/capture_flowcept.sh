@@ -1,23 +1,23 @@
 #!/bin/bash
 # capture_flowcept.sh -- "scale mode" consumer: FlowCept drains the darshan Mofka
 # topic into MongoDB (instead of capture.py -> flat JSONL). This is the scalable
-# / persistent alternative to server/capture.py. See the repo README (steps 6-9).
+# / persistent alternative to Client/capture.py. See the repo README (steps 6-9).
 #
-# It does NOT start the broker -- run server/start-server.sh first (same as the
+# It does NOT start the broker -- run server/start_server.sh first (same as the
 # capture.py path). It DOES start a local mongod (FlowCept's sink) and the
 # FlowCept consumer, waits for you to run the workload, then graceful-stops the
 # consumer (flushing its buffer) so every event lands before teardown.
 #
 # Flow:
-#   1. server/start-server.sh        (broker + darshan topic + mofka.json)
-#   2. server/capture_flowcept.sh &  (mongod + FlowCept consumer; this script)
+#   1. server/start_server.sh        (broker + darshan topic + mofka.json)
+#   2. Client/capture_flowcept.sh &  (mongod + FlowCept consumer; this script)
 #   3. run the Darshan-instrumented workload while FlowCept drains the topic
 #   4. touch "$SHUTDOWN_FLAG"         (tells this script to flush + stop)
-#   5. server/export_jsonl.py ...     (mongo -> events.jsonl for the reconstructor)
+#   5. Client/export_jsonl.py ...     (mongo -> events.jsonl for the reconstructor)
 #
 # Usage:
-#   source server/env.sh
-#   MONGO_DB=darshan_stream server/capture_flowcept.sh
+#   source env/server.sh
+#   MONGO_DB=darshan_stream Client/capture_flowcept.sh
 # Env knobs (all optional):
 #   TOPIC          mofka topic to consume         (default: darshan; MUST match producer)
 #   MONGO_DB       mongo db to ingest into        (default: darshan_stream)
@@ -27,14 +27,15 @@
 #   MONGOD         path to mongod binary          (default: `command -v mongod`)
 set -uo pipefail
 
-: "${ROOT:?source server/env.sh first (ROOT unset)}"
+# ROOT: honor caller, else ENV_ROOT (from env/server.sh), else derive from Client/.
+ROOT="${ROOT:-${ENV_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}"
 TOPIC="${TOPIC:-darshan}"
 MONGO_DB="${MONGO_DB:-darshan_stream}"
 MONGO_PORT="${MONGO_PORT:-27017}"
 RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
 SHUTDOWN_FLAG="${SHUTDOWN_FLAG:-$RUN_DIR/SHUTDOWN}"
 MOFKA_GROUP="${MOFKA_GROUP:-$ROOT/server/mofka.json}"
-SETTINGS_TEMPLATE="${SETTINGS_TEMPLATE:-$ROOT/server/flowcept_settings.template.yaml}"
+SETTINGS_TEMPLATE="${SETTINGS_TEMPLATE:-$ROOT/Client/flowcept_settings.template.yaml}"
 MONGOD="${MONGOD:-$(command -v mongod || true)}"
 PY="${PY:-python3}"
 
@@ -125,7 +126,7 @@ PY
 
 echo "[fc] mongod still UP on port $MONGO_PORT (db=$MONGO_DB) for export_jsonl.py."
 echo "[fc] Export now, before this script exits and tears mongod down:"
-echo "     $PY $ROOT/server/export_jsonl.py 127.0.0.1 $MONGO_DB > events.jsonl"
+echo "     $PY $ROOT/Client/export_jsonl.py 127.0.0.1 $MONGO_DB > events.jsonl"
 echo "[fc] Press Ctrl-C (or let the parent kill this) when export is done."
 # keep mongod alive for the export step; exit on signal via the trap
 while kill -0 "$MONGOD_PID" 2>/dev/null; do sleep 5; done

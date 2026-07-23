@@ -5,6 +5,12 @@ DARSHAN="$HERE/darshan"
 [ -d "$DARSHAN/darshan-runtime" ] || {
     echo "build.sh: no darshan submodule at $DARSHAN (run: git submodule update --init --recursive)"; exit 1; }
 
+# DIASPORA_C (the C library the connector links) comes from env/workload.sh. Source
+# it here if the caller hasn't, so `./build.sh` works on its own.
+if [ -z "${DIASPORA_C:-}" ] && [ -f "$HERE/env/workload.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$HERE/env/workload.sh"
+fi
 : "${DIASPORA_C:?set DIASPORA_C to your diaspora-c install prefix (dir with include/diaspora/diaspora_c.h)}"
 [ -f "$DIASPORA_C/include/diaspora/diaspora_c.h" ] || {
     echo "build.sh: no include/diaspora/diaspora_c.h under DIASPORA_C=$DIASPORA_C"; exit 1; }

@@ -21,8 +21,17 @@ env_prepend PATH "$MOFKA_SPACK_VIEW/bin"
 env_prepend LD_LIBRARY_PATH "$MOFKA_SPACK_VIEW/lib64"
 env_prepend LD_LIBRARY_PATH "$MOFKA_SPACK_VIEW/lib"
 
-# mongod (FlowCept sink): explicit $MONGOD, else repo-local, else PATH
-export MONGOD="${MONGOD:-$([[ -x $ENV_ROOT/Database/mongod ]] && echo "$ENV_ROOT/Database/mongod" || command -v mongod)}"
+# mongod (FlowCept sink): explicit $MONGOD, else repo-local (Database/, then the
+# legacy server/_mongo_env), else PATH. Database/get_mongod.sh populates Database/.
+if [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]]; then
+    for _m in "$ENV_ROOT/Database/_mongo_env/bin/mongod" \
+              "$ENV_ROOT/server/_mongo_env/bin/mongod" \
+              "$(command -v mongod 2>/dev/null)"; do
+        [[ -n "$_m" && -x "$_m" ]] && { MONGOD="$_m"; break; }
+    done
+fi
+export MONGOD
+unset _m
 
 mofkactl() { "$PY" -m mochi.mofka.mofkactl "$@"; }
 unset _venv

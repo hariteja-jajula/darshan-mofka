@@ -22,3 +22,10 @@ darshan_lib() {
     [[ -e "$d/libdarshan.so" ]] && { printf '%s\n' "$d/libdarshan.so"; return; }
     compgen -G "$d/libdarshan.so*" | sort | head -1
 }
+
+# create + echo today's DARSHAN_LOGPATH subdir (Darshan writes native logs here)
+darshan_ensure_logdir() {
+    local d="$DARSHAN_LOGPATH/$(date +%Y)/$(date +%-m)/$(date +%-d)"
+    mkdir -p "$d" 2>/dev/null || true
+    printf '%s\n' "$d"
+}
