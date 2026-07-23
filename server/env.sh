@@ -9,24 +9,35 @@ SERVER_DIR="$(cd "$(dirname "$_ENV_SRC")" && pwd)"
 ROOT="${INTERNSHIP_ROOT:-$(cd "$SERVER_DIR/.." && pwd)}"
 export ROOT SERVER_DIR
 
-case "${1:-}" in
-    --polaris) DARSHAN_MOFKA_ENV=polaris ;;
-    --lcrc) DARSHAN_MOFKA_ENV=lcrc ;;
-    "") ;;
-    *) echo "[env] unknown profile '${1:-}' (use --polaris or --lcrc)" >&2; return 1 ;;
-esac
-export DARSHAN_MOFKA_ENV
+# Resolve the cluster profile once, here, so every caller (job.sh, check-deps.sh,
+# install/setup.sh) can just `source server/env.sh` and read $DARSHAN_MOFKA_PROFILE
+# instead of re-implementing host detection. Precedence:
+#   1. explicit --polaris/--lcrc arg   2. $DARSHAN_MOFKA_PROFILE / $DARSHAN_MOFKA_ENV
+#   3. `cluster:` in install/config.yaml   4. host auto-detection (lcrc vs polaris)
+darshan_mofka_resolve_profile() {
+    case "${1:-}" in
+        --polaris) printf polaris; return ;;
+        --lcrc)    printf lcrc;    return ;;
+        "") ;;
+        *) echo "[env] unknown profile '${1:-}' (use --polaris or --lcrc)" >&2; return 1 ;;
+    esac
+    local p="${DARSHAN_MOFKA_PROFILE:-${DARSHAN_MOFKA_ENV:-}}"
+    [[ -z "$p" && -f "$ROOT/install/config.yaml" ]] && \
+        p="$(sed -n 's/^cluster:[[:space:]]*\([A-Za-z0-9_-]*\).*/\1/p' "$ROOT/install/config.yaml" | head -1)"
+    if [[ -z "$p" ]]; then
+        { [[ -d /gpfs/fs1/soft/improv ]] || hostname 2>/dev/null | grep -qi 'ilogin\|improv'; } \
+            && p=lcrc || p=polaris
+    fi
+    printf '%s' "$p"
+}
+DARSHAN_MOFKA_ENV="$(darshan_mofka_resolve_profile "${1:-}")" || return 1
+case "$DARSHAN_MOFKA_ENV" in polaris|lcrc) ;; *) echo "[env] bad profile '$DARSHAN_MOFKA_ENV'" >&2; return 1 ;; esac
+# back-compat alias many callers read
+export DARSHAN_MOFKA_ENV DARSHAN_MOFKA_PROFILE="$DARSHAN_MOFKA_ENV"
 
-if [[ -n "${DARSHAN_MOFKA_ENV:-}" ]]; then
-    _cluster_env="$SERVER_DIR/env_${DARSHAN_MOFKA_ENV}.sh"
-    [[ -f "$_cluster_env" ]] || { echo "[env] missing $_cluster_env" >&2; return 1; }
-    source "$_cluster_env"
-elif [[ -f "$SERVER_DIR/env.local.sh" ]]; then
-    source "$SERVER_DIR/env.local.sh"
-else
-    echo "[env] choose a profile: source server/env.sh --polaris" >&2
-    return 1
-fi
+_cluster_env="$SERVER_DIR/env_${DARSHAN_MOFKA_ENV}.sh"
+[[ -f "$_cluster_env" ]] || { echo "[env] missing $_cluster_env" >&2; return 1; }
+source "$_cluster_env"
 unset _cluster_env
 
 : "${DARSHAN_LOGPATH:=$ROOT/darshan-logs}"

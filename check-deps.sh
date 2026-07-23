@@ -17,20 +17,12 @@ cd "$HERE"
 
 QUIET=0; [[ "${1:-}" == "--quiet" ]] && QUIET=1
 MISSING=0
-PROFILE="${DARSHAN_MOFKA_PROFILE:-${DARSHAN_MOFKA_ENV:-}}"
-if [[ -z "$PROFILE" ]]; then
-    if [[ -d /gpfs/fs1/soft/improv ]] || hostname 2>/dev/null | grep -qi 'ilogin\|improv'; then
-        PROFILE=lcrc
-    else
-        PROFILE=polaris
-    fi
-fi
-case "$PROFILE" in polaris|lcrc) ;; *) PROFILE=polaris ;; esac
-ENV_ARG="--$PROFILE"
 
 # Source the project env (best effort) so we probe the SAME tools the demo uses.
+# env.sh resolves the profile (arg > $DARSHAN_MOFKA_PROFILE > config.yaml > host).
 # shellcheck disable=SC1091
-source "$HERE/server/env.sh" "$ENV_ARG" >/dev/null 2>&1 || true
+source "$HERE/server/env.sh" >/dev/null 2>&1 || true
+PROFILE="${DARSHAN_MOFKA_PROFILE:-polaris}"; ENV_ARG="--$PROFILE"
 
 row() { # row <PRESENT|MISSING|WARN> <label> <detail>
     local st="$1" label="$2" detail="${3:-}"

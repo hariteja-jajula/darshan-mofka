@@ -32,15 +32,9 @@ if [[ -z "${PBS_JOBID:-}" ]]; then
 fi
 
 ROOT="${PBS_O_WORKDIR:-$(pwd)}"; cd "$ROOT"
-PROFILE="${DARSHAN_MOFKA_PROFILE:-${DARSHAN_MOFKA_ENV:-}}"
-if [[ -z "$PROFILE" ]]; then
-    if [[ -d /gpfs/fs1/soft/improv ]] || hostname 2>/dev/null | grep -qi 'ilogin\|improv'; then
-        PROFILE=lcrc
-    else
-        PROFILE=polaris
-    fi
-fi
-source server/env.sh "--$PROFILE"
+# env.sh resolves the profile (arg > $DARSHAN_MOFKA_PROFILE > config.yaml > host).
+source server/env.sh
+PROFILE="$DARSHAN_MOFKA_PROFILE"
 
 # Per-job broker + FlowCept run dir so concurrent jobs never collide.
 export MOFKA_SERVER_DIR="$ROOT/server/_pbs_${PBS_JOBID%%.*}/mofka"
@@ -53,13 +47,13 @@ MONGOD="${MONGOD:-$(command -v mongod || true)}"
 [[ -x "$MONGOD" ]] || { echo "mongod not found; load MongoDB or set MONGOD=/path/to/mongod"; exit 1; }
 
 # --- 1. broker + darshan topic ---------------------------------------------
-bash server/stop-server.sh >/dev/null 2>&1 || true
-bash server/start-server.sh
-trap 'bash server/stop-server.sh >/dev/null 2>&1 || true' EXIT
+bash server/stop_server.sh >/dev/null 2>&1 || true
+bash server/start_server.sh
+trap 'bash server/stop_server.sh >/dev/null 2>&1 || true' EXIT
 
 # --- 2. live FlowCept consumer (drains the topic into MongoDB during the run) ---
 RUN_DIR="$RUN_DIR" MONGO_DB=darshan_stream MONGO_PORT=27017 MONGOD="$MONGOD" \
-MOFKA_GROUP="$GROUP" bash server/capture_flowcept.sh > "$RUN_DIR/flowcept.out" 2>&1 &
+MOFKA_GROUP="$GROUP" bash Client/capture_flowcept.sh > "$RUN_DIR/flowcept.out" 2>&1 &
 FC=$!
 until grep -q 'consumer alive' "$RUN_DIR/flowcept.out"; do
     kill -0 "$FC" 2>/dev/null || { echo "consumer failed to start"; cat "$RUN_DIR/flowcept.out"; exit 1; }
@@ -100,7 +94,7 @@ until grep -q 'Export now' "$RUN_DIR/flowcept.out"; do
     sleep 1
 done
 EVENTS="$RUN_DIR/events.jsonl"
-"$PY" server/export_jsonl.py 127.0.0.1 darshan_stream > "$EVENTS" 2> "$RUN_DIR/export.count"
+"$PY" Client/export_jsonl.py 127.0.0.1 darshan_stream > "$EVENTS" 2> "$RUN_DIR/export.count"
 kill "$FC" 2>/dev/null || true; wait "$FC" 2>/dev/null || true
 
 # --- 6. verify events were saved -------------------------------------------

@@ -5,6 +5,13 @@
 # environment. Edit versions here; install/setup.sh reads them. See
 # install/README.md (and the top-level README for the manual setup).
 
+# ---- which cluster this checkout targets --------------------------------------
+# Single source of truth for the profile. Set to `polaris` or `lcrc` and every
+# script (env.sh, job.sh, check-deps.sh, install/setup.sh) follows. Leave blank
+# to auto-detect from the host. Precedence: an explicit `--polaris`/`--lcrc` flag
+# or $DARSHAN_MOFKA_PROFILE overrides this; this overrides host auto-detection.
+cluster: polaris
+
 # ---- where things get created (RELATIVE to repo root, which is on eagle) -------
 # These are names only; the scripts prefix them with the detected repo root.
 layout:

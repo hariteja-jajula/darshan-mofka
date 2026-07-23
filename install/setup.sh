@@ -25,22 +25,14 @@ cd "$REPO_ROOT"
 SPACK_DIR="$(layout_path spack_dir)"
 MONGO_ENV="$(layout_path mongo_env_dir)"
 VENV="$(layout_path venv_dir)"
-PROFILE="${DARSHAN_MOFKA_PROFILE:-${DARSHAN_MOFKA_ENV:-}}"
-if [[ -z "$PROFILE" ]]; then
-    if [[ -d /gpfs/fs1/soft/improv ]] || hostname 2>/dev/null | grep -qi 'ilogin\|improv'; then
-        PROFILE=lcrc
-    else
-        PROFILE=polaris
-    fi
-fi
-case "$PROFILE" in polaris|lcrc) ;; *) die "unknown profile '$PROFILE' (use polaris or lcrc)" ;; esac
-ENV_ARG="--$PROFILE"
 
 # ---- 0. preflight (fail fast on missing system deps) -------------------------
+# env.sh resolves the profile (arg > $DARSHAN_MOFKA_PROFILE > config.yaml > host).
 say "preflight"
-say "profile: $PROFILE"
 # shellcheck disable=SC1091
-source "$REPO_ROOT/server/env.sh" "$ENV_ARG" || die "could not source server/env.sh $ENV_ARG"
+source "$REPO_ROOT/server/env.sh" || die "could not source server/env.sh"
+PROFILE="$DARSHAN_MOFKA_PROFILE"; ENV_ARG="--$PROFILE"
+say "profile: $PROFILE"
 if command -v module >/dev/null 2>&1 && ! command -v cc >/dev/null 2>&1; then
     module swap PrgEnv-nvidia PrgEnv-gnu >/dev/null 2>&1 || module load PrgEnv-gnu >/dev/null 2>&1 || true
 fi
