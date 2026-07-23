@@ -45,7 +45,7 @@ rm -f "$SHUTDOWN_FLAG"
 echo "=== [flowcept-capture] topic=$TOPIC db=$MONGO_DB run_dir=$RUN_DIR ==="
 
 # --- preflight -------------------------------------------------------------
-[[ -s "$MOFKA_GROUP" ]] || { echo "[fc] FAIL: no mofka group file at $MOFKA_GROUP -- run server/start-server.sh first"; exit 1; }
+[[ -s "$MOFKA_GROUP" ]] || { echo "[fc] FAIL: no mofka group file at $MOFKA_GROUP -- run server/start_server.sh first"; exit 1; }
 [[ -n "$MONGOD" && -x "$MONGOD" ]] || { echo "[fc] FAIL: mongod not found on PATH; load MongoDB or set MONGOD=/path/to/mongod"; exit 1; }
 "$PY" -c "import flowcept.cli" 2>/dev/null || { echo "[fc] FAIL: flowcept.cli not importable -- did you 'git submodule update --init --recursive' and pip-install deps/flowcept?"; exit 1; }
 "$PY" -c "import pymongo" 2>/dev/null || { echo "[fc] FAIL: pymongo not importable"; exit 1; }

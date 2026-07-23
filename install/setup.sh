@@ -57,8 +57,8 @@ if [[ "$PROFILE" == polaris ]]; then
     ((${#missing[@]})) && die "missing external paths required by server/spack/spack.yaml: ${missing[*]}"
     say "compiler and spack externals present"
 else
-    command -v bedrock >/dev/null 2>&1 || die "bedrock not found after server/env.sh $ENV_ARG"
-    [[ -n "${MOFKA_SPACK_VIEW:-}" && -d "$MOFKA_SPACK_VIEW" ]] || die "MOFKA_SPACK_VIEW not set after server/env.sh $ENV_ARG"
+    command -v bedrock >/dev/null 2>&1 || die "bedrock not found after env/server.sh $ENV_ARG"
+    [[ -n "${MOFKA_SPACK_VIEW:-}" && -d "$MOFKA_SPACK_VIEW" ]] || die "MOFKA_SPACK_VIEW not set after env/server.sh $ENV_ARG"
     say "compiler and LCRC Mofka stack present"
 fi
 
@@ -135,7 +135,7 @@ fi
 
 # ---- 4. python venv (>=3.11) + consumer deps ---------------------------------
 # shellcheck disable=SC1091
-source "$REPO_ROOT/server/env.sh" "$ENV_ARG" 2>/dev/null || true
+source "$REPO_ROOT/env/server.sh" "$ENV_ARG" 2>/dev/null || true
 REQS="$REPO_ROOT/$(cfg python.requirements)"
 pick_python() {
     local c; for c in "${PY:-}" python3.14 python3.13 python3.12 python3.11 python3; do
@@ -163,7 +163,9 @@ say "pip install consumer deps + flowcept"
 # refresh env so the freshly built view + venv are picked up
 export MONGOD="$MONGO_ENV/bin/mongod"
 # shellcheck disable=SC1091
-source "$REPO_ROOT/server/env.sh" "$ENV_ARG"
+source "$REPO_ROOT/env/server.sh" "$ENV_ARG"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/env/workload.sh" "$ENV_ARG"
 module unload darshan 2>/dev/null || true
 export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 

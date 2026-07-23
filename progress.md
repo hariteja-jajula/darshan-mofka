@@ -122,24 +122,32 @@ overhead runs. Always request the SMALLEST walltime that fits.
                      overhead csv
 
 ## Phase status (update in place)
-- [x] P0  Setup: branch, plan, budget table, verify env + baseline e2e passes (DONE)
-- [~] P1  Restructure skeleton (IN PROGRESS): env/ Database/ Client/ workloads/{mpi,python-ml}/
-        results/ created; git mv done for mpi + Client + server scripts. TODO:
-        Database/ mongod move, per-dir READMEs, delete old server/env*.sh shims.
-- [x] P2  env/ split DONE + vetted: env/{_profile,common,lcrc,polaris,server,workload}.sh.
-        Dropped C++ pin (proven unneeded). Both entry points tested on LCRC.
-        NOTE: config_server.yaml / config_workload.yaml NOT yet written - deferred
-        until P3/P6/P7 show exactly what needs to vary (avoid speculative YAML parser).
-- [ ] P3  server/ minimal (~3 files), config-driven
-- [ ] P4  Database/ mongod download instructions + script
-- [ ] P5  Client/ flowcept consumer wiring
-- [ ] P6  build.sh minimal + auto-install
-- [ ] P7  job.sh full e2e + reconstruct + compare + pydarshan HTML in named dirs
-- [ ] P8  Workloads e2e: c, mpi, dlio, python-ml all PASS (root-cause failures)
-- [ ] P9  Overhead analysis (baseline vs mofka, 3 reps, C + python-ml)
-- [ ] P10 LOC/file reduction; vet every darshan line (log reasons below)
-- [ ] P11 Reproducibility: pin flowcept SHA, drop/doc ~/mofka_tests, clean, verify
-- [ ] P12 Final: README overviews + schema doc, EVALUATION.md refresh, push, budget
+## RUN 2 (branch feature/overnight-lcrc, 2026-07-23) -- see running log at bottom.
+- [x] P0  Setup + baseline e2e passes (DONE)
+- [x] P1  Restructure skeleton DONE: Database/ + get_mongod.sh, per-dir READMEs,
+        old server/env*.sh shims + jobs/job.sh deleted (new path e2e-verified first).
+- [x] P2  env/ split DONE. CORRECTION: the C++ runtime pin was NOT unneeded -- it
+        broke the consumer on a COMPUTE node (GLIBCXX_3.4.32). Restored as
+        cxx_runtime_pin() in env/common.sh, derived from $CXX (module), not a
+        hardcoded .so. Called at end of env/server.sh + env/workload.sh.
+- [x] P3  server/ minimal DONE: start_server.sh/stop_server.sh on env/server.sh;
+        knobs env-driven (MOFKA_PROTOCOL/TOPIC/PARTITION_TYPE). No YAML parser (LOC).
+- [x] P4  Database/ DONE: get_mongod.sh (tarball fallback) + README; env resolves it.
+- [x] P5  Client/ DONE: capture_flowcept.sh on ENV_ROOT + Client/ template; README.
+- [x] P6  build.sh DONE: auto-sources env/workload.sh when DIASPORA_C unset.
+- [x] P7  job.sh DONE + E2E VERIFIED (job 7669510, VERDICT: PASS): new env, new
+        paths, workload selection (c|mpi|dlio|python-ml), results/<wl>_<ts>/ with
+        events.jsonl/partial+native.darshan/compare.txt/summary/pydarshan HTML.
+        Added submit.sh (PBS wrapper). C smoke PASS.
+- [~] P8  Workloads: c PASS. mpi/dlio/python-ml -- e2e runs pending.
+- [~] P9  Overhead + multi-node config study (docs/MOFKA_NOTES.md grounds it) -- pending.
+- [ ] P10 LOC/file reduction; vet darshan lines; reduce single-use vars (user ask).
+- [~] P11 flowcept SHA pinned (branch tracking removed). spack-lcrc spec + from-scratch
+        build in progress (see below). ~/mofka_tests still fallback until build lands.
+- [ ] P12 Docs: schema doc, README overviews, REPRODUCE.md, EVALUATION.md refresh.
+- [ ] P13 From-scratch stack build (login node, /home/hjajula/repro-fromscratch) -- running.
+- [ ] P14 Humanify code comments + READMEs (plain sentences for people) -- user ask.
+- [ ] FINAL Detailed morning report + independent evaluation sub-agent -- user ask.
 
 ## darshan line-vetting log (reasons for every added/kept line in darshan/)
 (Fill during P10. Format: file:lines -> reason it must exist / why it can't be removed.)
