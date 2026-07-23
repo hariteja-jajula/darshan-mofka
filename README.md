@@ -1,184 +1,100 @@
 # darshan-mofka
 
-Stream Darshan runtime I/O events into a Mofka topic.
+Stream Darshan's I/O events out of a running job, live, into Mofka.
 
-The connector emits JSON metadata events from the Darshan runtime to Mofka;
-FlowCept drains the topic into MongoDB. If the job exits before Darshan writes
-its final log, a partial `.darshan` log can be reconstructed from the captured
-stream.
+## Why
 
-## What it does
+Darshan writes its log file once, at the very end of a job. If the job crashes or
+is killed first, that log is never written and you lose all the I/O profiling for
+the run.
 
-- Streams POSIX, STDIO, and MPI-IO events to Mofka, including STDIO close and
-  `MPI_File_close` events.
-- Reconstructs a partial Darshan log from the stream; reconstructed OPENS match
-  the native Darshan log, aside from overlay/unknown-label differences.
-- Builds from source with pinned versions and no hardcoded paths/accounts.
+This project adds a small connector to Darshan that sends each I/O event to a
+[Mofka](https://mofka.readthedocs.io) message stream as it happens. A consumer
+saves those events, and a tool rebuilds a partial `.darshan` log from them. So even
+if the job dies early, you still have the I/O record up to the moment it stopped.
 
-## Check your setup
+## How it fits together
 
-Darshan devs on Polaris usually already have most of the stack. Before setting up
-anything, see what you have and what's missing (this downloads nothing):
+```text
+  your program
+      │  (Darshan intercepts open/read/write/close)
+      ▼
+  Darshan + Mofka connector ──► Mofka broker ──► FlowCept consumer ──► MongoDB
+                                                                          │
+                                                          export to JSON  ▼
+                                                                    events.jsonl
+                                                                          │
+                                                        darshan-mofka-reconstruct
+                                                                          ▼
+                                                                  partial .darshan log
+```
+
+The connector is the part that would go upstream into Darshan. Everything else in
+this repo is the harness that runs it and proves it works.
+
+## Quick start
+
+First see what you already have (this downloads nothing):
 
 ```bash
 bash check-deps.sh
 ```
 
-It prints a PRESENT/MISSING row per dependency and exits 0 when everything is
-ready (then just `bash job.sh`). For anything MISSING, follow the section below.
-
-## Dependencies & Environments
-
-Four layers. Each is declared in-repo; get them however you prefer (reuse an
-existing build, module load, spack, conda, pip). Then `source server/env.sh
---polaris` so the demo finds them.
-
-**1. Native HPC stack (spack view): Bedrock, Mochi, Mofka, Darshan-util deps.**
-Spec: [`server/spack/spack.yaml`](server/spack/spack.yaml) (+ `spack.lock` for the
-exact pinned concretization). See [`server/spack/README.md`](server/spack/README.md).
+If anything is missing, build it all from source with one command (run on a login
+node; it has internet):
 
 ```bash
-git clone --depth=1 https://github.com/spack/spack.git
-. spack/share/spack/setup-env.sh
-spack env create flowcept-mofka-polaris server/spack/spack.yaml
-spack env activate flowcept-mofka-polaris
-# edit spack.yaml: point develop.mofka.path at a mofka checkout, then:
-spack install -j4            # -j4: Polaris login-node fork cap
-export MOFKA_SPACK_VIEW="$(spack location --env flowcept-mofka-polaris)/.spack-env/view"
+DARSHAN_MOFKA_PROFILE=lcrc bash install/setup.sh
 ```
 
-**2. Python consumer venv (>= 3.11).** Deps: [`server/requirements.txt`](server/requirements.txt)
-(exact pins in `server/requirements.lock.txt`).
+Then run the whole pipeline on a compute node and check the result:
 
 ```bash
-python -m venv ../envs/flowcept-py314
-source ../envs/flowcept-py314/bin/activate
-pip install -r server/requirements.txt
-pip install -e flowcept/          # the flowcept submodule
+PBS_ACCOUNT=<your_project> bash submit.sh
 ```
 
-(mochi.mofka / pydiaspora come from the spack view, not pip.)
+See [REPRODUCE.md](REPRODUCE.md) for the exact expected output.
 
-**3. MongoDB server (`mongod`) — FlowCept's sink.** External dep, not pip. Reuse
-one on a shared filesystem, or install a standalone tarball / conda `mongodb`,
-then `export MONGOD=/path/to/mongod`. On Polaris it must live on **eagle** (compute
-nodes can't see `$HOME`). Details in [`docs/RUNBOOK.md`](docs/RUNBOOK.md) step 6.
-
-**4. Project source (submodules) + the Darshan fork.**
-
-```bash
-git submodule update --init --recursive
-source server/env.sh --polaris
-DIASPORA_C="$DIASPORA_C" ./build.sh      # builds darshan/install (the Mofka connector)
-```
-
-## Run
-
-Once `check-deps.sh` is green, run end to end on a **compute node** (the Mofka
-broker's fabric transport doesn't come up on login nodes):
-
-```bash
-qsub -I -q debug -A <project> -l select=1 -l walltime=01:00:00 -l filesystems=home:eagle
-cd <repo>
-bash job.sh
-```
-
-See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for the full manual pipeline (broker +
-consumer + workload + export), and [`workloads/README.md`](workloads/README.md)
-for the individual workloads.
-
-## Automated setup (backup)
-
-If you'd rather not set up the layers by hand, one script builds everything from
-pinned versions (spack stack + mongod + venv + darshan). Run it where you have
-internet (on Polaris: a login node):
-
-```bash
-bash install/setup.sh    # spack install + mongod + venv + build diaspora/darshan/workload
-bash job.sh              # COMPUTE node: run + verify
-```
-
-`install/config.yaml` holds the versions/names it uses; the exact spack
-concretization is pinned in `server/spack/spack.lock`. See
-[`install/README.md`](install/README.md).
-
-## Verifying the result
-
-After a run, `$EVENTS_JSONL` holds the streamed events. A compact summary:
-
-```bash
-"$PY" - "$EVENTS_JSONL" <<'PY'
-import json, sys
-from collections import Counter
-mods, ops = Counter(), Counter()
-for line in open(sys.argv[1]):
-    ev = json.loads(line)
-    mods[ev.get('module')] += 1
-    ops[ev.get('op')] += 1
-print('modules:', dict(mods))
-print('ops:', dict(ops))
-PY
-```
-
-Reconstruct a partial log from the stream and validate it with Darshan's parser:
-
-```bash
-./darshan/install/bin/darshan-mofka-reconstruct "$EVENTS_JSONL" /tmp/job_partial.darshan
-./darshan/install/bin/darshan-parser --show-incomplete /tmp/job_partial.darshan | head -80
-```
-
-## Repository layout
+## What's in here
 
 ```text
-darshan-mofka/
-├── darshan/              Darshan submodule with the Mofka connector
-├── diaspora-stream-api/  Diaspora C API submodule used by the connector
-├── flowcept/             FlowCept submodule (the live consumer)
-├── build.sh              build the vendored darshan fork into darshan/install
-├── check-deps.sh         read-only dependency check (skip setup you already have)
-├── job.sh                one-shot end-to-end demo on a compute node
-├── install/              automated setup backup (config-driven, pinned)
-├── docs/RUNBOOK.md       full manual pipeline + Polaris workarounds
-├── server/               environment, broker start/stop, capture consumer
-│   ├── spack/            Spack spec to rebuild the Mofka/FlowCept stack
-│   └── requirements.txt  Python deps for the FlowCept consumer venv
-└── workloads/            demo workloads (see workloads/README.md)
-    ├── c/                POSIX/STDIO smoke + MPI-IO tests
-    └── dlio/             optional DLIO benchmark
+darshan/              Darshan, with the Mofka connector (the part bound for upstream)
+diaspora-stream-api/  the C streaming API the connector uses
+flowcept/             the consumer that drains the stream into MongoDB
+env/                  environment setup (server side and workload side)
+server/               start/stop the Mofka broker
+Client/               the FlowCept consumer and the export-to-JSON tool
+Database/             get a local MongoDB
+workloads/            programs to exercise the connector (C, MPI-IO, DLIO, python-ml)
+install/              one-command setup that builds everything
+job.sh                run the full pipeline once, on a compute node
+submit.sh             send job.sh to PBS
+results/              one folder per run, with all its output
 ```
 
-The old overhead-study jobs, result scripts, slides, and extra workloads were cut
-from this branch. Recover them from the study branch if needed.
+Each folder has its own README with the details.
 
-## What gets streamed
+## The knobs the connector reads
 
-The connector streams JSON metadata events only, not application file contents.
+Set these in the environment of the Darshan-instrumented program:
 
-The `rec_hex` field, when present, is a hex-encoded copy of Darshan's internal
-module record at the time of the event. It is profiling/record state, not user
-file data.
-
-## Connector environment variables
-
-Variables read by the Darshan-instrumented process:
-
-| Variable | Meaning | Default |
+| Variable | What it does | Default |
 |---|---|---|
-| `DARSHAN_MOFKA_ENABLE` | Enables Mofka streaming | off |
-| `DARSHAN_MOFKA_GROUP_FILE` | Mofka group file, usually `server/mofka.json` | required |
-| `DARSHAN_MOFKA_TOPIC` | Topic name | `darshan` |
+| `DARSHAN_MOFKA_ENABLE` | Turn streaming on | off |
+| `DARSHAN_MOFKA_GROUP_FILE` | The broker's group file (`server/mofka.json`) | required |
+| `DARSHAN_MOFKA_TOPIC` | Topic to send to | `darshan` |
 | `DARSHAN_MOFKA_BATCH` | Producer batch size; `0` means adaptive | `0` |
 | `DARSHAN_MOFKA_MAX_BATCHES` | Max pending batches; `0` means library default | `0` |
-| `DARSHAN_MOFKA_FLUSH_MS` | Finalize flush timeout in milliseconds | `5000` |
-| `DARSHAN_MOFKA_TIMING` | Print per-call timing lines | off |
-| `DARSHAN_MOFKA_VERBOSE` | Print connector setup details | off |
+| `DARSHAN_MOFKA_FLUSH_MS` | How long to wait for a final flush, in ms | `5000` |
+| `DARSHAN_MOFKA_TIMING` | Print per-call timing | off |
 
-There are no per-module enable variables on this branch. If Darshan calls the
-Mofka send hook, the connector forwards the event.
+When Darshan is built without the connector (`--with-diaspora-c` absent), none of
+this exists and Darshan behaves exactly as it does upstream.
 
-## More documentation
+## More docs
 
-- [`server/spack/README.md`](server/spack/README.md) -- rebuild the native Mofka/FlowCept stack.
-- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) -- full manual pipeline, one-shot block, troubleshooting, Polaris workarounds.
-- [`workloads/README.md`](workloads/README.md) -- how to run each workload type (C smoke, MPI-IO, DLIO).
-- [`install/README.md`](install/README.md) -- automated setup backup (phased, pinned).
+- [REPRODUCE.md](REPRODUCE.md) — build from scratch and check the result.
+- [docs/SCHEMA.md](docs/SCHEMA.md) — what one streamed event contains.
+- [docs/MOFKA_NOTES.md](docs/MOFKA_NOTES.md) — how the Mofka pieces are configured, from the official docs.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — the full manual pipeline, step by step.
+- [workloads/README.md](workloads/README.md) — the test workloads.
