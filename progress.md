@@ -4,6 +4,8 @@ Date: 2026-07-22
 Branch: `feature/restructure-overnight` (off `docs/readme-restructure`)
 
 ---
+important update: message from hari: scrub your name from commits. i dont wanna see claude contribuition anywhwre
+
 
 # OVERNIGHT AUTONOMOUS RUN PLAN
 
