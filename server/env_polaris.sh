@@ -28,12 +28,15 @@ if command -v module >/dev/null 2>&1; then
     module load gcc-native/13.2 >/dev/null 2>&1 || true
 fi
 
-# gcc-runtime/python/cmake from whichever spack tree we selected above (version-
-# agnostic globs so a repo-local from-scratch build, which may pin a different
-# gcc/python, resolves the same as the legacy tree).
-_GCC13_LIB="$(compgen -G "$_SPACK_OPT/*/gcc-runtime-*/lib" | sort | tail -1)"
-_PYLIB="$(compgen -G "$_SPACK_OPT/*/python-3.1*/lib" | sort | tail -1)"
-_CMAKE_BIN="$(compgen -G "$_SPACK_OPT/*/cmake-*/bin/cmake" | head -1)"
+# gcc-runtime/python/cmake from whichever spack tree we selected above. Use
+# `sort -V` (version sort) NOT plain sort: lexically "gcc-runtime-8.5.0" sorts
+# AFTER "12"/"13" (because '8' > '1'), so a plain sort|tail picks the ANCIENT gcc-8
+# runtime, whose libstdc++ lacks GLIBCXX_3.4.32 and breaks diaspora-c at load time.
+# Prefer the newest, and only take it if it actually has a modern GLIBCXX.
+_GCC13_LIB="$(compgen -G "$_SPACK_OPT/*/gcc-runtime-1*/lib" 2>/dev/null | sort -V | tail -1)"
+[[ -z "$_GCC13_LIB" ]] && _GCC13_LIB="$(compgen -G "$_SPACK_OPT/*/gcc-runtime-*/lib" 2>/dev/null | sort -V | tail -1)"
+_PYLIB="$(compgen -G "$_SPACK_OPT/*/python-3.1*/lib" 2>/dev/null | sort -V | tail -1)"
+_CMAKE_BIN="$(compgen -G "$_SPACK_OPT/*/cmake-*/bin/cmake" 2>/dev/null | sort -V | tail -1)"
 
 export MOFKA_SPACK_VIEW="${MOFKA_SPACK_VIEW:-$_VIEW}"
 
