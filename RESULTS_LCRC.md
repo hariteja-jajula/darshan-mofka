@@ -1,0 +1,72 @@
+# LCRC/Improv multi-node + overhead results (2026-07-23)
+
+All runs on Improv, account `radix-io`, `debug` queue. No SSH anywhere: remote ranks
+are launched through the PBS **`tm`** launcher of the **system** Open MPI
+(`--with-tm=/opt/pbs`, a spack `external`/`buildable:false` in `server/spack/spack-lcrc.yaml`).
+Transport = **tcp** (Improv compute nodes expose no usable OFI `verbs` domain).
+
+## 1. Multi-node broker — PASS  (`study/mn_broker_lcrc.pbs`, job 7670184)
+
+2 `bedrock` daemons, one per node, form a single flock group via `bootstrap:mpi`:
+
+```
+launch used tm, no ssh
+GO: 2-member MPI(tm) group across 2 nodes
+bedrock @ ofi+tcp://10.128.16.14  +  ofi+tcp://10.128.16.15
+13 sends → tasks total=13 darshan=13 modules={POSIX:4, STDIO:9} → INGEST: PASS
+```
+
+## 2. Server/workload split — PASS  (`study/mn_split_lcrc.pbs`, job 7670194)
+
+Broker + FlowCept consumer + mongod on the **server node**; the Darshan workload on a
+**separate node**, streaming over tcp:
+
+```
+server=i001, workload=i002 (WORKLOAD_HOST=i002), no ssh
+INGEST: PASS
+avg_push (REMOTE, workload→server over tcp) = 38.7 µs   (vs ~37 µs co-located)
+```
+
+**Topology conclusion.** Remote per-push (~38.7 µs) ≈ co-located (~37 µs): the connector
+uses Adaptive batching (fire-and-batch, non-blocking), so the producer does **not** block
+on the network. A broker on every node buys ~nothing for the hot path here, so the simpler
+**1 server + N workload nodes** deployment is the right default; scale to multiple brokers
+only when a single broker's ingest becomes the bottleneck at large N.
+
+## 3. Connector overhead study — complete  (`study/overhead_split_lcrc.pbs`, job 7670201)
+
+Split topology (server=i001, workload=i002, tcp). 3 configs × 3 reps × 2 workloads.
+`noinstr` = no Darshan; `baseline` = Darshan on, Mofka off; `mofka` = Darshan + streaming.
+
+| workload | config | walltime mean ± sd (s) | connector adds |
+|---|---|---|---|
+| c | noinstr | 0.023 ± 0.011 | |
+| c | baseline | 0.087 ± 0.003 | |
+| c | mofka | 0.514 ± 0.090 | **+0.427 s (+490 % vs baseline)** |
+| python-ml | noinstr | 0.093 ± 0.058 | |
+| python-ml | baseline | 0.124 ± 0.001 | |
+| python-ml | mofka | 0.485 ± 0.263 | **+0.361 s (+290 % vs baseline)** |
+
+Connector's own phases (from `DARSHAN_MOFKA_TIMING`, mofka runs):
+
+| workload | init | finalize (drain) | avg push |
+|---|---|---|---|
+| c | ~65 ms | ~361 ms | **42.9 µs** |
+| python-ml | ~60 ms | ~289 ms | **42.8 µs** |
+
+**Read honestly.** The per-event cost is **tiny and stable (~43 µs/push)**, independent of
+workload and of node placement. The large percentages are **fixed one-time costs**: broker
+connect/init (~60–65 ms) and the finalize drain of pending batches at shutdown
+(~290–360 ms, high variance — e.g. python-ml finalize ranged 56–655 ms across reps). These
+workloads finish in <0.13 s, so the fixed tax dwarfs them; on a real long-running HPC job
+those costs amortize to ~0 and only the ~43 µs/push matters. The finalize variance is the
+open robustness item (a longer/acknowledged final flush or a dropped-record counter).
+
+## Reproduce
+
+```bash
+R=/home/hjajula/repro-fromscratch/darshan-mofka   # a checkout on the system-external-openmpi stack
+qsub -A radix-io -v REPO=$R study/mn_broker_lcrc.pbs       # multi-node broker + ingest
+qsub -A radix-io -v REPO=$R study/mn_split_lcrc.pbs        # server/workload split + ingest
+qsub -A radix-io -v REPO=$R study/overhead_split_lcrc.pbs  # full overhead study
+```
