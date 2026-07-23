@@ -1,19 +1,18 @@
 #!/bin/bash
-# study/multinode.sh -- how a multi-node Mofka broker and its partitioning affect
+# study/multinode.sh -- how a multi-node Mofka broker and partition count affect
 # the connector. Grounded in docs/MOFKA_NOTES.md.
 #
-# It brings up a multi-node broker with flock's MPI bootstrap (one bedrock per
-# node, all forming one group), then runs the C workload through the connector
-# against different partition layouts and records send count + walltime for each:
+# Part A: bring up a broker spanning all allocated nodes using flock's MPI
+#         bootstrap (one bedrock per node forming one group), then stream the C
+#         workload against 1 partition vs one-partition-per-node.
+# Part B: on a single-node broker, stream against 1 / 2 / 4 memory partitions to
+#         see the effect of partition count.
 #
-#   1 partition  on rank 0 only
-#   N partitions one per server (round-robin across nodes)
+# All measurements record send count, walltime, and the connector's average push
+# time. Everything is best-effort with fallbacks; output goes to
+# results/multinode_<ts>/ (multinode.csv + summary.txt + logs).
 #
-# It also compares partition TYPE (memory vs on-disk default) on a single server.
-# Everything is best-effort with fallbacks; results + notes go to
-# results/multinode_<ts>/.
-#
-# Run in a PBS job with select>=2 (needs >=2 nodes for the multi-node broker).
+# Run in a PBS job with select>=2 for Part A.  bash study/multinode.sh
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 # shellcheck disable=SC1091
@@ -22,107 +21,102 @@ module unload darshan 2>/dev/null || true
 export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"; RES="$ROOT/results/multinode_$STAMP"; mkdir -p "$RES"
-LOG="$RES/multinode.log"; CSV="$RES/multinode.csv"; SUM="$RES/summary.txt"
-exec > >(tee -a "$LOG") 2>&1
-echo "workload,scenario,servers,partitions,ptype,sends,walltime_s,avg_push_us" > "$CSV"
+CSV="$RES/multinode.csv"; SUM="$RES/summary.txt"
+echo "scenario,servers,partitions,ptype,sends,walltime_s,avg_push_us" > "$CSV"
 
-NODES=$(sort -u "${PBS_NODEFILE:-/dev/null}" 2>/dev/null | wc -l); NODES=${NODES:-1}
-echo "=== multinode study: $NODES node(s) in allocation, protocol=$MOFKA_PROTOCOL ==="
+NODES=$(sort -u "${PBS_NODEFILE:-/dev/null}" 2>/dev/null | wc -l); [ "$NODES" -ge 1 ] || NODES=1
+echo "=== multinode study: $NODES node(s), protocol=$MOFKA_PROTOCOL, results -> $RES ==="
 [ -e "$(darshan_lib)" ] || ./build.sh
 DLIB="$(darshan_lib)"
 "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
 
-SRV="$RES/broker"; mkdir -p "$SRV"
 BROKER_PID=""
-stop_broker() { [ -n "$BROKER_PID" ] && kill "$BROKER_PID" 2>/dev/null; pkill -f 'bedrock ' 2>/dev/null; sleep 2; BROKER_PID=""; }
+stop_broker() { [ -n "$BROKER_PID" ] && kill "$BROKER_PID" 2>/dev/null; pkill -f 'bedrock ' 2>/dev/null; sleep 3; BROKER_PID=""; }
 trap stop_broker EXIT
 
-# run the C workload through the connector against the current mofka.json; echo "sends walltime avgpush"
+# run the C workload through the connector; echo "sends walltime avgpush" (never fails)
 run_producer() {
-    local tag="$1" group="$2" out="$RES/$tag"; mkdir -p "$out"
-    local t0 t1; t0=$(date +%s.%N)
+    local tag="${1:-run}" group="${2:-}" out="$RES/${1:-run}"
+    mkdir -p "$out"
+    local t0 t1 wall sends avgpush
+    t0=$(date +%s.%N)
     env DARSHAN_ENABLE_NONMPI=1 DARSHAN_LOGPATH="$DARSHAN_LOGPATH" LD_PRELOAD="$DLIB" \
         DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_GROUP_FILE="$group" DARSHAN_MOFKA_TOPIC=darshan \
         DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 DARSHAN_MOFKA_TIMING=1 \
         ./workloads/c/mofka_forward_smoke "$out/data" > "$out/out" 2> "$out/err" || true
     t1=$(date +%s.%N)
-    local wall sends avgpush
     wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.4f", b-a}')
-    sends=$(grep -c 'darshan-mofka\[timing\] send' "$out/err" 2>/dev/null || echo 0)
-    avgpush=$(awk '/darshan-mofka\[timing\] send/{s+=$(NF-1);n++} END{if(n)printf "%.3f",s/n}' "$out/err")
-    echo "$sends $wall $avgpush"
+    sends=$(grep -c 'darshan-mofka\[timing\] send' "$out/err" 2>/dev/null); sends=${sends:-0}
+    avgpush=$(awk '/darshan-mofka\[timing\] send/{s+=$(NF-1);n++} END{if(n)printf "%.3f",s/n; else printf "NA"}' "$out/err")
+    printf '%s %s %s\n' "$sends" "$wall" "$avgpush"
 }
+mctl() { "$PY" -m mochi.mofka.mofkactl "$@"; }
 
-# -------- Part A: multi-node broker via flock MPI bootstrap --------
+# ---------------- Part A: multi-node broker via flock MPI bootstrap ----------------
 if [ "$NODES" -ge 2 ]; then
     echo "=== Part A: MPI-bootstrap broker across $NODES nodes ==="
-    cp server/bedrock-config-mpi.json "$SRV/bedrock-config-mpi.json"
+    SRV="$RES/mpi_broker"; mkdir -p "$SRV"
+    cp server/bedrock-config-mpi.json "$SRV/"
+    sort -u "$PBS_NODEFILE" > "$SRV/hostfile"
+    # openmpi here spawns remote ranks over ssh; relax host-key checking so it can.
+    export OMPI_MCA_plm_rsh_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
     ( cd "$SRV" && rm -f mofka.json
-      mpirun -n "$NODES" --map-by ppr:1:node bedrock "$MOFKA_PROTOCOL" \
-          -c bedrock-config-mpi.json -v info > "$SRV/bedrock.mpi.log" 2>&1 ) &
+      mpirun --hostfile hostfile -np "$NODES" --map-by ppr:1:node \
+             bedrock "$MOFKA_PROTOCOL" -c bedrock-config-mpi.json -v info > "$SRV/bedrock.mpi.log" 2>&1 ) &
     BROKER_PID=$!
-    for _ in $(seq 1 60); do [ -f "$SRV/mofka.json" ] && break; sleep 1; done
+    for _ in $(seq 1 90); do [ -f "$SRV/mofka.json" ] && break; sleep 1; done
     if [ -f "$SRV/mofka.json" ]; then
         GROUP="$SRV/mofka.json"
         members=$(grep -oE '://[0-9.]+:[0-9]+' "$GROUP" | sort -u | wc -l)
-        echo "  group formed with $members member address(es); mofka.json ready"
-        # scenario A1: 1 partition on rank 0
-        "$PY" -m mochi.mofka.mofkactl topic create darshan --groupfile "$GROUP" 2>/dev/null || true
-        "$PY" -m mochi.mofka.mofkactl partition add darshan --rank 0 --type memory --groupfile "$GROUP" 2>/dev/null || true
-        read s w a <<<"$(run_producer A1_1part "$GROUP")"
-        echo "c,mpi_broker_1part,$members,1,memory,$s,$w,$a" >> "$CSV"
-        echo "  A1 (1 partition):  sends=$s walltime=${w}s avg_push=${a}us"
-        # scenario A2: add a partition on each remaining rank (one per server)
+        echo "  group formed: $members member address(es)"
+        mctl topic create darshan --groupfile "$GROUP" 2>/dev/null || true
+        mctl partition add darshan --rank 0 --type memory --groupfile "$GROUP" 2>/dev/null || true
+        read -r s w a <<<"$(run_producer A_1part "$GROUP")"
+        echo "mpi_broker,$members,1,memory,$s,$w,$a" >> "$CSV"
+        echo "  1 partition (rank 0):     sends=$s walltime=${w}s avg_push=${a}us"
         np=1
         for r in $(seq 1 $((NODES-1))); do
-            "$PY" -m mochi.mofka.mofkactl partition add darshan --rank "$r" --type memory --groupfile "$GROUP" 2>/dev/null \
-                && np=$((np+1)) || echo "  (could not add partition on rank $r)"
+            mctl partition add darshan --rank "$r" --type memory --groupfile "$GROUP" 2>/dev/null && np=$((np+1)) || true
         done
-        read s w a <<<"$(run_producer A2_Npart "$GROUP")"
-        echo "c,mpi_broker_Npart,$members,$np,memory,$s,$w,$a" >> "$CSV"
-        echo "  A2 ($np partitions): sends=$s walltime=${w}s avg_push=${a}us"
+        read -r s w a <<<"$(run_producer A_Npart "$GROUP")"
+        echo "mpi_broker,$members,$np,memory,$s,$w,$a" >> "$CSV"
+        echo "  $np partitions (1/node):    sends=$s walltime=${w}s avg_push=${a}us"
     else
-        echo "  MPI broker did not produce mofka.json in 60s -- see $SRV/bedrock.mpi.log"
-        echo "c,mpi_broker_FAILED,$NODES,,,,," >> "$CSV"
+        echo "  MPI broker did not form a group in 90s -- see $SRV/bedrock.mpi.log"
+        echo "  (head of log:)"; head -8 "$SRV/bedrock.mpi.log" 2>/dev/null | sed 's/^/    /'
+        echo "mpi_broker_FAILED,$NODES,,,,," >> "$CSV"
     fi
     stop_broker
 else
-    echo "=== Part A skipped: only $NODES node in allocation (need >=2) ==="
+    echo "=== Part A skipped: only 1 node in allocation (need >=2) ==="
 fi
 
-# -------- Part B: partition TYPE on a single-node broker (memory vs default) --------
-echo "=== Part B: partition type memory vs default (single broker) ==="
-for ptype in memory default; do
-    rm -rf "$SRV/single"; mkdir -p "$SRV/single"
-    cp server/bedrock-config.json "$SRV/single/bedrock-config.json"
-    ( cd "$SRV/single" && rm -f mofka.json
+# ---------------- Part B: partition count on a single-node broker ----------------
+echo "=== Part B: 1 / 2 / 4 memory partitions on a single broker ==="
+for npart in 1 2 4; do
+    SRV="$RES/single_${npart}p"; mkdir -p "$SRV"
+    cp server/bedrock-config.json "$SRV/"
+    ( cd "$SRV" && rm -f mofka.json
       bedrock "$MOFKA_PROTOCOL" -c bedrock-config.json -v info > bedrock.log 2>&1 ) &
     BROKER_PID=$!
-    for _ in $(seq 1 60); do [ -f "$SRV/single/mofka.json" ] && break; sleep 1; done
-    if [ ! -f "$SRV/single/mofka.json" ]; then echo "  broker failed for $ptype"; stop_broker; continue; fi
-    GROUP="$SRV/single/mofka.json"
-    "$PY" -m mochi.mofka.mofkactl topic create darshan --groupfile "$GROUP" 2>/dev/null || true
-    if [ "$ptype" = default ]; then
-        "$PY" -m mochi.mofka.mofkactl partition add darshan --rank 0 --type default --abt-io io_controller --groupfile "$GROUP" 2>/dev/null \
-          || { echo "  default partition add failed (needs abt-io); skipping"; stop_broker; continue; }
-    else
-        "$PY" -m mochi.mofka.mofkactl partition add darshan --rank 0 --type memory --groupfile "$GROUP" 2>/dev/null || true
-    fi
-    read s w a <<<"$(run_producer "B_$ptype" "$GROUP")"
-    echo "c,single_broker,1,1,$ptype,$s,$w,$a" >> "$CSV"
-    echo "  $ptype: sends=$s walltime=${w}s avg_push=${a}us"
+    for _ in $(seq 1 60); do [ -f "$SRV/mofka.json" ] && break; sleep 1; done
+    if [ ! -f "$SRV/mofka.json" ]; then echo "  broker failed for ${npart}p"; stop_broker; continue; fi
+    GROUP="$SRV/mofka.json"
+    mctl topic create darshan --groupfile "$GROUP" 2>/dev/null || true
+    for _ in $(seq 1 "$npart"); do mctl partition add darshan --rank 0 --type memory --groupfile "$GROUP" 2>/dev/null || true; done
+    read -r s w a <<<"$(run_producer "B_${npart}p" "$GROUP")"
+    echo "single_broker,1,$npart,memory,$s,$w,$a" >> "$CSV"
+    echo "  ${npart} partition(s): sends=$s walltime=${w}s avg_push=${a}us"
     stop_broker
 done
 
-# -------- summary --------
 {
-  echo "Multi-node / partition study"
-  echo "Allocation nodes: $NODES   protocol: $MOFKA_PROTOCOL"
+  echo "Multi-node / partition study    nodes=$NODES  protocol=$MOFKA_PROTOCOL"
   echo
-  column -t -s, "$CSV"
+  column -t -s, "$CSV" 2>/dev/null || cat "$CSV"
   echo
-  echo "Reading it: compare avg_push_us and walltime_s across scenarios."
-  echo "  Part A shows the effect of spreading partitions across nodes (MPI broker)."
-  echo "  Part B shows in-RAM (memory) vs on-disk (default) partition cost."
+  echo "Part A: effect of spreading partitions across nodes (real multi-node broker)."
+  echo "Part B: effect of partition count on one server (they share the server's pools,"
+  echo "        so the docs expect little change until partitions live on separate servers)."
 } | tee "$SUM"
 echo "=== multinode study done -> $RES ==="
