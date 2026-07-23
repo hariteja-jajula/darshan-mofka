@@ -126,9 +126,13 @@ case "$WORKLOAD" in
         "$MPICC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile failed"
         # env (incl. LD_PRELOAD) goes INSIDE mpiexec so only the ranks are
         # instrumented -- preloading the launcher (prterun) crashes it.
-        # This node's Yama ptrace setting blocks cross-memory-attach shared memory,
-        # which crashes openmpi's shared-memory transport at MPI_Init under the
-        # Darshan preload. Force TCP-only (no shared memory) and oversubscribe one node.
+        # KNOWN ISSUE on this cluster: running the MPI-IO workload with libdarshan
+        # LD_PRELOADed segfaults inside openmpi's MPI_Init (tried: default, vader
+        # single-copy off, and tcp-only below -- all still crash). The connector's
+        # MPIIO path is the same DARSHAN_MOFKA_SEND mechanism proven by POSIX/STDIO;
+        # the crash is a Darshan-MPI + openmpi + preload interaction. The proper fix
+        # is Darshan's supported MPI mode: LINK libdarshan into the binary (darshan's
+        # compiler wrapper) instead of preloading. --oversubscribe fits 4 ranks/node.
         mpiexec --oversubscribe -n 4 --mca pml ob1 --mca btl tcp,self \
             env DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
             DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 DARSHAN_MOFKA_TIMING=1 \
