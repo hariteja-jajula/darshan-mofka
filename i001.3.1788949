@@ -1,0 +1,21 @@
+[:1788949] *** Process received signal ***
+[:1788949] Signal: Segmentation fault (11)
+[:1788949] Signal code:  (-6)
+[:1788949] Failing at address: 0x5c11001b4c15
+[:1788949] [ 0] /lib64/libpthread.so.0(+0x12990)[0x155554be1990]
+[:1788949] [ 1] /gpfs/fs1/soft/improv/software/custom-built/openmpi/4.1.8/gcc/13.2/lib/libopen-pal.so.40(opal_free_list_grow_st+0x183)[0x1555544442a3]
+[:1788949] [ 2] /gpfs/fs1/home/hjajula/mofka_tests/spack/opt/spack/linux-zen/openmpi-5.0.10-rax2tedngr2vsvjmb2dxr2jwfsysdu3z/lib/libopen-pal.so.80(mca_btl_tcp_component_init+0x7e)[0x155552f7531e]
+[:1788949] [ 3] /gpfs/fs1/soft/improv/software/custom-built/openmpi/4.1.8/gcc/13.2/lib/libopen-pal.so.40(mca_btl_base_select+0x102)[0x155554495a42]
+[:1788949] [ 4] /gpfs/fs1/home/hjajula/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view/lib/libmpi.so.40(mca_bml_r2_component_init+0x12)[0x155554ed58a2]
+[:1788949] [ 5] /gpfs/fs1/home/hjajula/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view/lib/libmpi.so.40(mca_bml_base_init+0x94)[0x155554ed3994]
+[:1788949] [ 6] /gpfs/fs1/home/hjajula/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view/lib/libmpi.so.40(+0x2137df)[0x1555550027df]
+[:1788949] [ 7] /gpfs/fs1/home/hjajula/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view/lib/libmpi.so.40(mca_pml_base_select+0x1be)[0x155554ffed3e]
+[:1788949] [ 8] /gpfs/fs1/home/hjajula/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view/lib/libmpi.so.40(+0x8d1ae)[0x155554e7c1ae]
+[:1788949] [ 9] /gpfs/fs1/home/hjajula/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view/lib/libmpi.so.40(ompi_mpi_instance_init+0x6e)[0x155554e7c94e]
+[:1788949] [10] /gpfs/fs1/home/hjajula/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view/lib/libmpi.so.40(ompi_mpi_init+0x6c)[0x155554e73e8c]
+[:1788949] [11] /gpfs/fs1/home/hjajula/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view/lib/libmpi.so.40(MPI_Init+0x4b)[0x155554ea70bb]
+[:1788949] [12] /home/hjajula/darshan-mofka-flowcept/darshan-mofka/darshan/install-mpi/lib/libdarshan.so(PMPI_Init+0x42)[0x155555500bc2]
+[:1788949] [13] ./workloads/mpi/mofka_forward_mpiio[0x40116c]
+[:1788949] [14] /lib64/libc.so.6(__libc_start_main+0xe5)[0x1555548327e5]
+[:1788949] [15] ./workloads/mpi/mofka_forward_mpiio[0x4013de]
+[:1788949] *** End of error message ***
