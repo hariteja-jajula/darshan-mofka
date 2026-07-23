@@ -1,9 +1,10 @@
 #!/bin/bash
 # env/polaris.sh -- ALCF Polaris profile. Sourced by env/server.sh and
 # env/workload.sh AFTER env/common.sh. Sets MOFKA_SPACK_VIEW, MOFKA_PYTHONPATH,
-# MOFKA_PROTOCOL/BEDROCK_PROTOCOL, cmake on PATH, and libfabric via its module.
+# MOFKA_PROTOCOL_DEFAULT/BEDROCK_PROTOCOL, cmake on PATH, and libfabric via its module.
 
-export MOFKA_PROTOCOL="${MOFKA_PROTOCOL:-ofi+tcp}"
+# Profile default transport, used when server.config says protocol: auto.
+export MOFKA_PROTOCOL_DEFAULT="${MOFKA_PROTOCOL_DEFAULT:-ofi+tcp}"
 export BEDROCK_PROTOCOL="${BEDROCK_PROTOCOL:-ofi+tcp}"
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 

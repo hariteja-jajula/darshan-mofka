@@ -2,9 +2,11 @@
 # env/lcrc.sh -- LCRC/Improv profile. Locates the native Mofka/Bedrock spack
 # stack (needed by BOTH server and workload) and a new-enough cmake.
 # Sourced by env/server.sh and env/workload.sh after env/common.sh.
-# Sets: MOFKA_SPACK_VIEW, MOFKA_PROTOCOL, cmake on PATH.
+# Sets: MOFKA_SPACK_VIEW, MOFKA_PROTOCOL_DEFAULT, cmake on PATH.
 
-export MOFKA_PROTOCOL="${MOFKA_PROTOCOL:-verbs}"
+# Profile default transport, used when server.config says protocol: auto (a run knob
+# now lives in server/server.config, not here). An explicit MOFKA_PROTOCOL still wins.
+export MOFKA_PROTOCOL_DEFAULT="${MOFKA_PROTOCOL_DEFAULT:-verbs}"
 
 # Native Mofka/Bedrock stack (spack env). Prefer the repo-local install/_spack
 # built by install/setup.sh (env 'flowcept-mofka-lcrc'); else the legacy
