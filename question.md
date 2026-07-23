@@ -1,5 +1,33 @@
 # Multi-node broker on LCRC/Improv — how Polaris did it, why SSH is the wrong path, and what I need from you
 
+## ✅ RESOLVED (2026-07-23) — multi-node broker works with NO SSH
+
+Proven end to end on 2 nodes (job 7670184), matching Polaris Arm 3:
+
+```
+nodes=2  protocol=tcp  tm launcher present: 1
+launch used tm, no ssh
+GO: 2-member MPI(tm) group across 2 nodes
+Bedrock daemon now running at ofi+tcp://10.128.16.15:37329
+Bedrock daemon now running at ofi+tcp://10.128.16.14:37749
+sends: 13 → tasks total=13 darshan=13 modules={POSIX:4, STDIO:9} → INGEST: PASS
+```
+
+The fix, exactly as you said (system MPI, not spack MPI):
+1. Link the stack against the **system Open MPI** (spack `external`, `buildable:false` —
+   already in `server/spack/spack-lcrc.yaml`). That build is `--with-tm=/opt/pbs`, so its
+   `mpirun` launches remote ranks via the PBS **`tm`** launcher — **no ssh**. The
+   `~/mofka_tests` stack's spack-BUILT openmpi is `--without-tm` (ssh-only) — that was the
+   real blocker, compounded by the OMPI4-vs-OMPI5 `plm_rsh`→`plm_ssh` rename.
+2. Launch: `mpirun --map-by ppr:1:node -n N bedrock tcp -c bedrock-config-mpi.json`.
+3. Transport = **tcp** (Improv compute nodes expose no usable OFI `verbs` domain).
+
+Reproduce: `qsub -A radix-io -v REPO=/home/hjajula/repro-fromscratch/darshan-mofka study/mn_broker_lcrc.pbs`.
+SSH is not used and the test key I had created has been removed. Everything below is the
+original investigation that led here, kept for the record.
+
+---
+
 ## TL;DR
 
 The Polaris multi-node broker worked because it launched with a **scheduler-integrated
