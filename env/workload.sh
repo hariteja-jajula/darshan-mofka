@@ -17,6 +17,9 @@ env_prepend LD_LIBRARY_PATH "$MOFKA_SPACK_VIEW/lib"
 env_prepend PATH "$MOFKA_SPACK_VIEW/bin"
 export DARSHAN_LOGPATH="${DARSHAN_LOGPATH:-$ENV_ROOT/darshan-logs}"
 
+# pin the module compiler's libstdc++ ahead of the view's older gcc-runtime
+cxx_runtime_pin
+
 darshan_lib() {
     local d="$DARSHAN_PREFIX/lib"
     [[ -e "$d/libdarshan.so" ]] && { printf '%s\n' "$d/libdarshan.so"; return; }
