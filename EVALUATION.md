@@ -287,17 +287,23 @@ polish.
 
 ## 8. Pass/fail gates (binary; must all be true to claim "done")
 
-- [ ] **G0 (size)** Connector diff is minimal: no vendored deps, no dead files;
-      reconstruct tool trimmed or split; harness LOC/file count reduced from the
-      current 37 files / ~3652 LOC baseline.
-- [ ] **G1** Clean clone on LCRC, no `~/mofka_tests` reference, reaches `INGEST: PASS`.
-- [ ] **G2** `flowcept` submodule pinned to a SHA.
-- [ ] **G3** `--with-diaspora-c` absent => Darshan builds and behaves identically (proven).
-- [ ] **G4** No committed generated artifacts; no author `$HOME`/account in any tracked file.
-- [ ] **G5** Every README opens with a what/where/produces overview.
-- [ ] **G6** Event JSON schema documented once and referenced by producer, consumer, reconstruct.
-- [ ] **G7** Connector docs (rst + ChangeLog) at LDMS parity.
-- [ ] **G8** No silent data loss (buffer overflow / record-size mismatch reported, not swallowed).
+- [~] **G0 (size)** No vendored deps confirmed (uthash is the tree's shared copy);
+      old shims + jobs/job.sh deleted; single-use vars inlined; connector micro-
+      reductions vetted + listed for the PR. reconstruct split still a PR follow-up.
+- [x] **G1** Clean clone on LCRC reaches `INGEST: PASS` **without `~/mofka_tests`**:
+      the full stack builds from source (server/spack/spack-lcrc.yaml) and the P13
+      e2e on that from-scratch clone returned `VERDICT: PASS`.
+- [x] **G2** `flowcept` submodule pinned to a SHA (branch tracking removed).
+- [~] **G3** Non-Mofka build is byte-identical by construction (HAVE_MOFKA-gated);
+      not re-demonstrated as a build this run -- keep for the PR.
+- [x] **G4** No author `$HOME`/account in tracked files (spec sanitized to a
+      placeholder + system externals); generated artifacts gitignored.
+- [x] **G5** Every sub-README opens with a plain what/where/produces overview.
+- [x] **G6** Event JSON schema documented once in docs/SCHEMA.md, referenced by
+      producer + consumer + reconstruct.
+- [ ] **G7** Connector docs (rst + ChangeLog) at LDMS parity -- PR follow-up.
+- [ ] **G8** No silent data loss (rec_hex/JSON buffer overflow) -- PR follow-up,
+      documented with exact locations in the P10 report + progress.md.
 
 ---
 
