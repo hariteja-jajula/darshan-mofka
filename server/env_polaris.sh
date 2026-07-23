@@ -3,21 +3,36 @@
 # Source through: source server/env.sh --polaris
 
 _PROJECT_ROOT="$(cd "$ROOT/.." && pwd)"
-_SPACK_OPT="$_PROJECT_ROOT/../mofka_tests/spack/opt/spack"
-_SPACK_ENVS="$_PROJECT_ROOT/../mofka_tests/spack/var/spack/environments"
+# Spack tree: prefer the repo-local one built by install/setup.sh (so a from-scratch
+# clone is self-contained), else the legacy transferred ~/mofka_tests/spack.
+if [[ -d "$ROOT/install/_spack/opt/spack" ]]; then
+    _SPACK_ROOT="$ROOT/install/_spack"
+else
+    _SPACK_ROOT="$_PROJECT_ROOT/../mofka_tests/spack"
+fi
+_SPACK_OPT="$_SPACK_ROOT/opt/spack"
+_SPACK_ENVS="$_SPACK_ROOT/var/spack/environments"
 # Prefer the Polaris-native view (reproducible from server/spack/); fall back to the
 # older Improv-transferred view. Override either by exporting MOFKA_SPACK_VIEW.
 _VIEW="$_SPACK_ENVS/flowcept-mofka-polaris/.spack-env/view"
 [[ -d "$_VIEW" ]] || _VIEW="$_SPACK_ENVS/flowcept-mofka/.spack-env/view"
-_VENV="$_PROJECT_ROOT/../envs/flowcept-py314"
+# venv: prefer the repo-local one built by setup.sh, else the legacy sibling.
+if [[ -x "$ROOT/install/_venv/bin/python3" ]]; then
+    _VENV="$ROOT/install/_venv"
+else
+    _VENV="$_PROJECT_ROOT/../envs/flowcept-py314"
+fi
 
 if command -v module >/dev/null 2>&1; then
     module swap PrgEnv-nvidia PrgEnv-gnu >/dev/null 2>&1 || module load PrgEnv-gnu >/dev/null 2>&1 || true
     module load gcc-native/13.2 >/dev/null 2>&1 || true
 fi
 
-_GCC13_LIB="$(compgen -G "$_SPACK_OPT/*/gcc-runtime-13.2.0*/lib" | head -1)"
-_PYLIB="$(compgen -G "$_SPACK_OPT/*/python-3.14.5-*/lib" | head -1)"
+# gcc-runtime/python/cmake from whichever spack tree we selected above (version-
+# agnostic globs so a repo-local from-scratch build, which may pin a different
+# gcc/python, resolves the same as the legacy tree).
+_GCC13_LIB="$(compgen -G "$_SPACK_OPT/*/gcc-runtime-*/lib" | sort | tail -1)"
+_PYLIB="$(compgen -G "$_SPACK_OPT/*/python-3.1*/lib" | sort | tail -1)"
 _CMAKE_BIN="$(compgen -G "$_SPACK_OPT/*/cmake-*/bin/cmake" | head -1)"
 
 export MOFKA_SPACK_VIEW="${MOFKA_SPACK_VIEW:-$_VIEW}"
