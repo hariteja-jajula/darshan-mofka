@@ -5,9 +5,23 @@ Branch: `feature/restructure-overnight` (off `docs/readme-restructure`)
 
 ---
 
-# OVERNIGHT AUTONOMOUS RUN PLAN (DO NOT COMMIT THIS FILE)
+# OVERNIGHT AUTONOMOUS RUN PLAN
 
-This file is git-ignored. It is the durable plan + state for an unattended
+## CROSS-AGENT SYNC NOTE (read first)
+Two agents may be working: one on LCRC/Improv (branch feature/restructure-overnight),
+one on Polaris. This file + EVALUATION.md are NOW COMMITTED so both agents share
+state via GitHub. Coordination rules:
+- Pull before you work: `git fetch && git rebase origin/feature/restructure-overnight`
+  (or merge). Commit + push after every phase so the other agent sees it.
+- LCRC agent has completed P0, P2 (env split). See phase status + running log below.
+- Profile is auto-detected (lcrc vs polaris); the env/ split works on both. Polaris
+  agent: verify env/polaris.sh + env/server.sh + env/workload.sh on a Polaris node
+  (I could only test lcrc). Fix polaris specifics if needed, log here.
+- If both edit the same file, smaller diff wins; prefer deleting/merging to adding.
+- Node budget is SHARED: 30 NH total across both agents (+10 cap). Log every job in
+  the budget table with which cluster.
+
+(Originally this file was git-ignored; now committed for cross-agent sync.) It is the durable plan + state for an unattended
 overnight run. If a session resumes, READ THIS FIRST, find the first phase not
 marked DONE, and continue. NEVER stop until all phases are DONE or the node-hour
 budget is exhausted. If a workload/e2e step fails, DO NOT skip it: root-cause it,
