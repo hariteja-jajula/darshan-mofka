@@ -39,6 +39,9 @@ If you change a field in one place, change it in all three.
 
 | Field | Meaning |
 |---|---|
+| `type` | Always `"task"` — marks the message as a FlowCept task document. |
+| `activity_id` | `"darshan_<MODULE>"`, e.g. `darshan_POSIX`. |
+| `task_id` | A unique id for this event: `darshan-<record_id>-<pid>-<seq>`. |
 | `schema`, `schema_version` | Marks this as a Darshan runtime event, format version 2. |
 | `module` | Which Darshan module the event came from: `POSIX`, `STDIO`, `MPIIO`, etc. |
 | `op` | The operation: `open`, `read`, `write`, or `close`. |
@@ -67,10 +70,11 @@ of the event. It is profiling state (counters and timers), not the contents of y
 files. The reconstruct tool decodes it to rebuild a partial `.darshan` log that
 Darshan's own tools can read.
 
-## Fields FlowCept adds
+## What FlowCept adds
 
-When FlowCept stores an event in MongoDB it keeps every field above and adds a few
-of its own, such as `task_id`, `activity_id`, and `registered_at`, and it stores
+The connector emits every field above, including `type`, `activity_id`, and
+`task_id`. When FlowCept stores an event in MongoDB it keeps all of them and adds a
+little of its own bookkeeping (for example `registered_at`), and it stores
 `started_at` / `ended_at` as datetimes rather than plain numbers. The reconstruct
-tool ignores the extra fields, so events exported from MongoDB and events captured
-straight off the topic both reconstruct the same way.
+tool ignores the extra bookkeeping, so events exported from MongoDB and events
+captured straight off the topic both reconstruct the same way.

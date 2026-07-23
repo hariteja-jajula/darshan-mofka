@@ -3,9 +3,10 @@
 Evaluation framework for darshan-mofka: reproducibility, compactness/reviewability,
 clarity, instruction quality, and upstream-merge readiness.
 
-This file is intentionally git-ignored (see `.gitignore`). It is a working
-scorecard for the author and for anyone deciding whether the Darshan connector is
-ready to PR upstream and whether this harness is a reproducible artifact.
+This file is committed on the working branch (so both agents share it); it is not
+meant to ship in the eventual upstream PR. It is a working scorecard for deciding
+whether the Darshan connector is ready to PR upstream and whether this harness is a
+reproducible artifact.
 
 Date: 2026-07-22
 

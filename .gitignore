@@ -7,9 +7,18 @@
 /diaspora-stream-api/_build*/
 /diaspora-stream-api/install/
 
-# demo build outputs
+# demo build outputs (compiled workload binaries)
 /workloads/c/mofka_forward_smoke
 /workloads/c/mofka_forward_mpiio
+/workloads/mpi/mofka_forward_mpiio
+
+# PBS job stdout/stderr copied into results/ by submit.sh
+/results/*.OU
+/results/*.o[0-9]*
+
+# OpenMPI per-rank crash backtraces (host.rank.pid) dropped in the repo root
+/i[0-9]*.[0-9]*.[0-9]*
+/*.btr
 
 # broker runtime outputs
 /server/mofka.json
