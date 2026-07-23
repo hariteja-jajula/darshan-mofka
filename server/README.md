@@ -14,17 +14,25 @@ and creates the topic the connector publishes to. It writes a small file called
 `mofka.json` that holds the broker's address. Both the producer (the workload) and
 the consumer (FlowCept) read that file to find the broker.
 
-## Settings
+## Settings: `server.config`
 
-You can change a few things with environment variables. The defaults are fine for
-the demo, so you rarely need these:
+The broker's knobs live in one file — [`server.config`](server.config) — read by
+`start_server.sh` and `job.sh`. The defaults are fine for the demo:
 
-- `MOFKA_PROTOCOL` — the network transport (defaults to the right one for your
-  cluster, e.g. `verbs` on LCRC).
-- `MOFKA_TOPIC` — the topic name (default `darshan`).
-- `MOFKA_PARTITION_TYPE` — how the topic stores data (default `memory`).
-- `MOFKA_SERVER_DIR` — where to put `mofka.json` and the broker's log (default:
-  this directory). `job.sh` sets this per run so parallel jobs don't collide.
+```yaml
+protocol: auto         # auto = the right transport for your cluster (verbs on LCRC); or verbs | tcp | ofi+tcp
+topic: darshan         # topic name (the ONE place it's set: producer, broker, consumer all use it)
+partitions: 1          # how many partitions to create
+partition_type: memory # how the topic stores data (memory | default)
+mongo:
+  db: darshan_stream
+  port: 27017
+```
+
+Override any key for a single run with an env var of the same uppercase name
+(`PARTITIONS=4 bash server/start_server.sh`). `MOFKA_SERVER_DIR` still sets where
+`mofka.json` and the broker log go (default: this directory); `job.sh` sets it per
+run so parallel jobs don't collide.
 
 ## Files
 

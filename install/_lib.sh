@@ -71,44 +71,11 @@ except Exception:
 PY
 }
 
-# cfg <dotted.key> -- read a scalar from config.yaml. Uses python (always present
-# via the spack view or system) so we need no yaml CLI dependency.
-cfg() {
-    local key="$1"
-    "${PY:-python3}" - "$CONFIG" "$key" <<'PY'
-import sys
-try:
-    import yaml
-    with open(sys.argv[1]) as f:
-        data = yaml.safe_load(f)
-    cur = data
-    for part in sys.argv[2].split('.'):
-        cur = cur[part]
-    if isinstance(cur, str):
-        cur = cur.split(' #', 1)[0].strip()
-    print(cur)
-except ImportError:
-    # minimal fallback parser (nested key: value) if pyyaml isn't importable yet
-    import re
-    want = sys.argv[2].split('.')
-    depth_keys, out = [], None
-    with open(sys.argv[1]) as f:
-        for line in f:
-            if not line.strip() or line.lstrip().startswith('#'):
-                continue
-            indent = len(line) - len(line.lstrip())
-            m = re.match(r'\s*([\w_]+):\s*(.*)', line)
-            if not m:
-                continue
-            k, v = m.group(1), m.group(2).split(' #', 1)[0].strip().strip('"').strip("'")
-            level = indent // 2
-            depth_keys = depth_keys[:level] + [k]
-            if depth_keys == want and v:
-                out = v
-                break
-    print(out if out is not None else "")
-PY
-}
+# cfg <dotted.key> -- read a scalar from config.yaml (the shared reader lives in
+# lib/config.sh; here we just bind it to this installer's $CONFIG).
+# shellcheck disable=SC1091
+source "$REPO_ROOT/lib/config.sh"
+cfg() { cfg_get "$CONFIG" "$1"; }
 
 # absolute path for a layout.* name (relative to repo root, which is on eagle)
 layout_path() { printf '%s/%s\n' "$REPO_ROOT" "$(cfg "layout.$1")"; }
