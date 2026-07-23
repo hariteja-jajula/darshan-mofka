@@ -82,12 +82,26 @@ PALS `mpiexec --ppn 1` from `server/start_server.mpi.sh`.
 
 **This proves the full Darshan→Mofka→FlowCept→Mongo pipeline works end-to-end
 against a genuine multi-node MPI-bootstrapped broker on Polaris**, not just the
-single-node `bootstrap:self` case. A 2-node *throughput* sweep (loop workload
-across both ranks' partitions) is the natural next step, now that the broker is
-proven — deferred to a debug-scaling session.
+single-node `bootstrap:self` case.
+
+## Arm 3b — 2-node MPI throughput sweep (job 7274785, debug-scaling, PASS)
+
+Loop workload (1×50000×4096, ~50k events) against the 2-node MPI broker, 3 reps:
+
+| layout | members | median thr | p50 | p99 |
+|---|---|---|---|---|
+| 1 partition | 2 nodes | 18,992 evt/s | 21.9 µs | 87.4 µs |
+| 2 partitions (one per rank) | 2 nodes | 19,037 evt/s | 22.6 µs | 88.7 µs |
+
+**Finding: throughput is flat (~19k evt/s) across the 2-node broker too**, and
+marginally below the single-node ~20k (cross-node network hop). Same conclusion as
+the single-node partition curve: a *single* producer is enqueue-bound on its own
+send path, so spreading partitions across a second node does not raise aggregate
+throughput. Raising throughput would require *multiple concurrent producers* (many
+ranks each with the connector), which is the real next experiment.
 
 ## Budget
 
-All jobs charged `radix-io`, debug queue. Total real node-hours tonight ≈ 0.1
-(e2e ×2 + overhead + partsweep on 1 node, MPI proof on 2 nodes — each 19–56 s).
-Far under the ~100 NH available.
+All jobs charged `radix-io` (debug + debug-scaling). Total real node-hours ≈ 0.15
+(e2e ×2 + overhead + partition curve + from-scratch e2e on 1 node; MPI proof +
+throughput sweep on 2 nodes — each 19s–3min). Far under the ~100 NH available.
