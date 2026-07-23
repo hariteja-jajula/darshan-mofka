@@ -57,7 +57,7 @@ run_one() {
     t1=$(date +%s.%N)
     local wall; wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.4f", b-a}')
     local sends init fin avgpush
-    sends=$(grep -c 'darshan-mofka\[timing\] send' "$err" 2>/dev/null || echo 0)
+    sends=$(grep -c 'darshan-mofka\[timing\] send' "$err" 2>/dev/null); sends=${sends:-0}
     init=$(awk '/darshan-mofka\[timing\] initialize/{print $(NF-1)}' "$err" | tail -1); init="${init:-}"
     fin=$(awk '/darshan-mofka\[timing\] finalize/{print $(NF-1)}' "$err" | tail -1); fin="${fin:-}"
     avgpush=$(awk '/darshan-mofka\[timing\] send/{s+=$(NF-1); n++} END{if(n)printf "%.3f", s/n}' "$err")
