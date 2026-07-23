@@ -30,3 +30,20 @@ env_prepend() {  # env_prepend VAR DIR  (dedups; no-op if DIR missing)
     [[ -n "$dir" && -d "$dir" ]] || return 0
     case ":${!var:-}:" in *:"$dir":*) ;; *) export "$var=$dir${!var:+:${!var}}" ;; esac
 }
+
+# cxx_runtime_pin -- make the module compiler's libstdc++ (with the newer GLIBCXX)
+# win over any older gcc-runtime the Spack view puts on the library path. The path
+# is asked of the compiler ($CXX -print-file-name), never hardcoded, so it stays a
+# module-derived location. Call this AFTER the profile has activated its Spack env.
+#
+# Why it's needed: on a compute node the Spack view can place gcc-runtime-8.5's
+# libstdc++ ahead of gcc-13's, so pydiaspora (built against gcc-13) fails to load
+# with "GLIBCXX_3.4.32 not found". Pinning gcc-13's runtime first fixes it. (An
+# earlier cleanup dropped this after testing only on a login node, where the order
+# happened to be fine; the compute node proved it is still required.)
+cxx_runtime_pin() {
+    local lib; lib="$("${CXX:-g++}" -print-file-name=libstdc++.so.6 2>/dev/null)"
+    [[ -e "$lib" ]] || return 0
+    env_prepend LD_LIBRARY_PATH "$(dirname "$lib")"
+    case ":${LD_PRELOAD:-}:" in *:"$lib":*) ;; *) export LD_PRELOAD="$lib${LD_PRELOAD:+:$LD_PRELOAD}" ;; esac
+}

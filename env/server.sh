@@ -34,4 +34,7 @@ export MONGOD
 unset _m
 
 mofkactl() { "$PY" -m mochi.mofka.mofkactl "$@"; }
+
+# pin the module compiler's libstdc++ ahead of the view's older gcc-runtime
+cxx_runtime_pin
 unset _venv

@@ -1,0 +1,82 @@
+
+########## 1. environment (workload=c) ##########
+profile=lcrc  ROOT=/home/hjajula/darshan-mofka-flowcept/darshan-mofka
+MOFKA_SPACK_VIEW=/gpfs/fs1/home/hjajula/mofka_tests/spack/opt/spack/linux-zen3/mofka-main-avcbx7ph7tdk4xofebtrdxcotfmsxzib
+DIASPORA_C=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/diaspora-stream-api/install  DARSHAN_PREFIX=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/darshan/install
+CC=/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-x86_64/gcc-8.5.0/gcc-13.2.0-iyqxotb/bin/gcc  PY=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/install/_venv/bin/python3  MONGOD=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/_mongo_env/bin/mongod
+
+########## 2. build (SKIP_BUILD=1, using /home/hjajula/darshan-mofka-flowcept/darshan-mofka/darshan/install/lib/libdarshan.so) ##########
+
+########## 3. mongod ##########
+MONGOD=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/_mongo_env/bin/mongod  (db version v7.0.14)
+
+########## 4. fresh Mofka broker ##########
+starting bedrock (verbs) in /home/hjajula/darshan-mofka-flowcept/darshan-mofka/server ...
+mofka up: ofi+verbs;ofi_rxm://10.128.16.15:58984 | topic 'darshan' | groupfile /home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/mofka.json (pid 3628417)
+
+########## 5. FlowCept consumer  (results -> /home/hjajula/darshan-mofka-flowcept/darshan-mofka/results/c_20260723_003625) ##########
+=== [flowcept-capture] topic=darshan db=darshan_stream run_dir=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/_flowcept_run ===
+=== [fc] mongod (port 27017, dbpath /home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/_flowcept_run/mongo_data) ===
+[fc] mongod ready 2s
+[fc] FLOWCEPT_SETTINGS_PATH=/home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/_flowcept_run/flowcept_settings.yaml
+        enabled: false
+      enabled: false                    # flowcept instruments nothing; darshan is the producer
+      enabled: true
+      type: mofka
+      channel: darshan                 # MUST match the producer's DARSHAN_MOFKA_TOPIC
+      group_file: /home/hjajula/darshan-mofka-flowcept/darshan-mofka/server/mofka.json
+      same_as_kvdb: false
+    kv_db:
+      enabled: false                    # no Redis; the pinned fork null-guards this path
+      enabled: false
+      lmdb:
+        enabled: false
+      mongodb:
+        enabled: true
+        db: darshan_stream
+=== [fc] flowcept consumer (start-consumption-services) ===
+[fc] FAIL: consumer died on startup
+    Traceback (most recent call last):
+      File "<frozen runpy>", line 203, in _run_module_as_main
+      File "<frozen runpy>", line 88, in _run_code
+      File "/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka/flowcept/src/flowcept/cli.py", line 1151, in <module>
+        main()
+        ~~~~^^
+      File "/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka/flowcept/src/flowcept/cli.py", line 100, in wrapper
+        return func(*args, **kwargs)
+      File "/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka/flowcept/src/flowcept/cli.py", line 1143, in main
+        func(**kwargs)
+        ~~~~^^^^^^^^^^
+      File "/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka/flowcept/src/flowcept/cli.py", line 419, in start_consumption_services
+        Flowcept.start_consumption_services(
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+            bundle_exec_id=bundle_exec_id,
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            check_safe_stops=check_safe_stops,
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            consumers=consumers,
+            ^^^^^^^^^^^^^^^^^^^^
+        )
+        ^
+      File "/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka/flowcept/src/flowcept/flowcept_api/flowcept_controller.py", line 759, in start_consumption_services
+        doc_inserter = DocumentInserter(check_safe_stops=check_safe_stops, bundle_exec_id=bundle_exec_id)
+      File "/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka/flowcept/src/flowcept/flowceptor/consumers/document_inserter.py", line 81, in __init__
+        super().__init__()
+        ~~~~~~~~~~~~~~~~^^
+      File "/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka/flowcept/src/flowcept/flowceptor/consumers/base_consumer.py", line 36, in __init__
+        self._mq_dao = MQDao.build()
+                       ~~~~~~~~~~~^^
+      File "/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka/flowcept/src/flowcept/commons/daos/mq_dao/mq_dao_base.py", line 54, in build
+        from flowcept.commons.daos.mq_dao.mq_dao_mofka import MQDaoMofka
+      File "/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka/flowcept/src/flowcept/commons/daos/mq_dao/mq_dao_mofka.py", line 8, in <module>
+        import mochi.mofka.client as mofka
+      File "/gpfs/fs1/home/hjajula/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view/lib/python3.14/site-packages/mochi/mofka/client.py", line 1, in <module>
+        import pydiaspora_stream_api
+    ImportError: /gpfs/fs1/home/hjajula/mofka_tests/spack/opt/spack/linux-zen/gcc-runtime-8.5.0-fxjcrxz66ev62og2egyw72tw7ug27xe5/lib/libstdc++.so.6: version `GLIBCXX_3.4.32' not found (required by /gpfs/fs1/home/hjajula/mofka_tests/spack/var/spack/environments/flowcept-mofka/.spack-env/view/lib/python3.14/site-packages/pydiaspora_stream_api.cpython-314-x86_64-linux-gnu.so)
+    Starting consumption services...
+      bundle_exec_id: None
+      check_safe_stops: False
+      consumers: []
+[fc] cleanup
+
+FATAL: consumer failed to start
