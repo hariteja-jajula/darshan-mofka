@@ -15,7 +15,7 @@
 #   mofka     Darshan + Mofka streaming (adds the connector cost)
 # Records walltime + the connector's own init / finalize / avg-push (DARSHAN_MOFKA_TIMING).
 # Writes results/overhead_split_<jobid>/overhead.csv + summary.txt.
-# Scale the C workload via the two knobs (workloads/c/workload.conf, or env override):
+# Scale the C workload via the two knobs (workloads/workload.config, or env override):
 #   default   -> EPOCHS=8      (quick)      results dir ..._8ep
 #   sustained -> EPOCHS=50000  (steady push) results dir ..._50000ep
 #   qsub -A radix-io -v REPO=/home/hjajula/repro-fromscratch/darshan-mofka study/overhead_split_lcrc.pbs
@@ -25,7 +25,7 @@ REPO="${REPO:-/home/hjajula/repro-fromscratch/darshan-mofka}"
 cd "$REPO"
 export MOFKA_PROTOCOL="${MOFKA_PROTOCOL:-tcp}"
 REPS="${REPS:-3}"
-# C workload knobs (see workloads/c/workload.conf). Forwarded to the workload node;
+# C workload knobs (see workloads/workload.config). Forwarded to the workload node;
 # when both are set the event count is exact. Used here to size the run (default vs
 # sustained) and to label the results folder.
 export EPOCHS="${EPOCHS:-8}" CHECKPOINT_EVERY="${CHECKPOINT_EVERY:-4}"
