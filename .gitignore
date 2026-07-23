@@ -46,3 +46,6 @@ core
 core.*
 __pycache__/
 
+
+# overnight driver logs
+/overnight_logs/
