@@ -7,4 +7,3 @@
 [submodule "flowcept"]
 	path = flowcept
 	url = https://github.com/hariteja-jajula/flowcept.git
-	branch = experiment/f1-v2-unpack-batches
