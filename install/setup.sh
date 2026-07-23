@@ -75,19 +75,32 @@ if [[ "$PROFILE" == polaris ]]; then
     [[ -d "$MOFKA_DIR/.git" ]] || { say "clone mofka ($MOFKA_REF)"; git clone --branch "$MOFKA_REF" "$MOFKA_URL" "$MOFKA_DIR" || die "mofka clone failed"; }
 
     ENV_NAME="$(cfg layout.spack_env_name)"; ENV_SPEC="$REPO_ROOT/$(cfg spack.env_spec)"
+    ENV_SPEC_DIR="$(dirname "$ENV_SPEC")"   # holds spack.yaml AND the pinned spack.lock
     if [[ -f "$SPACK_DIR/var/spack/environments/$ENV_NAME/spack.yaml" ]]; then
         say "spack env '$ENV_NAME' exists -> reuse"
     else
-        say "create spack env '$ENV_NAME' from spec"
-        spack env create "$ENV_NAME" "$ENV_SPEC" || die "spack env create failed"
+        # Create from the spec DIRECTORY so spack picks up the committed spack.lock
+        # (the pinned, known-good concretization) instead of re-solving. Re-solving
+        # from scratch has produced broken deps on Polaris (e.g. mercury failing to
+        # find hwloc), so the lock is the reproducible path.
+        say "create spack env '$ENV_NAME' from spec dir (uses pinned spack.lock)"
+        spack env create "$ENV_NAME" "$ENV_SPEC_DIR" || die "spack env create failed"
     fi
     spack -e "$ENV_NAME" develop -p "$MOFKA_DIR" "mofka@$MOFKA_REF" 2>/dev/null || true
 
-    say "spack concretize"
-    spack -e "$ENV_NAME" concretize -f || die "spack concretize failed"
-
-    say "spack install (-j$JOBS)"
-    spack -e "$ENV_NAME" install -j"$JOBS" || die "spack install failed"
+    # Install from the lock. Only re-concretize if there is no lock or the locked
+    # install fails (e.g. the mofka develop path changed the hash).
+    if [[ -f "$SPACK_DIR/var/spack/environments/$ENV_NAME/spack.lock" ]]; then
+        say "spack install from pinned lock (-j$JOBS)"
+        spack -e "$ENV_NAME" install -j"$JOBS" && _installed=1 || _installed=0
+    else
+        _installed=0
+    fi
+    if [[ "$_installed" != 1 ]]; then
+        say "lock install unavailable/failed -> re-concretize + install (-j$JOBS)"
+        spack -e "$ENV_NAME" concretize -f || die "spack concretize failed"
+        spack -e "$ENV_NAME" install -j"$JOBS" || die "spack install failed"
+    fi
     MOFKA_SPACK_VIEW="$(spack location -e "$ENV_NAME")/.spack-env/view"
     export MOFKA_SPACK_VIEW
 else
