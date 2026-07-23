@@ -8,7 +8,7 @@
 # those docs and writes one compact JSON object per line, so the offline
 # reconstructor stays unchanged and DB-agnostic:
 #
-#     server/export_jsonl.py <mongo_host> <mongo_db> [--topic-schema darshan_runtime] \
+#     Client/export_jsonl.py <mongo_host> <mongo_db> [--workflow-id wf-<jobid>] \
 #         > events.jsonl
 #     ./darshan/install/bin/darshan-mofka-reconstruct events.jsonl job_partial.darshan
 #

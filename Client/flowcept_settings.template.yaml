@@ -1,7 +1,7 @@
 # flowcept_settings.template.yaml -- FlowCept ingest settings for the
 # Darshan -> Mofka -> FlowCept -> MongoDB "scale mode" of this demo.
 #
-# This is a TEMPLATE. server/capture_flowcept.sh renders it per-run into the run
+# This is a TEMPLATE. Client/capture_flowcept.sh renders it per-run into the run
 # dir, sed-substituting the placeholders below, because the mofka group_file is
 # created fresh by bedrock on each broker start and its absolute path is per-run.
 #
@@ -13,7 +13,7 @@
 #                     consumer subscribes to the wrong topic and lands 0 docs.
 #   __ENV_ID__      : sys_metadata environment id (host/run tag)
 #
-# Why these toggles (see server/INSTRUCTIONS.md for the full rationale):
+# Why these toggles:
 #  - mq.type=mofka + channel=__TOPIC__ : consume darshan's own topic. The DAO
 #    (mq_dao_mofka) opens this topic at import time.
 #  - kv_db.enabled=false : no Redis on HPC compute nodes. The pinned FlowCept

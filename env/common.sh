@@ -2,12 +2,6 @@
 # env/common.sh -- shared base for the server and workload envs.
 # Loads the compiler/MPI modules and provides env_prepend(). Sourced by
 # env/server.sh and env/workload.sh (not directly). Needs ENV_PROFILE set.
-#
-# NOTE: no libstdc++/LD_PRELOAD "pin" is needed. Verified on LCRC: `module load
-# gcc/13.2.0` + `spack env activate` put a gcc-13 libstdc++ (GLIBCXX_3.4.32) on
-# LD_LIBRARY_PATH via the spack view, and mochi.mofka + libdarshan.so resolve
-# correctly with modules alone. The old DARSHAN_MOFKA_CXX_RUNTIME_DIR / LD_PRELOAD
-# dance (and the "re-source after building diaspora" step) are therefore dropped.
 
 # lmod bootstrap (some PBS shells start without `module`)
 if ! command -v module >/dev/null 2>&1; then
@@ -31,16 +25,11 @@ env_prepend() {  # env_prepend VAR DIR  (dedups; no-op if DIR missing)
     case ":${!var:-}:" in *:"$dir":*) ;; *) export "$var=$dir${!var:+:${!var}}" ;; esac
 }
 
-# cxx_runtime_pin -- make the module compiler's libstdc++ (with the newer GLIBCXX)
-# win over any older gcc-runtime the Spack view puts on the library path. The path
-# is asked of the compiler ($CXX -print-file-name), never hardcoded, so it stays a
-# module-derived location. Call this AFTER the profile has activated its Spack env.
-#
-# Why it's needed: on a compute node the Spack view can place gcc-runtime-8.5's
-# libstdc++ ahead of gcc-13's, so pydiaspora (built against gcc-13) fails to load
-# with "GLIBCXX_3.4.32 not found". Pinning gcc-13's runtime first fixes it. (An
-# earlier cleanup dropped this after testing only on a login node, where the order
-# happened to be fine; the compute node proved it is still required.)
+# cxx_runtime_pin -- put the module compiler's libstdc++ ahead of the Spack view's.
+# On a compute node the view can place gcc-runtime-8.5's libstdc++ before gcc-13's, so
+# pydiaspora (built against gcc-13) fails with "GLIBCXX_3.4.32 not found". The path is
+# asked of the compiler ($CXX -print-file-name), never hardcoded. Call after the
+# profile has activated its Spack env.
 cxx_runtime_pin() {
     local lib; lib="$("${CXX:-g++}" -print-file-name=libstdc++.so.6 2>/dev/null)"
     [[ -e "$lib" ]] || return 0
