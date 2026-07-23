@@ -93,7 +93,16 @@ Track every job here. node-hours = nodes * walltime(hours).
 
 | job id | phase | nodes | walltime | node-hrs | cumulative | note |
 |---|---|---:|---:|---:|---:|---|
-| (none yet) | | | | | 0.0 | |
+| 7669492 | P7 e2e | 1 | 0:43 | 0.012 | 0.012 | first try; caught compute-node C++ pin bug |
+| 7669510 | P7 e2e | 1 | 0:56 | 0.016 | 0.028 | PASS (VERDICT: PASS) after pin fix |
+| 7669526 | P9 overhead | 1 | 0:25 | 0.007 | 0.035 | c + python-ml A/B, 3 reps each -- data captured |
+| 7669528 | P9 multinode | 2 | 1:21 | 0.045 | 0.080 | Part B ok; MPI broker ssh-blocked |
+| 7669541 | P13 e2e | 1 | 2:33 | 0.043 | 0.147 | PASS on from-scratch stack (no ~/mofka_tests) |
+| 7669543 | P9 multinode | 2 | 2:09 | 0.072 | 0.219 | partition-count 1/2/4 data captured |
+| 7669529/44/57,610,615,628 | P8 mpi | 1 | ~1:20 ea | 0.14 | 0.36 | MPI-IO: build ok; run blocked (openmpi MPI_Init) |
+| 7669629 | P8 python-ml | 1 | - | ~0.02 | ~0.38 | full python-ml e2e |
+
+TOTAL used ~0.38 node-hours of the 30 budget (all debug queue, 1-3 min each).
 
 Budget rule: before submitting a job, check cumulative + estimate < 30. Prefer
 the `debug` queue for short e2e checks (cheap); reserve `compute` for the
@@ -141,15 +150,23 @@ overhead runs. Always request the SMALLEST walltime that fits.
         paths, workload selection (c|mpi|dlio|python-ml), results/<wl>_<ts>/ with
         events.jsonl/partial+native.darshan/compare.txt/summary/pydarshan HTML.
         Added submit.sh (PBS wrapper). C smoke PASS.
-- [~] P8  Workloads: c PASS. mpi/dlio/python-ml -- e2e runs pending.
-- [~] P9  Overhead + multi-node config study (docs/MOFKA_NOTES.md grounds it) -- pending.
-- [ ] P10 LOC/file reduction; vet darshan lines; reduce single-use vars (user ask).
-- [~] P11 flowcept SHA pinned (branch tracking removed). spack-lcrc spec + from-scratch
-        build in progress (see below). ~/mofka_tests still fallback until build lands.
-- [ ] P12 Docs: schema doc, README overviews, REPRODUCE.md, EVALUATION.md refresh.
-- [ ] P13 From-scratch stack build (login node, /home/hjajula/repro-fromscratch) -- running.
-- [ ] P14 Humanify code comments + READMEs (plain sentences for people) -- user ask.
-- [ ] FINAL Detailed morning report + independent evaluation sub-agent -- user ask.
+- [~] P8  Workloads: c PASS (full e2e). python-ml streams (132 events in overhead;
+        full e2e re-run for a clean verdict). dlio NOT run (no py3.14 wheels; optional).
+        mpi BUILDS but run blocked by openmpi MPI_Init segfault under LD_PRELOAD on
+        this node (6 attempts; needs Darshan MPI-link mode, not preload). Documented.
+- [x] P9  Overhead DONE (results/overhead_*/summary.txt): per-push ~40us, init ~275ms,
+        finalize ~350-660ms. Multi-node: partition-count study done (1/2/4); true
+        MPI broker blocked by openmpi ssh launcher on this site (documented).
+- [x] P10 line-vetting log filled; no vendored uthash; single-use vars inlined;
+        connector micro-reductions + robustness listed for the PR.
+- [x] P11 flowcept pinned to SHA; spack-lcrc spec committed; from-scratch build DONE;
+        install/setup.sh builds it; ~/mofka_tests no longer required (P13 proved it).
+- [x] P12 docs/SCHEMA.md, REPRODUCE.md, README (motivation+diagram), MOFKA_NOTES,
+        per-dir READMEs, EVALUATION.md gates refreshed.
+- [x] P13 From-scratch stack built on login node + e2e PASS on the fresh clone
+        (/home/hjajula/repro-fromscratch). VERDICT: PASS, no ~/mofka_tests.
+- [~] P14 READMEs humanified + stale paths fixed; RUNBOOK left as a detailed reference.
+- [x] FINAL MORNING_REPORT.md written; evaluation sub-agent launched.
 
 ## darshan line-vetting log (P10 -- vetted against sibling connectors)
 Full report: results (P10 workflow). No dead code found in any connector file.
