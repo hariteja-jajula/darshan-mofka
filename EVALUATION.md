@@ -288,6 +288,10 @@ polish.
 
 ## 8. Pass/fail gates (binary; must all be true to claim "done")
 
+> These gates score the artifact. They are necessary but NOT sufficient to stop the
+> run. The ONLY exit condition is the Definition of Done in §10.5, which folds these
+> gates in. Do not self-declare "done" — the driver checks §10.5 mechanically.
+
 - [~] **G0 (size)** No vendored deps confirmed (uthash is the tree's shared copy);
       old shims + jobs/job.sh deleted; single-use vars inlined; connector micro-
       reductions vetted + listed for the PR. reconstruct split still a PR follow-up.
@@ -330,3 +334,100 @@ git ls-files | grep -vE '^(darshan|diaspora-stream-api|flowcept)/' | grep -vE '_
 git ls-files | grep -vE '^(darshan|diaspora-stream-api|flowcept)/' | grep -vE '_venv/' \
   | while read f; do wc -l < "$f"; done | awk '{s+=$1} END{print s}'
 ```
+
+---
+
+## 10. Operating & Completion Contract (autonomy — MANDATORY)
+
+This section governs *how the agent runs*, not the artifact's quality. It is a hard
+contract: violating it is a failure regardless of how good the code is. The driver
+(`run_overnight.sh`) enforces the mechanical parts (stall detection, state
+injection, the done-oracle); this section is the spec it enforces. When running
+unattended, this section outranks any instinct to wrap up, summarize, or hand off.
+
+### 10.1 Never exit in the middle
+
+- The run is DONE **only** when the Definition of Done (§10.5) is fully true. Until
+  then, ending your turn is allowed only if you have EITHER (a) just committed +
+  pushed real progress, OR (b) logged a specific, evidence-backed blocker AND
+  switched to the next independent phase. Ending for any other reason — "that's a
+  good stopping point", "I've made good progress", "the rest needs review", running
+  out of visible next steps — is a **CONTRACT VIOLATION**.
+- "There is nothing left to do" is never true while any phase checkbox is `[ ]` or
+  any must-meet gate (§8) is unmet. If you think you're done, run the §10.5 checks
+  first; if any fails, you are not done — pick the first failing item and work it.
+- **Do not end your turn on a question to a human.** There is no human awake. Every
+  reversible decision is pre-authorized (see progress.md "Locked decisions"): make
+  it, log the assumption in the running log, and continue. Only genuinely
+  irreversible/account-level actions may pause — and those are already decided in
+  progress.md, so in practice: keep going.
+
+### 10.2 Heartbeat + checkpoint every single turn
+
+End every turn by appending a heartbeat block to progress.md's running log:
+
+```
+- <timestamp> HEARTBEAT phase=<Pn> did=<files/commits changed>
+  next=<the exact command or edit you will run next turn>
+  blocker=<none | one line + the workaround you will try>
+```
+
+Then `git add -A && git commit && git push`. A turn that ends with **no new commit
+and no progress.md change is a stall** (§10.4) and will be escalated. Small commits
+are fine and encouraged — a one-line fix + heartbeat beats a silent turn.
+
+### 10.3 Wake for more information — gather, don't guess, don't idle
+
+When you lack the information to proceed on the current item, do NOT stop and do NOT
+guess silently. Spend the turn *acquiring* the missing information, record it, then
+continue:
+
+- Read the reference branches for how a stuck step already worked:
+  `origin/feature/reproducible-split-nodes`, `origin/add-mpi-workload`, and
+  **`origin/polaris-verify`** (the Polaris agent got the 2-node MPI broker, the
+  partition-count curve, and an event-heavy overhead microbench working — mine those
+  recipes: `server/start_server.mpi.sh`, `jobs/mpi_broker_polaris.pbs`, the spack
+  `mercury~hwloc` fix).
+- Poll the running/last PBS job for the real error: `qstat -x`, the `.oNNNN` log,
+  the per-run `results/<ts>/` dir. Diagnose from evidence, not assumption.
+- Reproduce smaller to isolate: single rank, `debug` queue, tcp-only transport.
+- Read the actual upstream docs (`docs/MOFKA_NOTES.md`, Darshan/Mofka/flock).
+
+The driver injects a fresh **state snapshot** (commits since base, unchecked phases,
+unmet gates, budget, last error from the run log) into every resume prompt. That
+snapshot IS the "more information" you woke up for — read it first and act on it.
+
+### 10.4 Stall detection & escalation (enforced by the driver)
+
+A **stall** = an iteration that produced no new commit AND no change to progress.md.
+
+- On a stall the driver re-prompts with an ESCALATION: the exact list of unchecked
+  phases + unmet gates + the last error, and the order: *"pick exactly ONE unfinished
+  item and produce a commit THIS turn, however small."*
+- **Two consecutive stalls on the same item** force a phase switch: mark that item
+  `BLOCKED` in progress.md with the concrete evidence (error + what you tried), then
+  move to the next independent phase. Never loop on the same wall — document and go
+  around it.
+
+### 10.5 Definition of Done (the ONLY exit condition)
+
+The run stops — and stops only — when ALL of these are true. The driver checks them
+mechanically each iteration; do not self-declare done without them:
+
+1. Every phase checkbox `P1..P14` in progress.md is `[x]`.
+2. Every must-meet gate in §8 is satisfied (G1,G2,G4,G5,G6 met; G0/G3/G7/G8 either
+   met or explicitly logged as a PR follow-up **with a reason** in progress.md).
+3. `git status` is clean and the branch is pushed (local HEAD == `origin/<branch>`).
+4. The headline oracle passes on a run from THIS session: a `results/<ts>/` dir
+   contains `INGEST: PASS` and `VERDICT: PASS`.
+5. MORNING_REPORT.md is regenerated: what passed, what's blocked (with evidence),
+   budget used, and the open decisions for the human.
+
+If any item is false, the run is NOT done — continue with the first false item.
+
+### 10.6 Budget is a limit, not a goal
+
+Stopping early to "save node-hours" is a violation. Use the budget to *finish*. Only
+the hard cap (40 NH) or the driver's wall-clock cap may end the run before Done —
+and if a cap is hit, say so explicitly in MORNING_REPORT.md and mark every
+unfinished item, rather than quietly declaring victory.
