@@ -1,0 +1,86 @@
+#!/bin/bash
+#PBS -N dm_mpi_broker
+#PBS -A radix-io
+#PBS -q debug
+#PBS -l select=2:ncpus=32
+#PBS -l walltime=00:30:00
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+# Arm 3 -- 2-node MPI-bootstrapped Mofka broker, INGEST proof (go/no-go).
+# Stands up bedrock across 2 nodes via flock bootstrap:mpi (bedrock-config.mpi.json),
+# confirms a 2-member group forms, then runs the PROVEN smoke workload + FlowCept
+# consumer against it and checks INGEST: PASS. Not a throughput sweep -- just proof
+# the multi-node broker works end to end.
+set -uo pipefail
+R="${REPO:-/eagle/radix-io/hjajula/pv/darshan-mofka}"; cd "$R"
+source server/env.sh
+module unload darshan 2>/dev/null || true
+export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
+OUT="$R/results/mpibroker_${PBS_JOBID%%.*}"; mkdir -p "$OUT"
+echo "${PBS_JOBID:-local}" > "$OUT/JOBID"
+NODES=$(sort -u "$PBS_NODEFILE" | wc -l)
+echo "### allocation: $NODES nodes ###"; cat "$PBS_NODEFILE" | sort -u | tee "$OUT/nodefile"
+
+# ---- go/no-go: bring up the 2-node MPI broker -------------------------------
+export MOFKA_SERVER_DIR="$OUT/mofka"
+export MOFKA_NRANKS="$NODES" MOFKA_PARTITIONS="$NODES" MOFKA_PART_TYPE=memory
+if ! bash server/start_server.mpi.sh > "$OUT/start_mpi.log" 2>&1; then
+    echo "### RESULT: MPI broker start FAILED (see start_mpi.log) ###"
+    tail -30 "$OUT/start_mpi.log"; cp -f "$MOFKA_SERVER_DIR/bedrock.log" "$OUT/" 2>/dev/null || true
+    exit 1
+fi
+cat "$OUT/start_mpi.log"
+GROUP="$MOFKA_SERVER_DIR/mofka.json"
+cp -f "$GROUP" "$OUT/mofka.json" 2>/dev/null || true
+cp -f "$MOFKA_SERVER_DIR/bedrock.log" "$OUT/bedrock.log" 2>/dev/null || true
+
+# probe: exactly $NODES distinct members?
+NMEMB=$("$PY" - "$GROUP" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1])); a={m["address"] for m in d.get("members",[])}
+print(len(a))
+PY
+)
+echo "### group members (distinct addresses): $NMEMB (expect $NODES) ###"
+if [ "$NMEMB" -lt 2 ]; then
+    echo "### RESULT: NO-GO -- group did not form across nodes ($NMEMB member) ###"
+    echo "### bedrock.log tail: ###"; tail -30 "$OUT/bedrock.log"
+    kill "$(cat "$MOFKA_SERVER_DIR/bedrock.pid")" 2>/dev/null || true
+    exit 2
+fi
+echo "### GO: $NMEMB-member MPI group formed ###"
+
+# ---- proof: run the PROVEN smoke workload + FlowCept consumer against it -----
+trap 'kill "$(cat "$MOFKA_SERVER_DIR/bedrock.pid" 2>/dev/null)" 2>/dev/null || true' EXIT
+RUN_DIR="$OUT/_flowcept_run"; rm -rf "$RUN_DIR"; mkdir -p "$RUN_DIR"
+MONGO_DB=darshan_stream; MONGO_PORT=27017
+RUN_DIR="$RUN_DIR" MONGO_DB="$MONGO_DB" MONGO_PORT="$MONGO_PORT" MONGOD="$MONGOD" \
+  MOFKA_GROUP="$GROUP" bash Client/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
+FC=$!
+until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do
+    kill -0 "$FC" 2>/dev/null || { echo "consumer failed"; cat "$RUN_DIR/flowcept_capture.out"; exit 1; }
+    sleep 1
+done
+echo "### consumer alive; running smoke workload against MPI broker ###"
+[ -x workloads/c/mofka_forward_smoke ] || "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
+env DARSHAN_ENABLE_NONMPI=1 DARSHAN_MOFKA_ENABLE=1 \
+    DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
+    DARSHAN_MOFKA_TIMING=1 DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 \
+    DARSHAN_LOGPATH="$OUT" LD_PRELOAD="$(darshan_lib)" \
+    ./workloads/c/mofka_forward_smoke /tmp/mpi_smoke_$$ > "$OUT/workload.out" 2> "$OUT/workload.err"
+echo "sends: $(grep -c 'darshan-mofka\[timing\] send' "$OUT/workload.err" || true)"
+
+touch "$RUN_DIR/SHUTDOWN"
+until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do
+    kill -0 "$FC" 2>/dev/null || { echo "consumer died before export"; tail -30 "$RUN_DIR/flowcept_capture.out"; exit 1; }
+    sleep 1
+done
+kill "$FC" 2>/dev/null || true; wait "$FC" 2>/dev/null || true
+echo "### ingest verdict ###"
+grep -E 'INGEST:|tasks total=' "$RUN_DIR/flowcept_capture.out" | tee "$OUT/ingest_verdict.txt"
+
+if grep -q "INGEST: PASS" "$RUN_DIR/flowcept_capture.out"; then
+    echo "### RESULT: MPI 2-node broker INGEST PASS ($NMEMB members) ###"
+else
+    echo "### RESULT: MPI broker formed but INGEST did not pass -- inspect $OUT ###"
+fi
