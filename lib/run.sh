@@ -17,8 +17,14 @@ REPO_ROOT="${REPO:-$(dirname "$_RUN_LIB_DIR")}"
 WORKLOAD_CONFIG="${WORKLOAD_CONFIG:-$REPO_ROOT/workloads/workload.config}"
 SERVER_CONFIG="${SERVER_CONFIG:-$REPO_ROOT/server/server.config}"
 
-# read key from a config file, but let an env var of the given NAME override it
-_cfg_env() { local name="$1" file="$2" key="$3" def="$4" v="${!name:-}"; [ -n "$v" ] && printf '%s\n' "$v" || cfg_get "$file" "$key" "$def"; }
+# read key from a config file, but let an env var of the given NAME override it.
+# NB: the indirect expansion must be on its own `local` line -- in a combined
+# `local name=$1 v=${!name}` bash expands ${!name} before name is assigned.
+_cfg_env() {
+    local name="$1" file="$2" key="$3" def="$4"
+    local v="${!name:-}"
+    [ -n "$v" ] && printf '%s\n' "$v" || cfg_get "$file" "$key" "$def"
+}
 
 load_run_config() {
     WL_TYPE=$(_cfg_env WORKLOAD "$WORKLOAD_CONFIG" workload c)
