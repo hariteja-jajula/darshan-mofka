@@ -151,8 +151,36 @@ overhead runs. Always request the SMALLEST walltime that fits.
 - [ ] P14 Humanify code comments + READMEs (plain sentences for people) -- user ask.
 - [ ] FINAL Detailed morning report + independent evaluation sub-agent -- user ask.
 
-## darshan line-vetting log (reasons for every added/kept line in darshan/)
-(Fill during P10. Format: file:lines -> reason it must exist / why it can't be removed.)
+## darshan line-vetting log (P10 -- vetted against sibling connectors)
+Full report: results (P10 workflow). No dead code found in any connector file.
+- darshan-mofka.c: every include used except <string.h> (removable); all globals
+  used; now_ns/mofka_took/json_escape_into/hex_into all used; initialize/send/
+  finalize are the entry points (called from darshan-core.c). Only single-use
+  scalar was `file_path` in send() (inlined candidate). ~265 lines all justified.
+- darshan-mofka.h: include guard + 3 prototypes + DARSHAN_MOFKA_SEND macro
+  (fixed contract, do not change) + extern "C" (C++ TUs include it). All needed.
+- darshan-mofka-reconstruct.c (722): two layers -- provider-agnostic JSON/hex
+  scanner (65-295) + darshan reconstruction core (297-722). Already reuses
+  libdarshan-util (log_create/put_job/exe/mounts/namehash, mod_logutils,
+  darshan_module_names, HASH_*). Hand-rolled add_name_record + decode_hex/JSON
+  scanners are REQUIRED (no exported lib equivalent).
+- uthash: NOT vendored -- uses the tree's shared "uthash-1.9.2/src/uthash.h"
+  (same as every darshan-util TU). Nothing to remove. (Closes the EVALUATION item.)
+- Hook footprint (pure additions, 0 deletions): darshan-core.c +9, posix +5,
+  stdio +9, mpiio +9, hdf5 +7 = 39 hook lines; configure.ac +23, Makefile.am +14,
+  check_diaspora_c.m4 (51). Small and HAVE_MOFKA-gated.
+
+## P10 connector reductions deferred to the upstream PR (need rebuild + dual-config retest)
+- inline single-use `file_path`; drop dead `s` in reconstruct json_get_string;
+  drop unused <string.h>; collapse the double AM_CONDITIONAL([HAVE_MOFKA]) into one
+  grouped call in configure.ac; fix copyright wording to "University of Chicago";
+  trim two comments. (~6 LOC; pure PR polish.)
+- robustness (behavioral, PR): rec_hex[4096]/MOFKA_JSON_BUF[8192] silently drop
+  oversized records -- add a dropped-record counter + heap fallback.
+- reconstruct: fold the 4x JSON key-prologue into one helper; macro-generate the
+  3 numeric getters; optionally split the scanner into its own TU (~350 LOC core).
+Applied now (harness, safe): inlined single-use vars in job.sh (STAMP, MPILIB) +
+install/setup.sh (REQS); fixed setup.sh sourcing the deleted server/env.sh.
 
 ## Restructure mapping (P1) - old -> new (preserve ALL logic; git mv)
 - server/env*.sh                 -> env/ (split: env/common.sh toolchain+C++ pin,
