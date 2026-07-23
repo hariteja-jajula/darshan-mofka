@@ -15,23 +15,35 @@
 #   mofka     Darshan + Mofka streaming (adds the connector cost)
 # Records walltime + the connector's own init / finalize / avg-push (DARSHAN_MOFKA_TIMING).
 # Writes results/overhead_split_<jobid>/overhead.csv + summary.txt.
+# Scale the C workload via the two knobs (workloads/c/workload.conf, or env override):
+#   default   -> EPOCHS=8      (quick)      results dir ..._8ep
+#   sustained -> EPOCHS=50000  (steady push) results dir ..._50000ep
 #   qsub -A radix-io -v REPO=/home/hjajula/repro-fromscratch/darshan-mofka study/overhead_split_lcrc.pbs
+#   qsub -A radix-io -v REPO=...,EPOCHS=50000,CHECKPOINT_EVERY=1000 study/overhead_split_lcrc.pbs  # sustained
 set -uo pipefail
 REPO="${REPO:-/home/hjajula/repro-fromscratch/darshan-mofka}"
 cd "$REPO"
 export MOFKA_PROTOCOL="${MOFKA_PROTOCOL:-tcp}"
 REPS="${REPS:-3}"
+# C workload knobs (see workloads/c/workload.conf). Forwarded to the workload node;
+# when both are set the event count is exact. Used here to size the run (default vs
+# sustained) and to label the results folder.
+export EPOCHS="${EPOCHS:-8}" CHECKPOINT_EVERY="${CHECKPOINT_EVERY:-4}"
 # shellcheck disable=SC1091
 source env/server.sh --lcrc
 # shellcheck disable=SC1091
 source env/workload.sh --lcrc
 module unload darshan 2>/dev/null || true
 
-OUT="$REPO/results/overhead_split_${PBS_JOBID%%.*}"; mkdir -p "$OUT"
+# Descriptive results layout (see results/README.md): consolidate under the MAIN
+# checkout so all runs live in one place, named by what they do (not a timestamp).
+RESULTS_ROOT="${RESULTS_ROOT:-/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka/results}"
+NNODE=$(sort -u "$PBS_NODEFILE" | wc -l)
+OUT="$RESULTS_ROOT/OVERHEAD_${NNODE}NODE_1PROC_1Broker-split_${EPOCHS}ep"; mkdir -p "$OUT"
 CSV="$OUT/overhead.csv"; echo "workload,config,rep,walltime_s,sends,init_us,finalize_us,avg_push_us" > "$CSV"
 mapfile -t NODES < <(sort -u "$PBS_NODEFILE")
 SRV_NODE="${NODES[0]}"; WL_NODE="${NODES[1]:-${NODES[0]}}"
-echo "### server=$SRV_NODE  workload=$WL_NODE  protocol=$MOFKA_PROTOCOL  reps=$REPS ###"
+echo "### server=$SRV_NODE  workload=$WL_NODE  protocol=$MOFKA_PROTOCOL  reps=$REPS  epochs=$EPOCHS ckpt=$CHECKPOINT_EVERY ###"
 [ -x workloads/c/mofka_forward_smoke ] || "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
 
 # ---- broker on the server node (single-node, tcp) ----
@@ -60,7 +72,7 @@ DLIB="$(darshan_lib)"
 echo "REMOTE_HOST=$(hostname)"
 for cfg in noinstr baseline mofka; do
   for rep in $(seq 1 "$REPS"); do
-    DIR="$OUT/${WL}_${cfg}_${rep}"; mkdir -p "$DIR"
+    DIR="$OUT/RUN${rep}/${WL}_${cfg}"; mkdir -p "$DIR"
     case "$WL" in
       c)         cmd=(./workloads/c/mofka_forward_smoke "$DIR/data") ;;
       python-ml) cmd=("$PY" workloads/python-ml/train.py "$DIR/data") ;;
@@ -93,7 +105,7 @@ for WL in c python-ml; do
   export WL
   echo "### === workload=$WL on $WL_NODE === ###"
   mpirun -n 1 --host "$WL_NODE" \
-    -x REPO -x OUT -x CSV -x GROUP -x REPS -x WL -x MOFKA_PROTOCOL \
+    -x REPO -x OUT -x CSV -x GROUP -x REPS -x WL -x MOFKA_PROTOCOL -x EPOCHS -x CHECKPOINT_EVERY \
     bash "$OUT/_remote.sh" 2>&1 | sed 's/^/  /'
 done
 
