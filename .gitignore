@@ -24,6 +24,10 @@
 /install/_venv/
 /install/_mofka/
 /server/_mongo_env/
+/Database/_mongo_env/
+
+# per-run result folders (keep results/README.md)
+/results/*/
 
 # env-snapshot: diagnostic dump (contains machine-specific PATH/user paths).
 # Regenerate with server/capture-env.sh; do not commit (would leak user paths).
