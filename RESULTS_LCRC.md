@@ -62,11 +62,51 @@ workloads finish in <0.13 s, so the fixed tax dwarfs them; on a real long-runnin
 those costs amortize to ~0 and only the ~43 µs/push matters. The finalize variance is the
 open robustness item (a longer/acknowledged final flush or a dropped-record counter).
 
+## 4. Sustained per-push — steady state  (`study/overhead_split_lcrc.pbs` w/ EPOCHS, job 7670401)
+
+C workload scaled to **50,000 epochs (~50,152 events)** via the config knobs, split topology:
+
+| config | walltime mean ± sd (s) |
+|---|---|
+| c noinstr | 0.299 ± 0.004 |
+| c baseline | 0.395 ± 0.007 |
+| c mofka | 3.523 ± 0.346 |
+
+Connector (mofka): init ~65 ms, **finalize (drain) ~600 ms**, **avg_push = 37.2 µs**, ≈14–16k events/s.
+
+**Key finding:** the per-push cost is **~37 µs and does not degrade** from smoke (~13 events) to
+sustained (~50k events) — it's a flat per-event tax, so a real long job's connector cost is
+`events × ~37 µs`. The only load-dependent term is the **finalize drain** (~360 ms at smoke →
+~600 ms at 50k), which scales with the pending-batch backlog at shutdown (robustness item G8).
+
+## Workload knobs (C)
+
+`workloads/c/workload.conf` — two knobs, event count known ahead of time:
+
+```
+epochs=8              # one POSIX write per epoch (train log)
+checkpoint_every=4    # an STDIO checkpoint file every N epochs
+# POSIX = epochs+2 ; STDIO = 3*(epochs/checkpoint_every) ; the workload prints the estimate
+```
+Override per-run with env `EPOCHS` / `CHECKPOINT_EVERY` (both set ⇒ exact count, no file read).
+
 ## Reproduce
 
 ```bash
 R=/home/hjajula/repro-fromscratch/darshan-mofka   # a checkout on the system-external-openmpi stack
 qsub -A radix-io -v REPO=$R study/mn_broker_lcrc.pbs       # multi-node broker + ingest
 qsub -A radix-io -v REPO=$R study/mn_split_lcrc.pbs        # server/workload split + ingest
-qsub -A radix-io -v REPO=$R study/overhead_split_lcrc.pbs  # full overhead study
+qsub -A radix-io -v REPO=$R study/overhead_split_lcrc.pbs  # overhead study (default 8 epochs)
+qsub -A radix-io -v REPO=$R,EPOCHS=50000,CHECKPOINT_EVERY=1000 study/overhead_split_lcrc.pbs  # sustained
+```
+
+Validate reconstruct.c 1:1 (native vs reconstructed HTML, from a neutral dir to avoid the
+repo `darshan/` source shadowing the pip package):
+
+```bash
+M=/gpfs/fs1/home/hjajula/darshan-mofka-flowcept/darshan-mofka; U=$M/darshan/darshan-util/install
+export PATH="$U/bin:$PATH" LD_LIBRARY_PATH="$U/lib:$LD_LIBRARY_PATH"
+cd /tmp && $M/install/_venv/bin/python -m darshan summary <run>/native.darshan  --output <run>/native.html
+cd /tmp && $M/install/_venv/bin/python -m darshan summary <run>/partial.darshan --output <run>/reconstructed.html
+# already generated for C_1NODE_1PROC_1Broker-colocated/RUN1 and PYTHONML_.../RUN1
 ```
