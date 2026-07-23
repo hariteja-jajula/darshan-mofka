@@ -126,10 +126,12 @@ case "$WORKLOAD" in
         MPILIB="$ROOT/darshan/install-mpi/lib/libdarshan.so"
         MPICC="$(command -v mpicc || echo "$CC")"   # MPI-IO needs the MPI compiler wrapper
         "$MPICC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile failed"
-        env DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
+        # env (incl. LD_PRELOAD) goes INSIDE mpiexec so only the ranks are
+        # instrumented -- preloading the launcher (prterun) crashes it.
+        mpiexec -n 4 env DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
             DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 DARSHAN_MOFKA_TIMING=1 \
             DARSHAN_MOFKA_FLUSH_MS=10000 DARSHAN_LOGPATH="$DARSHAN_LOGPATH" LD_PRELOAD="$MPILIB" \
-            mpiexec -n 4 ./workloads/mpi/mofka_forward_mpiio /tmp/mofka-forward-mpiio \
+            ./workloads/mpi/mofka_forward_mpiio /tmp/mofka-forward-mpiio \
             > "$RES/workload.out" 2> "$RES/workload.err" || die "mpi workload failed"
         NATIVE_GLOB="*mofka_forward_mpiio*.darshan" ;;
     dlio)
