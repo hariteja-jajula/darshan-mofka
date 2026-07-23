@@ -34,7 +34,7 @@ MONGO_PORT="${MONGO_PORT:-27017}"
 RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
 SHUTDOWN_FLAG="${SHUTDOWN_FLAG:-$RUN_DIR/SHUTDOWN}"
 MOFKA_GROUP="${MOFKA_GROUP:-$ROOT/server/mofka.json}"
-SETTINGS_TEMPLATE="${SETTINGS_TEMPLATE:-$ROOT/server/flowcept_settings.template.yaml}"
+SETTINGS_TEMPLATE="${SETTINGS_TEMPLATE:-$ROOT/Client/flowcept_settings.template.yaml}"
 MONGOD="${MONGOD:-$(command -v mongod || true)}"
 PY="${PY:-python3}"
 

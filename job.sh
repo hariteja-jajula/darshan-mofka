@@ -179,12 +179,12 @@ echo "MONGOD=$MONGOD"; "$MONGOD" --version | head -1
 # ---------------------------------------------------------------------------
 say "4. fresh Mofka broker"
 pkill -f capture.py 2>/dev/null || true
-bash server/stop-server.sh >/dev/null 2>&1 || true
+bash server/stop_server.sh >/dev/null 2>&1 || true
 sleep 2
-bash server/start-server.sh || die "start-server.sh failed"
+bash server/start_server.sh || die "start_server.sh failed"
 GROUP="$ROOT/server/mofka.json"
-[[ -s "$GROUP" ]] || die "no mofka.json after start-server.sh"
-trap 'bash server/stop-server.sh >/dev/null 2>&1 || true' EXIT
+[[ -s "$GROUP" ]] || die "no mofka.json after start_server.sh"
+trap 'bash server/stop_server.sh >/dev/null 2>&1 || true' EXIT
 
 # ---------------------------------------------------------------------------
 # 5-6. output files + FlowCept consumer (README sections 5-6)
@@ -199,7 +199,7 @@ rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
 RUN_DIR="$RUN_DIR" MONGO_DB="$MONGO_DB" MONGO_PORT="$MONGO_PORT" MONGOD="$MONGOD" \
 MOFKA_GROUP="$GROUP" \
-bash server/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
+bash Client/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
 FC=$!
 until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do
     kill -0 "$FC" 2>/dev/null || { cat "$RUN_DIR/flowcept_capture.out"; die "consumer failed to start"; }
@@ -232,7 +232,7 @@ until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do
     kill -0 "$FC" 2>/dev/null || { tail -40 "$RUN_DIR/flowcept_capture.out"; die "consumer died before export"; }
     sleep 1
 done
-"$PY" server/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
+"$PY" Client/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
     > "$EVENTS_JSONL" 2> "$RUN_DIR/export.count"
 kill "$FC" 2>/dev/null || true; wait "$FC" 2>/dev/null || true
 cat "$RUN_DIR/export.count" || true

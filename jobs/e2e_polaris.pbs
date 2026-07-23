@@ -1,0 +1,50 @@
+#!/bin/bash
+#PBS -N dm_e2e_polaris
+#PBS -A radix-io
+#PBS -q debug
+#PBS -l select=1:ncpus=32
+#PBS -l walltime=00:30:00
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+# Self-driving Polaris e2e: runs the full README pipeline (broker + FlowCept
+# consumer + darshan-instrumented smoke workload + reconstruct + compare) on a
+# compute node and archives the result so it's here by morning. Charges radix-io.
+#
+# Submit from a login node:   qsub jobs/e2e_polaris.pbs
+set -uo pipefail
+REPO="${REPO:-/eagle/radix-io/hjajula/pv/darshan-mofka}"
+cd "$REPO" || { echo "no repo at $REPO"; exit 1; }
+export DARSHAN_MOFKA_PROFILE=polaris
+STAMP="$(date +%Y%m%d_%H%M%S)"
+RESULTS="$REPO/results/e2e_polaris_${PBS_JOBID:-local}_$STAMP"
+mkdir -p "$RESULTS"
+
+echo "############################################################"
+echo "# Polaris e2e  job=${PBS_JOBID:-local}  node=$(hostname)  $STAMP"
+echo "############################################################"
+
+# SKIP_BUILD=1: the connector is prebuilt on the login node (Track A). If the
+# libs are missing the job will fall back to building (needs internet-free build).
+if [ -e "$REPO/darshan/install/lib/libdarshan.so" ]; then
+    export SKIP_BUILD=1
+    echo "using prebuilt darshan lib (SKIP_BUILD=1)"
+fi
+
+# run the pipeline; tee everything to the results dir
+bash job.sh 2>&1 | tee "$RESULTS/job.out"
+RC=${PIPESTATUS[0]}
+
+# archive the key artifacts (events + reconstructed log + consumer verdict)
+cp -f /tmp/darshan-mofka-events.jsonl "$RESULTS/events.jsonl" 2>/dev/null || true
+cp -f /tmp/job_partial.darshan        "$RESULTS/job_partial.darshan" 2>/dev/null || true
+cp -f "$REPO/server/_flowcept_run/flowcept_capture.out" "$RESULTS/flowcept_capture.out" 2>/dev/null || true
+
+echo "############################################################"
+if grep -q "INGEST: PASS" "$RESULTS/job.out" 2>/dev/null; then
+    echo "# RESULT: e2e PASS  (INGEST: PASS found)"
+else
+    echo "# RESULT: e2e QUESTIONABLE (no INGEST: PASS; rc=$RC) -- inspect $RESULTS/job.out"
+fi
+echo "# artifacts in: $RESULTS"
+echo "############################################################"
+exit "$RC"
