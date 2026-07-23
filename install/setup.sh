@@ -215,7 +215,9 @@ else
             -DCMAKE_INSTALL_PREFIX="$PWD/install" \
       && cmake --build _build -j && cmake --install _build ) || die "diaspora build failed"
     # shellcheck disable=SC1091
-    source "$REPO_ROOT/server/env.sh" "$ENV_ARG"
+    source "$REPO_ROOT/env/server.sh" "$ENV_ARG"
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/env/workload.sh" "$ENV_ARG"
     module unload darshan 2>/dev/null || true
     export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 fi

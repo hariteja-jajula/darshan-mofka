@@ -1,0 +1,31 @@
+=== multinode study: 2 node(s), protocol=verbs, results -> /home/hjajula/darshan-mofka-flowcept/darshan-mofka/results/multinode_20260723_011303 ===
+=== Part A: MPI-bootstrap broker across 2 nodes ===
+  MPI broker did not form a group in 90s -- see /home/hjajula/darshan-mofka-flowcept/darshan-mofka/results/multinode_20260723_011303/mpi_broker/bedrock.mpi.log
+  (head of log:)
+    Host key verification failed.
+    ------------------------------------------------------------
+    A daemon failed to report back after being spawned. This could
+    be due to several factors, including inability to find the
+    daemon executable, or the executable was unable to find its
+    required supporting libraries. In some cases, the daemon was
+    able to execute, but was unable to complete a TCP connection
+    back to prterun:
+=== Part B: 1 / 2 / 4 memory partitions on a single broker ===
+  1 partition(s): sends=13 walltime=0.7676s avg_push=43.416us
+study/multinode.sh: line 34: 3631180 Terminated              ( cd "$SRV" && rm -f mofka.json; bedrock "$MOFKA_PROTOCOL" -c bedrock-config.json -v info > bedrock.log 2>&1 )
+  2 partition(s): sends=13 walltime=0.4141s avg_push=36.510us
+study/multinode.sh: line 34: 3631215 Terminated              ( cd "$SRV" && rm -f mofka.json; bedrock "$MOFKA_PROTOCOL" -c bedrock-config.json -v info > bedrock.log 2>&1 )
+  4 partition(s): sends=13 walltime=0.4130s avg_push=94.811us
+study/multinode.sh: line 34: 3631254 Terminated              ( cd "$SRV" && rm -f mofka.json; bedrock "$MOFKA_PROTOCOL" -c bedrock-config.json -v info > bedrock.log 2>&1 )
+Multi-node / partition study    nodes=2  protocol=verbs
+
+scenario           servers  partitions  ptype   sends  walltime_s  avg_push_us
+mpi_broker_FAILED  2                                               
+single_broker      1        1           memory  13     0.7676      43.416
+single_broker      1        2           memory  13     0.4141      36.510
+single_broker      1        4           memory  13     0.4130      94.811
+
+Part A: effect of spreading partitions across nodes (real multi-node broker).
+Part B: effect of partition count on one server (they share the server's pools,
+        so the docs expect little change until partitions live on separate servers).
+=== multinode study done -> /home/hjajula/darshan-mofka-flowcept/darshan-mofka/results/multinode_20260723_011303 ===
