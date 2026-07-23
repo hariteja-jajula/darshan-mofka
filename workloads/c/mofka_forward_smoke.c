@@ -1,19 +1,19 @@
 /*
- * mofka_forward_smoke.c -- the C workload for Darshan -> Mofka, driven by a tiny
- * config file (workloads/c/workload.conf). It models an ML training run:
+ * mofka_forward_smoke.c -- the C workload for Darshan -> Mofka. Models an ML
+ * training run:
  *   - a POSIX training log: open once, one write() per EPOCH, then close
  *   - an STDIO checkpoint file every CHECKPOINT_EVERY epochs (fopen/fwrite/fclose)
  *
  * The connector emits one event per instrumented I/O call, so the event count is
- * known ahead of time (this is the whole point of the two knobs -- no time knob):
+ * known ahead of time (the point of the two knobs -- no time knob):
  *   POSIX events = epochs + 2                         (open + epochs writes + close)
  *   STDIO events = 3 * (epochs / checkpoint_every)    (each ckpt: fopen+fwrite+fclose)
  *   TOTAL        = (epochs + 2) + 3*(epochs / checkpoint_every)
  * The program prints this estimate at startup.
  *
- * Knobs: workloads/c/workload.conf (key=value). Env EPOCHS / CHECKPOINT_EVERY
- * override; when BOTH are set the config file is not read, so studies get an exact
- * event count with no extra I/O. argv[1] = scratch dir for the I/O files.
+ * Knobs come from the env vars EPOCHS / CHECKPOINT_EVERY, which job.sh derives from
+ * the single config file (workloads/workload.config); built-in defaults apply when
+ * run standalone. argv[1] = scratch dir for the I/O files.
  *
  * Build: cc -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
  * Run under LD_PRELOAD=libdarshan.so with DARSHAN_MOFKA_ENABLE=1 + a live group file.
@@ -37,39 +37,15 @@ static int env_long(const char* k, long* out)
     return 1;
 }
 
-/* read a numeric key from a key=value config file (# comments ok); dflt if absent */
-static long file_long(const char* path, const char* key, long dflt)
-{
-    FILE* f = fopen(path, "r");
-    if (!f) return dflt;
-    long val = dflt;
-    char line[256];
-    while (fgets(line, sizeof line, f)) {
-        char* p = line;
-        while (*p == ' ' || *p == '\t') p++;
-        if (*p == '#' || *p == '\n' || *p == '\0') continue;
-        char* eq = strchr(p, '=');
-        if (!eq) continue;
-        *eq = '\0';
-        char* end = eq - 1;
-        while (end > p && (*end == ' ' || *end == '\t')) *end-- = '\0';
-        if (strcmp(p, key) == 0) { val = atol(eq + 1); break; }
-    }
-    fclose(f);
-    return val;
-}
-
 int main(int argc, char** argv)
 {
     const char* dir = (argc > 1) ? argv[1] : "/tmp/dm-cworkload";
-    const char* conf = getenv("C_WORKLOAD_CONF");
-    if (!conf || !*conf) conf = "workloads/c/workload.conf";
 
+    /* knobs come from EPOCHS / CHECKPOINT_EVERY, which job.sh derives from the one
+       config file (workloads/workload.config); built-in defaults for standalone use. */
     long epochs, ckpt;
-    int have_e = env_long("EPOCHS", &epochs);
-    int have_c = env_long("CHECKPOINT_EVERY", &ckpt);
-    if (!have_e) epochs = file_long(conf, "epochs", 8);
-    if (!have_c) ckpt   = file_long(conf, "checkpoint_every", 4);
+    if (!env_long("EPOCHS", &epochs)) epochs = 8;
+    if (!env_long("CHECKPOINT_EVERY", &ckpt)) ckpt = 4;
     if (epochs < 1) epochs = 1;
     if (ckpt   < 1) ckpt   = 1;
 

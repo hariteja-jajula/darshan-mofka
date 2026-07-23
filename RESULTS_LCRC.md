@@ -81,7 +81,7 @@ sustained (~50k events) — it's a flat per-event tax, so a real long job's conn
 
 ## Workload knobs (C)
 
-`workloads/c/workload.conf` — two knobs, event count known ahead of time:
+`workloads/workload.config` — two knobs, event count known ahead of time:
 
 ```
 epochs=8              # one POSIX write per epoch (train log)
