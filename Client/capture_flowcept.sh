@@ -1,7 +1,8 @@
 #!/bin/bash
 # capture_flowcept.sh -- "scale mode" consumer: FlowCept drains the darshan Mofka
 # topic into MongoDB (instead of capture.py -> flat JSONL). This is the scalable
-# / persistent alternative to Client/capture.py. See the repo README (steps 6-9).
+# / persistent alternative to Client/capture.py. See the repo README and
+# docs/RUNBOOK.md for how this fits the full pipeline.
 #
 # It does NOT start the broker -- run server/start_server.sh first (same as the
 # capture.py path). It DOES start a local mongod (FlowCept's sink) and the
@@ -83,7 +84,7 @@ grep -E "type:|channel:|group_file:|enabled:|db:" "$FLOWCEPT_SETTINGS" | sed 's/
 
 # --- launch the FlowCept consumer (this is the whole "consumer") -----------
 # NOTE: invoke via `python3 -m flowcept.cli`, NOT the bin/flowcept console script
-# (not reliably +x under stdbuf). Proven in crosslayer node_service_unified.sh.
+# (not reliably +x under stdbuf).
 CONSUMER_LOG="$RUN_DIR/consumer.log"
 echo "=== [fc] flowcept consumer (start-consumption-services) ==="
 stdbuf -oL -eL "$PY" -m flowcept.cli --start-consumption-services > "$CONSUMER_LOG" 2>&1 &

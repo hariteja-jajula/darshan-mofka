@@ -1,8 +1,8 @@
 #!/bin/bash
 # env/server.sh -- environment for the SERVER node (Mofka broker + FlowCept
-# consumer + mongod). Provides the venv python (PY), MOFKA_PYTHONPATH
-# (mochi.mofka + pydiaspora), and MONGOD. Does NOT need the compiler toolchain
-# for building workloads. Usage:  source env/server.sh [--lcrc|--polaris]
+# consumer + mongod). Provides the venv python (PY), PYTHONPATH (mochi.mofka +
+# pydiaspora), and MONGOD. Does NOT need the compiler toolchain for building
+# workloads. Usage:  source env/server.sh [--lcrc|--polaris]
 _d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_d/_profile.sh" "$@"
 . "$_d/common.sh"

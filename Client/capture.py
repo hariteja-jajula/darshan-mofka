@@ -9,11 +9,10 @@
 #     exits immediately with no trailing idle wait, OR
 #   * no new event arrives for <idle_s> seconds (topic drained, or delivery was lossy).
 #
-# Uses a BLOCKING consumer.pull().wait() -- the timeout form future.wait(ms) returns empty
-# immediately on this binding, so the previous code broke at n=0 and captured nothing (while
-# consume.py, which blocks, works fine). A blocked pybind11 .wait() cannot be interrupted by
-# a Python signal handler, so the idle stop is enforced by a daemon WATCHDOG THREAD that
-# flushes the count and os._exit()s. (The outer shell `timeout` remains only as a backstop.)
+# Uses the BLOCKING consumer.pull().wait(); the timeout form future.wait(ms) returns empty
+# immediately on this binding. A blocked pybind11 .wait() ignores Python signals, so the
+# idle stop is enforced by a daemon watchdog thread that flushes the count and os._exit()s
+# (the outer shell `timeout` is only a backstop).
 #
 #   "$PY" capture.py mofka.json darshan "$sent" > events/rpcN.jsonl 2> events/rpcN.count
 import sys, json, os, time, threading
