@@ -14,7 +14,8 @@
 set -uo pipefail
 REPO="${REPO:-/eagle/radix-io/hjajula/pv/darshan-mofka}"
 cd "$REPO" || { echo "no repo at $REPO"; exit 1; }
-export DARSHAN_MOFKA_PROFILE=polaris
+# no explicit profile: exercise the config-driven default (install/config.yaml
+# cluster: polaris). job.sh -> server/env.sh resolves it.
 STAMP="$(date +%Y%m%d_%H%M%S)"
 RESULTS="$REPO/results/e2e_polaris_${PBS_JOBID:-local}_$STAMP"
 mkdir -p "$RESULTS"
