@@ -1,7 +1,155 @@
 # Progress: LCRC/Improv e2e and reproducibility
 
 Date: 2026-07-22
-Branch: `docs/readme-restructure`
+Branch: `feature/restructure-overnight` (off `docs/readme-restructure`)
+
+---
+
+# OVERNIGHT AUTONOMOUS RUN PLAN (DO NOT COMMIT THIS FILE)
+
+This file is git-ignored. It is the durable plan + state for an unattended
+overnight run. If a session resumes, READ THIS FIRST, find the first phase not
+marked DONE, and continue. NEVER stop until all phases are DONE or the node-hour
+budget is exhausted. If a workload/e2e step fails, DO NOT skip it: root-cause it,
+fix it, and re-run. Record the reason for every non-obvious decision here.
+
+## Locked decisions (from user, 2026-07-22)
+- PBS account: `radix-io`  (use `qsub -A radix-io`)
+- Strategy: work on branch `feature/restructure-overnight`; keep the known-good
+  setup intact; push to origin after every phase.
+- Unattended installs: AUTO-install missing deps non-interactively (log every
+  install). Keep an interactive `--ask` mode in build.sh for humans (default
+  auto during the automated run via `BUILD_ASSUME_YES=1`).
+- Overhead design: baseline (connector OFF) vs mofka (ON), 3 reps each, for the
+  C workload and the python-ml workload. Report mean/stddev walltime + per-op
+  timing. 2 nodes: 1 workload node + 1 server node.
+- Comparison pass criterion: PASS if module record set and open/read/write/close
+  counts match native; ALLOW known diffs (mount label `unknown` vs `rootfs`,
+  timestamps, pid, synthetic job/exe metadata). Matches prior documented result.
+- Push cadence: commit + push after each phase passes its check. progress.md and
+  EVALUATION.md stay UNCOMMITTED (both git-ignored).
+
+## Additional locked decisions (user, 2026-07-22, before leaving for the night)
+- OVERHEAD METRICS: also time (a) initialization phase, (b) average push cost,
+  (c) finalize phase. Add minimal timing to the connector if DARSHAN_MOFKA_TIMING
+  doesn't already expose init/finalize/per-push. Any added darshan line -> vet +
+  log reason. (P9/P10)
+- NON-DESTRUCTIVE + new dirs OK: if there is a genuine need for another directory
+  to hold something, create it. The only thing that is "bad" is writing too many
+  lines of code. Minimize LOC, not directories.
+- NO ABSOLUTE PATHS TO LIBS/.so: never reference .so files / libraries / compiler
+  runtimes by absolute path. Always via `module load` (or a var derived from a
+  module). Offenders found (fix in refactor):
+    * server/env_polaris.sh:75  /opt/cray/libfabric/*/lib64  -> module load libfabric ($CRAY_LIBFABRIC_PREFIX)
+    * docs/RUNBOOK.md:97,138     /soft/perftools/darshan/.../pkgconfig strip -> module unload darshan
+    * (spack.yaml externals are OK - that is the intended single source of truth)
+- ENV RE-SOURCE ROOT CAUSE (confirmed): env.sh computes DARSHAN_MOFKA_CXX_RUNTIME_DIR
+  ONCE from the g++ active at source time; the diaspora CMake build reorders
+  LD_LIBRARY_PATH / drops LD_PRELOAD, so a newer/older libstdc++ (GLIBCXX) wins ->
+  must re-source env.sh after building diaspora. FIX DIRECTION: separate envs
+  cleanly + make the C++ runtime pin idempotent/re-derivable, prefer resolving
+  libstdc++ via `module load gcc/gcc-native` consistently on both server &
+  workload sides rather than LD_PRELOAD. Target: clear distinction between a
+  SERVER env and a WORKLOAD env that are each easy to load and don't clobber each
+  other. (see env layer analysis below)
+- FINAL REPRO TEST: clone repo into GLOBAL SCRATCH and build EVERYTHING in place
+  (including libraries/spack stack) then run e2e. Scratch = /lcrc/globalscratch/hjajula
+  (writable, 2.5P free). Do the heavy from-scratch spack build on a LOGIN node
+  (free, no node-hours); reserve compute nodes for e2e + overhead. If home `du`
+  exceeds, build DLIO and other workloads in /lcrc/globalscratch/hjajula.
+- INSTALL PERMISSION: blanket yes - pip/spack/git installs into account/venv/scratch
+  as needed, log every one.
+- PYTHON-ML FRAMEWORK: PyTorch preferred. RISK: py3.14 may lack torch wheels. If
+  torch will not install on py3.14 after real attempts, fall back to a separate
+  torch-capable python (system/conda) for the ML workload ONLY, or
+  numpy+scikit-learn as last resort; document the choice. Do not idle on this.
+- BLOCKER POLICY: the e2e already works, so nothing should truly block. If stuck,
+  check the previous main-branch merge / reference branches for how it works
+  (refs: origin/feature/reproducible-split-nodes has split-node deploy commit
+  c63fcea; origin/add-mpi-workload has MPI-IO smoke). Skip forward, keep other
+  phases moving, document, return later. Never idle.
+- BUDGET OVERFLOW RULE: 30 node-hours target; if exhausted by morning, may use
+  UP TO 10 MORE node-hours for final tests (hard cap 40).
+- PUSH: origin push access confirmed (fork hariteja-jajula/darshan-mofka).
+
+## Node-hour budget: 30 node-hours total (hard cap 40 incl. +10 for final tests).
+Track every job here. node-hours = nodes * walltime(hours).
+
+| job id | phase | nodes | walltime | node-hrs | cumulative | note |
+|---|---|---:|---:|---:|---:|---|
+| (none yet) | | | | | 0.0 | |
+
+Budget rule: before submitting a job, check cumulative + estimate < 30. Prefer
+the `debug` queue for short e2e checks (cheap); reserve `compute` for the
+overhead runs. Always request the SMALLEST walltime that fits.
+
+## Guiding principles (apply to every change)
+1. MINIMIZE lines of code and files. Prefer deleting/merging to adding. Reuse
+   existing Darshan + library helpers. Every added line in `darshan/` must have a
+   vetted reason; note non-obvious reasons in the "darshan line-vetting log" below.
+2. Never break the known-good e2e. After structural moves, re-run e2e before
+   moving on.
+3. Config-driven, no hardcoded paths/accounts/usernames.
+4. Structure target (final):
+   - `darshan/`      near-perfect upstream connector (vetted line-by-line)
+   - `diaspora-stream-api/`  done; reduce LOC if possible
+   - `flowcept/`     consumer only; pin to a SHA; vet only if needed
+   - `env/`          config_server.yaml + config_workload.yaml (+ structure info)
+   - `server/`       ~3 files: start_server.sh (reads config), stop, groupfile
+   - `Database/`     README with mongod download instructions + fetch script
+   - `Client/`       flowcept consumer that drains DB
+   - `workloads/`    c/ mpi/ dlio/ python-ml/ each with its own README
+   - `build.sh`      minimal: check deps, auto-install missing (ask in --ask mode)
+   - `job.sh`        start_server(config) -> run workload e2e -> jsonl + native
+                     .darshan -> reconstruct -> 1:1 compare -> pydarshan HTML into
+                     clearly-named result dirs
+   - `results/`      per-run named dirs (workload_YYYYmmdd_HHMMSS/): jsonl,
+                     native.darshan, partial.darshan, compare.txt, pydarshan HTML,
+                     overhead csv
+
+## Phase status (update in place)
+- [x] P0  Setup: branch, plan, budget table, verify env + baseline e2e passes (DONE)
+- [ ] P1  Restructure skeleton (git mv; no logic loss); per-dir READMEs
+- [ ] P2  env/ config files drive server structure + workload env
+- [ ] P3  server/ minimal (~3 files), config-driven
+- [ ] P4  Database/ mongod download instructions + script
+- [ ] P5  Client/ flowcept consumer wiring
+- [ ] P6  build.sh minimal + auto-install
+- [ ] P7  job.sh full e2e + reconstruct + compare + pydarshan HTML in named dirs
+- [ ] P8  Workloads e2e: c, mpi, dlio, python-ml all PASS (root-cause failures)
+- [ ] P9  Overhead analysis (baseline vs mofka, 3 reps, C + python-ml)
+- [ ] P10 LOC/file reduction; vet every darshan line (log reasons below)
+- [ ] P11 Reproducibility: pin flowcept SHA, drop/doc ~/mofka_tests, clean, verify
+- [ ] P12 Final: README overviews + schema doc, EVALUATION.md refresh, push, budget
+
+## darshan line-vetting log (reasons for every added/kept line in darshan/)
+(Fill during P10. Format: file:lines -> reason it must exist / why it can't be removed.)
+
+## Running log (append newest at bottom; timestamp each entry)
+- 2026-07-22: P0 started. Created branch feature/restructure-overnight. Wrote plan.
+- 2026-07-22: P0 findings:
+  - Login node = ilogin1.lcrc.anl.gov (LCRC/Improv), RHEL8. PBS present.
+  - Queues: compute (default), debug, bigmem, etc. Use debug for cheap e2e checks.
+  - `source server/env.sh --lcrc` sources cleanly; all tools resolve:
+    MOFKA_SPACK_VIEW, PY (venv), CC (gcc-13.2.0), DIASPORA_C, DARSHAN_PREFIX,
+    bedrock found. Stack already built.
+  - darshan-util tools live at darshan/darshan-util/install/bin/
+    (darshan-parser, darshan-mofka-reconstruct) -- NOT darshan/install/bin.
+    job.sh already knows this (var B).
+  - mongod present at server/_mongo_env/bin/mongod.
+  - PYDARSHAN WAS NOT INSTALLED. `import darshan` resolved to the repo's own
+    darshan/ SOURCE DIR as a namespace package (because CWD=repo root puts
+    darshan/ on sys.path). Installed pydarshan 3.5.0 into the venv.
+    ACTION for HTML step: (a) add `darshan==3.5.0` to server/requirements.txt;
+    (b) run pydarshan CLI from a dir where repo `darshan/` does NOT shadow it
+    (e.g. cd into the results dir, or set PYTHONPATH carefully). This shadow is a
+    real trap -- document it.
+  - Submodule SHAs now: darshan beffbf63, diaspora 29556b23,
+    flowcept 63298bc7 (currently tracking branch experiment/f1-v2-unpack-batches
+    -> must pin to this SHA in P11).
+
+---
+
 
 ## Current Status
 
@@ -400,6 +548,29 @@ Successful e2e job:
 7668554.imgt1
 ```
 
+## Evaluation Framework (see EVALUATION.md)
+
+A detailed evaluation framework for this work lives in `EVALUATION.md` at the repo
+root. It is **git-ignored on purpose** (working notes, not for commit). It scores
+the project on: size/reviewability, connector upstream-fit, reproducibility,
+compactness/reuse, documentation clarity, instruction quality, robustness, and
+hygiene — plus an upstream-merge blueprint and binary pass/fail gates.
+
+The most important axis called out there is **reduce the number of files and lines
+of code**: a small, self-contained diff is the gating factor for getting the
+Darshan connector reviewed and merged upstream. Measured baseline at time of
+writing:
+
+```text
+connector new source: darshan-mofka.c 265, .h 42, check_diaspora_c.m4 50,
+                      darshan-mofka-reconstruct.c 722 (largest single unit)
+harness: 37 tracked files, ~3652 LOC (excl. submodules and _venv/)
+```
+
+Top size-reduction targets: drop the vendored uthash and reuse tree helpers in the
+reconstruct tool (or split it into a follow-up PR); deduplicate RUNBOOK vs README;
+merge/remove redundant scripts (`jobs/job.sh`, `server/capture.py`).
+
 ## Current Branch Note
 
 Push changes to the current branch only:
@@ -409,3 +580,5 @@ docs/readme-restructure
 ```
 
 Do not push this work to `main`.
+
+`EVALUATION.md` must not be committed (it is listed in `.gitignore`).

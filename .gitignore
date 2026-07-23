@@ -48,3 +48,6 @@
 core
 core.*
 __pycache__/
+
+# local overnight plan/state (not for commit)
+/progress.md
