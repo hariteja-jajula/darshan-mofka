@@ -87,8 +87,7 @@ trap 'bash server/stop_server.sh >/dev/null 2>&1 || true' EXIT
 # ---------------------------------------------------------------------------
 # 5. results dir + live FlowCept consumer (drains topic -> MongoDB)
 # ---------------------------------------------------------------------------
-STAMP="$(date +%Y%m%d_%H%M%S)"
-RES="$ROOT/results/${WORKLOAD}_${STAMP}"; mkdir -p "$RES"
+RES="$ROOT/results/${WORKLOAD}_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$RES"
 say "5. FlowCept consumer  (results -> $RES)"
 RUN_DIR="$ROOT/server/_flowcept_run"; rm -rf "$RUN_DIR"; mkdir -p "$RUN_DIR"
 MONGO_DB=darshan_stream; MONGO_PORT=27017
@@ -123,14 +122,14 @@ case "$WORKLOAD" in
         NATIVE_GLOB="*mofka_forward_smoke*.darshan" ;;
     mpi)
         DARSHAN_MPI=1 ./build.sh || die "MPI darshan build failed"
-        MPILIB="$ROOT/darshan/install-mpi/lib/libdarshan.so"
         MPICC="$(command -v mpicc || echo "$CC")"   # MPI-IO needs the MPI compiler wrapper
         "$MPICC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile failed"
         # env (incl. LD_PRELOAD) goes INSIDE mpiexec so only the ranks are
         # instrumented -- preloading the launcher (prterun) crashes it.
         mpiexec -n 4 env DARSHAN_MOFKA_ENABLE=1 DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
             DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 DARSHAN_MOFKA_TIMING=1 \
-            DARSHAN_MOFKA_FLUSH_MS=10000 DARSHAN_LOGPATH="$DARSHAN_LOGPATH" LD_PRELOAD="$MPILIB" \
+            DARSHAN_MOFKA_FLUSH_MS=10000 DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
+            LD_PRELOAD="$ROOT/darshan/install-mpi/lib/libdarshan.so" \
             ./workloads/mpi/mofka_forward_mpiio /tmp/mofka-forward-mpiio \
             > "$RES/workload.out" 2> "$RES/workload.err" || die "mpi workload failed"
         NATIVE_GLOB="*mofka_forward_mpiio*.darshan" ;;

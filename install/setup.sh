@@ -171,7 +171,6 @@ fi
 # ---- 4. python venv (>=3.11) + consumer deps ---------------------------------
 # shellcheck disable=SC1091
 source "$REPO_ROOT/env/server.sh" "$ENV_ARG" 2>/dev/null || true
-REQS="$REPO_ROOT/$(cfg python.requirements)"
 pick_python() {
     local c; for c in "${PY:-}" python3.14 python3.13 python3.12 python3.11 python3; do
         [[ -n "$c" ]] && command -v "$c" >/dev/null 2>&1 || continue
@@ -191,7 +190,7 @@ PIPFLAGS=(--index-url "https://pypi.org/simple" --disable-pip-version-check)
 export PIP_CONFIG_FILE=/dev/null
 say "pip install consumer deps + flowcept"
 "$VENV/bin/python" -m pip install "${PIPFLAGS[@]}" --upgrade pip || die "pip upgrade failed"
-"$VENV/bin/python" -m pip install "${PIPFLAGS[@]}" -r "$REQS" || die "pip install requirements failed"
+"$VENV/bin/python" -m pip install "${PIPFLAGS[@]}" -r "$REPO_ROOT/$(cfg python.requirements)" || die "pip install requirements failed"
 "$VENV/bin/python" -m pip install "${PIPFLAGS[@]}" -e "$REPO_ROOT/$(cfg python.flowcept_editable)" || die "pip install flowcept failed"
 
 # ---- 5. build project source -------------------------------------------------
