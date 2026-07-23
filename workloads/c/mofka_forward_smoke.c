@@ -1,16 +1,22 @@
 /*
- * mofka_forward_smoke.c -- tiny manual smoke workload for Darshan -> Mofka.
+ * mofka_forward_smoke.c -- the C workload for Darshan -> Mofka. Models an ML
+ * training run:
+ *   - a POSIX training log: open once, one write() per EPOCH, then close
+ *   - an STDIO checkpoint file every CHECKPOINT_EVERY epochs (fopen/fwrite/fclose)
  *
- * This program does only local C file I/O. To test the connector, compile it and
- * run it under LD_PRELOAD=libdarshan.so with DARSHAN_MOFKA_ENABLE=1 and a live
- * Mofka group file. It intentionally does not know anything about Mofka itself.
+ * The connector emits one event per instrumented I/O call, so the event count is
+ * known ahead of time (the point of the two knobs -- no time knob):
+ *   POSIX events = epochs + 2                         (open + epochs writes + close)
+ *   STDIO events = 3 * (epochs / checkpoint_every)    (each ckpt: fopen+fwrite+fclose)
+ *   TOTAL        = (epochs + 2) + 3*(epochs / checkpoint_every)
+ * The program prints this estimate at startup.
  *
- * Build:
- *   cc -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
+ * Knobs come from the env vars EPOCHS / CHECKPOINT_EVERY, which job.sh derives from
+ * the single config file (workloads/workload.config); built-in defaults apply when
+ * run standalone. argv[1] = scratch dir for the I/O files.
  *
- * Run shape:
- *   env DARSHAN_ENABLE_NONMPI=1 DARSHAN_MOFKA_ENABLE=1 ... \
- *       LD_PRELOAD=/path/to/libdarshan.so ./workloads/c/mofka_forward_smoke /tmp/smoke-dir
+ * Build: cc -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
+ * Run under LD_PRELOAD=libdarshan.so with DARSHAN_MOFKA_ENABLE=1 + a live group file.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -20,44 +26,58 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-static void die(const char* msg)
+static void die(const char* m) { perror(m); exit(1); }
+
+/* return 1 and set *out if env var k holds a number */
+static int env_long(const char* k, long* out)
 {
-    perror(msg);
-    exit(1);
+    const char* v = getenv(k);
+    if (!v || !*v) return 0;
+    *out = atol(v);
+    return 1;
 }
 
 int main(int argc, char** argv)
 {
-    const char* dir = (argc > 1) ? argv[1] : "/tmp";
-    char posix_path[512];
-    char stdio_path[512];
+    const char* dir = (argc > 1) ? argv[1] : "/tmp/dm-cworkload";
+
+    /* knobs come from EPOCHS / CHECKPOINT_EVERY, which job.sh derives from the one
+       config file (workloads/workload.config); built-in defaults for standalone use. */
+    long epochs, ckpt;
+    if (!env_long("EPOCHS", &epochs)) epochs = 8;
+    if (!env_long("CHECKPOINT_EVERY", &ckpt)) ckpt = 4;
+    if (epochs < 1) epochs = 1;
+    if (ckpt   < 1) ckpt   = 1;
+
+    long num_ckpt = epochs / ckpt;
+    long posix_ev = epochs + 2;
+    long stdio_ev = 3 * num_ckpt;
+    printf("C workload: epochs=%ld checkpoint_every=%ld -> POSIX~%ld STDIO~%ld TOTAL~%ld events\n",
+           epochs, ckpt, posix_ev, stdio_ev, posix_ev + stdio_ev);
+
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST) die("mkdir");
+
+    char trainlog[600], ckpt_path[600];
     char buf[64];
+    memset(buf, 'x', sizeof buf);
+    snprintf(trainlog, sizeof trainlog, "%s/train.log", dir);
 
-    if (mkdir(dir, 0755) != 0 && errno != EEXIST)
-        die("mkdir");
+    int fd = open(trainlog, O_CREAT | O_TRUNC | O_WRONLY, 0644);   /* 1 POSIX open */
+    if (fd < 0) die("open train.log");
+    for (long e = 1; e <= epochs; e++) {
+        if (write(fd, buf, sizeof buf) != (ssize_t)sizeof buf) die("write");  /* 1 POSIX write / epoch */
+        if (e % ckpt == 0) {                                        /* checkpoint via STDIO */
+            snprintf(ckpt_path, sizeof ckpt_path, "%s/ckpt_%ld.dat", dir, e / ckpt);
+            FILE* cf = fopen(ckpt_path, "w");                       /* fopen  */
+            if (!cf) die("fopen ckpt");
+            if (fwrite(buf, 1, sizeof buf, cf) != sizeof buf) die("fwrite ckpt");  /* fwrite */
+            if (fclose(cf) != 0) die("fclose ckpt");               /* fclose */
+            unlink(ckpt_path);
+        }
+    }
+    if (close(fd) != 0) die("close");                              /* 1 POSIX close */
+    unlink(trainlog);
 
-    snprintf(posix_path, sizeof(posix_path), "%s/posix-smoke.dat", dir);
-    snprintf(stdio_path, sizeof(stdio_path), "%s/stdio-smoke.dat", dir);
-
-    int fd = open(posix_path, O_CREAT | O_TRUNC | O_RDWR, 0644);
-    if (fd < 0) die("open posix");
-    if (write(fd, "darshan-posix-smoke\n", 20) != 20) die("write posix");
-    if (fsync(fd) != 0) die("fsync posix");
-    if (lseek(fd, 0, SEEK_SET) < 0) die("lseek posix");
-    if (read(fd, buf, sizeof(buf)) < 0) die("read posix");
-    if (close(fd) != 0) die("close posix");
-
-    FILE* fp = fopen(stdio_path, "w+");
-    if (!fp) die("fopen stdio");
-    if (fwrite("darshan-stdio-smoke\n", 1, 20, fp) != 20) die("fwrite stdio");
-    if (fflush(fp) != 0) die("fflush stdio");
-    if (fseek(fp, 0, SEEK_SET) != 0) die("fseek stdio");
-    if (fread(buf, 1, sizeof(buf), fp) == 0 && ferror(fp)) die("fread stdio");
-    if (fclose(fp) != 0) die("fclose stdio");
-
-    unlink(posix_path);
-    unlink(stdio_path);
-
-    printf("mofka_forward_smoke complete: wrote/read POSIX and STDIO files in %s\n", dir);
+    printf("C workload complete: %ld epochs, %ld checkpoints in %s\n", epochs, num_ckpt, dir);
     return 0;
 }
