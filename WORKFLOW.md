@@ -31,11 +31,15 @@ pbs:                   # how the job is submitted
   ncpus: 32
 ```
 
-## 2. Tune how it streams (optional) — `server/server.config`
+## 2. Tune how it streams (optional) — two more config files
 
-Transport, topic, partitions, the connector knobs (`batch`, `flush_ms`, …), Darshan env
-(`modmem`, module enable/disable), the Mongo sink, and the FlowCept consumer buffers all
-live here with sensible defaults. You rarely need to change it for a first run.
+Config is split by role; you rarely need these for a first run:
+- **`workloads/workload.config`** (producer) — also holds `connector:` (batch, flush_ms, …)
+  and `darshan:` env (modmem, module enable/disable), since those run on the workload node.
+- **`server/server.config`** (broker) — transport, topic, partitions, partition_type, and
+  `broker:` margo threads / master DB.
+- **`Client/client.config`** (consumer + sink) — the MongoDB `mongo:` settings and the
+  FlowCept `consumer:` buffers.
 
 ## 3. Submit
 
