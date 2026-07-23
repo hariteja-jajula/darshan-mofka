@@ -11,8 +11,11 @@ the pre-built Mofka/Mochi spack stack on eagle (what `check-deps.sh` detects and
 (jobs 7273369, 7273397, 7273451, 7273454, 7273475).
 
 The **fully-from-scratch path** (`install/setup.sh` builds the entire native stack
-from source with its own spack clone) is **blocked by an upstream spack packaging
-defect**, documented below. It is NOT a defect in this repo.
+from source with its own spack clone) was **blocked by an upstream spack packaging
+defect** (below) — now **FIXED** by pinning `mercury~hwloc` in server/spack/spack.yaml
++ regenerated spack.lock. Verified: mercury@2.4.1 now builds in the from-scratch
+tree (`vui6ist`) where `+hwloc` failed at configure every time. Full-stack build
+in progress; this doc will note the final `SETUP COMPLETE` + a from-scratch e2e.
 
 ## What was fixed in this repo (committed)
 
