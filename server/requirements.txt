@@ -8,7 +8,11 @@
 # NOT listed here (provided elsewhere, do NOT pip install):
 #   - mochi.mofka / py-mochi-margo / pydiaspora_stream_api  -> from the Spack view
 #   - flowcept                                              -> pip install -e flowcept/
-#   - pydarshan                                             -> optional, from darshan/darshan-util/pydarshan
+#
+# NOTE: `darshan` (pydarshan) below is the PyPI package used to render HTML I/O
+# summaries in job.sh. Do NOT run its CLI from the repo root: the repo's own
+# `darshan/` source dir shadows the installed package as a namespace package.
+# Run it from the results dir (job.sh does this).
 #
 # Versions below are the ones validated on Polaris (2026-07). Loosen if you need to.
 pymongo==4.17.0          # FlowCept's MongoDB sink
@@ -23,3 +27,4 @@ numpy==2.4.6
 pandas==2.3.3
 pyarrow==22.0.0
 psutil==7.2.2
+darshan==3.5.0           # pydarshan: HTML I/O summary reports (see note above)

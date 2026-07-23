@@ -38,6 +38,9 @@
 /data/
 /hydra_log/
 
+# local evaluation notes (not for commit)
+/EVALUATION.md
+
 # generated files and crashes
 *.o
 *.log
