@@ -75,29 +75,34 @@ if [[ "$PROFILE" == polaris ]]; then
     [[ -d "$MOFKA_DIR/.git" ]] || { say "clone mofka ($MOFKA_REF)"; git clone --branch "$MOFKA_REF" "$MOFKA_URL" "$MOFKA_DIR" || die "mofka clone failed"; }
 
     ENV_NAME="$(cfg layout.spack_env_name)"; ENV_SPEC="$REPO_ROOT/$(cfg spack.env_spec)"
-    ENV_SPEC_DIR="$(dirname "$ENV_SPEC")"   # holds spack.yaml AND the pinned spack.lock
-    if [[ -f "$SPACK_DIR/var/spack/environments/$ENV_NAME/spack.yaml" ]]; then
-        say "spack env '$ENV_NAME' exists -> reuse"
+    ENV_SPEC_DIR="$(dirname "$ENV_SPEC")"       # holds spack.yaml AND the pinned spack.lock
+    ENV_DIR="$SPACK_DIR/var/spack/environments/$ENV_NAME"
+    COMMITTED_LOCK="$ENV_SPEC_DIR/spack.lock"
+    # The committed spack.lock is the known-good concretization (it already pins
+    # mofka as a develop/source build -- dev_path baked in -- plus the exact
+    # mercury@2.4.1 +hwloc %gcc that the working stack used). Re-solving (spack
+    # concretize -f, or 'spack develop' which forces a re-solve) has produced a
+    # BROKEN DAG on Polaris (mercury built without hwloc -> configure fails).
+    # So: install strictly from the committed lock and DO NOT re-run develop.
+    # Only recreate the env if it is missing or its lock drifted from committed.
+    _use_lock=0; [[ -f "$COMMITTED_LOCK" ]] && _use_lock=1
+    if [[ -f "$ENV_DIR/spack.yaml" ]] && { [[ "$_use_lock" != 1 ]] || cmp -s "$ENV_DIR/spack.lock" "$COMMITTED_LOCK"; }; then
+        say "spack env '$ENV_NAME' exists and matches committed lock -> reuse"
     else
-        # Create from the spec DIRECTORY so spack picks up the committed spack.lock
-        # (the pinned, known-good concretization) instead of re-solving. Re-solving
-        # from scratch has produced broken deps on Polaris (e.g. mercury failing to
-        # find hwloc), so the lock is the reproducible path.
+        [[ -d "$ENV_DIR" ]] && { say "env lock drifted from committed -> recreate"; spack env remove -y "$ENV_NAME" 2>/dev/null || rm -rf "$ENV_DIR"; }
         say "create spack env '$ENV_NAME' from spec dir (uses pinned spack.lock)"
         spack env create "$ENV_NAME" "$ENV_SPEC_DIR" || die "spack env create failed"
     fi
-    spack -e "$ENV_NAME" develop -p "$MOFKA_DIR" "mofka@$MOFKA_REF" 2>/dev/null || true
 
-    # Install from the lock. Only re-concretize if there is no lock or the locked
-    # install fails (e.g. the mofka develop path changed the hash).
-    if [[ -f "$SPACK_DIR/var/spack/environments/$ENV_NAME/spack.lock" ]]; then
-        say "spack install from pinned lock (-j$JOBS)"
+    if [[ "$_use_lock" == 1 ]]; then
+        say "spack install from pinned lock (-j$JOBS; no develop/re-solve)"
         spack -e "$ENV_NAME" install -j"$JOBS" && _installed=1 || _installed=0
     else
         _installed=0
     fi
     if [[ "$_installed" != 1 ]]; then
-        say "lock install unavailable/failed -> re-concretize + install (-j$JOBS)"
+        say "no lock / lock install failed -> develop mofka + re-concretize + install (-j$JOBS)"
+        spack -e "$ENV_NAME" develop -p "$MOFKA_DIR" "mofka@$MOFKA_REF" 2>/dev/null || true
         spack -e "$ENV_NAME" concretize -f || die "spack concretize failed"
         spack -e "$ENV_NAME" install -j"$JOBS" || die "spack install failed"
     fi
