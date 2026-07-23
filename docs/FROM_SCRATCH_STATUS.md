@@ -15,7 +15,12 @@ from source with its own spack clone) was **blocked by an upstream spack packagi
 defect** (below) — now **FIXED** by pinning `mercury~hwloc` in server/spack/spack.yaml
 + regenerated spack.lock. Verified: mercury@2.4.1 now builds in the from-scratch
 tree (`vui6ist`) where `+hwloc` failed at configure every time. Full-stack build
-in progress; this doc will note the final `SETUP COMPLETE` + a from-scratch e2e.
+COMPLETE. `SETUP COMPLETE` (DONE_RC=0), and the **from-scratch e2e PASSED**: job
+7273625 (exit 0, 53s) — clone -> submodules -> install/setup.sh (full Mochi/Mofka
+stack + mongod + venv + darshan connector all built from source) -> job.sh ->
+`INGEST: PASS`, 13 docs, reconstructed OPENS match native. The env now resolves
+the repo-local install/_spack view + install/_venv (env_polaris.sh fix), so the
+clone is fully self-contained. This closes the git-clone->deps->build->green loop.
 
 ## What was fixed in this repo (committed)
 
