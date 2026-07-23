@@ -123,8 +123,13 @@ overhead runs. Always request the SMALLEST walltime that fits.
 
 ## Phase status (update in place)
 - [x] P0  Setup: branch, plan, budget table, verify env + baseline e2e passes (DONE)
-- [ ] P1  Restructure skeleton (git mv; no logic loss); per-dir READMEs
-- [ ] P2  env/ config files drive server structure + workload env
+- [~] P1  Restructure skeleton (IN PROGRESS): env/ Database/ Client/ workloads/{mpi,python-ml}/
+        results/ created; git mv done for mpi + Client + server scripts. TODO:
+        Database/ mongod move, per-dir READMEs, delete old server/env*.sh shims.
+- [x] P2  env/ split DONE + vetted: env/{_profile,common,lcrc,polaris,server,workload}.sh.
+        Dropped C++ pin (proven unneeded). Both entry points tested on LCRC.
+        NOTE: config_server.yaml / config_workload.yaml NOT yet written - deferred
+        until P3/P6/P7 show exactly what needs to vary (avoid speculative YAML parser).
 - [ ] P3  server/ minimal (~3 files), config-driven
 - [ ] P4  Database/ mongod download instructions + script
 - [ ] P5  Client/ flowcept consumer wiring
