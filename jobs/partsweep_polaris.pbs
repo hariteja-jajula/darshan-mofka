@@ -1,0 +1,81 @@
+#!/bin/bash
+#PBS -N dm_partsweep
+#PBS -A radix-io
+#PBS -q debug
+#PBS -l select=1:ncpus=32
+#PBS -l walltime=01:00:00
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+# Arm 2 -- single-node partition-count throughput curve.
+# For partition counts 1,2,4,8 (memory type; default type best-effort), run the
+# heavy loop workload REPS times and record events/sec + per-push p50/p99. The
+# producer uses LOOSE ordering so events spread across partitions -> partition
+# count is the parallelism knob. Memory-backed partitions are enqueue-bound (the
+# curve is expected to flatten -- that flat ceiling is itself the result).
+set -uo pipefail
+R="${REPO:-/eagle/radix-io/hjajula/pv/darshan-mofka}"; cd "$R"
+source server/env.sh
+module unload darshan 2>/dev/null || true
+export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
+OUT="$R/results/partsweep_${PBS_JOBID%%.*}"; mkdir -p "$OUT"
+echo "${PBS_JOBID:-local}" > "$OUT/JOBID"
+DL="$(darshan_lib)"
+NF=1; NW=50000; BS=4096      # heavier than overhead arm: 50k events so partitions matter
+REPS="${REPS:-3}"
+PARTS="${PARTS:-1 2 4 8}"
+TYPES="${TYPES:-memory default}"
+
+[ -x workloads/c/mofka_forward_loop ] || "$CC" -O2 workloads/c/mofka_forward_loop.c -o workloads/c/mofka_forward_loop
+
+for T in $TYPES; do
+  : > "$OUT/summary_${T}.txt"
+  for NP in $PARTS; do
+    for REP in $(seq 1 "$REPS"); do
+      SDIR="$OUT/mofka_${T}_${NP}_${REP}"
+      export MOFKA_SERVER_DIR="$SDIR"
+      bash server/stop_server.sh >/dev/null 2>&1 || true
+      if ! MOFKA_PARTITIONS="$NP" MOFKA_NRANKS=1 MOFKA_PART_TYPE="$T" \
+           SKIP_BUILD=1 bash server/start_server.sh >"$SDIR.start.log" 2>&1; then
+        echo "type=$T parts=$NP rep=$REP START_FAIL (see $SDIR.start.log)" | tee -a "$OUT/summary_${T}.txt"
+        continue
+      fi
+      GROUP="$SDIR/mofka.json"
+      W="/tmp/psweep_${T}_${NP}_${REP}_$$"
+      t0=$(date +%s.%N)
+      env DARSHAN_ENABLE_NONMPI=1 DARSHAN_MOFKA_ENABLE=1 \
+          DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
+          DARSHAN_MOFKA_TIMING=1 DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 \
+          DARSHAN_LOGPATH="$SDIR" LD_PRELOAD="$DL" \
+          ./workloads/c/mofka_forward_loop "$W" "$NF" "$NW" "$BS" \
+          2>"$OUT/run_${T}_${NP}_${REP}.err" >/dev/null
+      t1=$(date +%s.%N)
+      WALL=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.6f", b-a}')
+      printf 'type=%s parts=%s rep=%s wall=%s ' "$T" "$NP" "$REP" "$WALL" | tee -a "$OUT/summary_${T}.txt"
+      "$PY" workloads/c/analyze.py "$OUT/run_${T}_${NP}_${REP}.err" "$WALL" | tee -a "$OUT/summary_${T}.txt"
+      bash server/stop_server.sh >/dev/null 2>&1 || true
+      rm -rf "$W"
+    done
+  done
+done
+
+echo "### partition-curve aggregate (median throughput per type x parts) ###"
+"$PY" - "$OUT" <<'PY' | tee "$OUT/partcurve_result.txt"
+import sys, re, glob, statistics as st
+out = sys.argv[1]
+rows = {}
+for f in glob.glob(f"{out}/summary_*.txt"):
+    for ln in open(f):
+        m = re.search(r"type=(\S+) parts=(\d+) rep=(\d+).*thr_evt_s=([\d.]+).*p50=([\d.]+).*p99=([\d.]+)", ln)
+        if m:
+            t, p = m.group(1), int(m.group(2))
+            rows.setdefault((t, p), {"thr": [], "p50": [], "p99": []})
+            rows[(t, p)]["thr"].append(float(m.group(4)))
+            rows[(t, p)]["p50"].append(float(m.group(5)))
+            rows[(t, p)]["p99"].append(float(m.group(6)))
+print("type,parts,median_thr_evt_s,median_push_p50_us,median_push_p99_us,n")
+for (t, p) in sorted(rows):
+    d = rows[(t, p)]
+    print(f"{t},{p},{st.median(d['thr']):.1f},{st.median(d['p50']):.3f},{st.median(d['p99']):.3f},{len(d['thr'])}")
+PY
+
+echo "### DONE partsweep; artifacts in $OUT ###"

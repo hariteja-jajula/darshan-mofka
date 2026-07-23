@@ -1,0 +1,93 @@
+#!/bin/bash
+#PBS -N dm_overhead
+#PBS -A radix-io
+#PBS -q debug
+#PBS -l select=1:ncpus=32
+#PBS -l walltime=00:30:00
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+# Arm 1 -- Darshan->Mofka connector overhead study, single node.
+# baseline (connector OFF, native darshan only) vs mofka (connector ON), N reps,
+# same heavy loop workload. Reports overhead = mean(mofka)-mean(baseline) wall +
+# pooled per-push latency (survives small N better than per-rep stddev).
+#
+# CRITICAL: DARSHAN_MOFKA_ENABLE is a PRESENCE check (getenv at darshan-core.c:357),
+# so =0 does NOT disable it -- the baseline must `env -u DARSHAN_MOFKA_ENABLE`.
+set -uo pipefail
+R="${REPO:-/eagle/radix-io/hjajula/pv/darshan-mofka}"; cd "$R"
+source server/env.sh
+module unload darshan 2>/dev/null || true
+export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
+OUT="$R/results/overhead_${PBS_JOBID%%.*}"; mkdir -p "$OUT"
+echo "${PBS_JOBID:-local}" > "$OUT/JOBID"
+DL="$(darshan_lib)"
+NF=1; NW=8000; BS=4096      # ~8000 write events; tune here
+REPS="${REPS:-3}"
+
+# ensure the loop workload exists (build if missing)
+[ -x workloads/c/mofka_forward_loop ] || "$CC" -O2 workloads/c/mofka_forward_loop.c -o workloads/c/mofka_forward_loop
+
+echo "### broker (single memory partition, the proven topology) ###"
+SKIP_BUILD=1 bash server/start_server.sh || { echo "broker failed"; exit 1; }
+trap 'bash server/stop_server.sh >/dev/null 2>&1 || true' EXIT
+GROUP="$R/server/mofka.json"
+
+run() {  # $1=arm(base|mofka) $2=tag
+    local arm="$1" tag="$2" W="/tmp/ovh_${1}_${2}_$$" t0 t1
+    t0=$(date +%s.%N)
+    if [ "$arm" = base ]; then
+        env -u DARSHAN_MOFKA_ENABLE DARSHAN_ENABLE_NONMPI=1 \
+            DARSHAN_LOGPATH="$OUT" LD_PRELOAD="$DL" \
+            ./workloads/c/mofka_forward_loop "$W" "$NF" "$NW" "$BS" \
+            2>"$OUT/${arm}_${tag}.err" >/dev/null
+    else
+        env DARSHAN_ENABLE_NONMPI=1 DARSHAN_MOFKA_ENABLE=1 \
+            DARSHAN_MOFKA_GROUP_FILE="$GROUP" DARSHAN_MOFKA_TOPIC=darshan \
+            DARSHAN_MOFKA_TIMING=1 DARSHAN_MOFKA_BATCH=0 DARSHAN_MOFKA_MAX_BATCHES=64 \
+            DARSHAN_LOGPATH="$OUT" LD_PRELOAD="$DL" \
+            ./workloads/c/mofka_forward_loop "$W" "$NF" "$NW" "$BS" \
+            2>"$OUT/${arm}_${tag}.err" >/dev/null
+    fi
+    t1=$(date +%s.%N)
+    awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.6f\n", b-a}' > "$OUT/${arm}_${tag}.wall"
+    rm -rf "$W"
+}
+
+echo "### warmup (discarded) ###"
+run mofka warm
+
+echo "### $REPS reps, interleaved baseline/mofka ###"
+for r in $(seq 1 "$REPS"); do run base "$r"; run mofka "$r"; done
+
+echo "### per-rep mofka health + throughput ###"
+: > "$OUT/mofka_summary.txt"
+for r in $(seq 1 "$REPS"); do
+    printf 'rep %s: ' "$r" | tee -a "$OUT/mofka_summary.txt"
+    "$PY" workloads/c/analyze.py "$OUT/mofka_${r}.err" "$(cat "$OUT/mofka_${r}.wall")" | tee -a "$OUT/mofka_summary.txt"
+done
+
+echo "### walltime table (s) ###"
+{ echo "arm,rep,wall_s"; for r in $(seq 1 "$REPS"); do
+    echo "base,$r,$(cat "$OUT/base_${r}.wall")"; echo "mofka,$r,$(cat "$OUT/mofka_${r}.wall")"; done; } | tee "$OUT/walltimes.csv"
+
+echo "### overhead summary ###"
+"$PY" - "$OUT" "$REPS" <<'PY' | tee "$OUT/overhead_result.txt"
+import sys, statistics as st, glob, os
+out, reps = sys.argv[1], int(sys.argv[2])
+def walls(arm): return [float(open(f"{out}/{arm}_{r}.wall").read()) for r in range(1,reps+1)]
+b, m = walls("base"), walls("mofka")
+bm, mm = st.fmean(b), st.fmean(m)
+bs = st.pstdev(b) if len(b)>1 else 0.0
+ms = st.pstdev(m) if len(m)>1 else 0.0
+abs_ov = mm - bm
+pct = 100.0*abs_ov/bm if bm else float('nan')
+print(f"baseline_wall_s mean={bm:.4f} stddev={bs:.4f} (N={len(b)})")
+print(f"mofka_wall_s    mean={mm:.4f} stddev={ms:.4f} (N={len(m)})")
+print(f"overhead_abs_s={abs_ov:.4f}  overhead_pct={pct:.2f}%")
+print("NOTE: N is small (3) -- stddev is a soft indicator, not a CI.")
+# baseline validity: native .darshan present
+nd = glob.glob(f"{out}/**/*.darshan", recursive=True) + glob.glob(f"{out}/*.darshan")
+print(f"baseline_native_darshan_logs={len(nd)}")
+PY
+
+echo "### DONE overhead; artifacts in $OUT ###"
