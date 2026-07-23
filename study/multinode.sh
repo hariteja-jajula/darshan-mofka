@@ -58,8 +58,12 @@ if [ "$NODES" -ge 2 ]; then
     SRV="$RES/mpi_broker"; mkdir -p "$SRV"
     cp server/bedrock-config-mpi.json "$SRV/"
     sort -u "$PBS_NODEFILE" > "$SRV/hostfile"
-    # openmpi here spawns remote ranks over ssh; relax host-key checking so it can.
+    # openmpi/prrte spawns remote ranks over ssh (this stack is built --without-tm),
+    # so relax host-key checking so the launch to the other node can succeed.
+    # OMPI 4 reads plm_rsh_args; OMPI 5 / PRRTE renamed the component to plm_ssh_args
+    # (setting only the OMPI-4 name was the silent no-op that blocked multi-node).
     export OMPI_MCA_plm_rsh_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    export PRTE_MCA_plm_ssh_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
     ( cd "$SRV" && rm -f mofka.json
       mpirun --hostfile hostfile -np "$NODES" --map-by ppr:1:node \
              bedrock "$MOFKA_PROTOCOL" -c bedrock-config-mpi.json -v info > "$SRV/bedrock.mpi.log" 2>&1 ) &
