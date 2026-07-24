@@ -23,10 +23,17 @@ FWD=""
 [ -n "${SKIP_BUILD:-}" ]            && FWD="${FWD:+$FWD,}SKIP_BUILD=$SKIP_BUILD"
 [ -n "${MONGOD:-}" ]                && FWD="${FWD:+$FWD,}MONGOD=$MONGOD"
 [ -n "${DARSHAN_MOFKA_PROFILE:-}" ] && FWD="${FWD:+$FWD,}DARSHAN_MOFKA_PROFILE=$DARSHAN_MOFKA_PROFILE"
+# config-override knobs, so a run can be retargeted without editing the config file
+for v in EVENTS CHECKPOINTS REPS DARSHAN_MOFKA_ENABLE DARSHAN_MOFKA_TIMING \
+         STUDY_EVENTS STUDY_REPS STUDY_TAG; do
+    [ -n "${!v:-}" ] && FWD="${FWD:+$FWD,}$v=${!v}"
+done
 
-echo "submitting: select=${nodes}:ncpus=${ncpus} walltime=$walltime queue=$queue account=$account"
+# RUN_SCRIPT selects what the allocation runs (default: the standard runner).
+RUN_SCRIPT="${RUN_SCRIPT:-workloads/job.sh}"
+echo "submitting: select=${nodes}:ncpus=${ncpus} walltime=$walltime queue=$queue account=$account run=$RUN_SCRIPT"
 qsub -A "$account" -q "$queue" -l select="${nodes}:ncpus=${ncpus}" -l walltime="$walltime" \
      -N dm_run -j oe -o "$ROOT/results/" ${FWD:+-v "$FWD"} <<PBS
 cd "$ROOT"
-bash workloads/job.sh
+bash "$RUN_SCRIPT"
 PBS
