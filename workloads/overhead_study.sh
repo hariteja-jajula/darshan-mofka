@@ -121,7 +121,7 @@ run_workload_once() {
     else
         env "${base[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     fi
-    local rc=$?; set -e 2>/dev/null || true
+    local rc=$?           # errexit stays off for the whole study; rc is checked explicitly
     return $rc
 }
 

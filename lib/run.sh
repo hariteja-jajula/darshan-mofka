@@ -90,7 +90,11 @@ results_dir_name() {
 # (that leaves Darshan running but not streaming -- a clean runtime-only baseline).
 connector_env() {
     local group="$1"; load_run_config
+    # Always pass ENABLE explicitly (=0 for the runtime-only baseline) so it also
+    # reaches the workload on the separate-node path, where the env is rebuilt from
+    # this array rather than inherited. The connector honors an explicit 0.
     CONNECTOR_ENV=(
+        DARSHAN_MOFKA_ENABLE="$C_ENABLE"
         DARSHAN_MOFKA_GROUP_FILE="$group"
         DARSHAN_MOFKA_TOPIC="$SRV_TOPIC"
         DARSHAN_MOFKA_BATCH="$C_BATCH"
@@ -98,7 +102,6 @@ connector_env() {
         DARSHAN_MOFKA_TIMING="$C_TIMING"
         DARSHAN_MOFKA_FLUSH_MS="$C_FLUSH_MS"
     )
-    [ "$C_ENABLE" = 1 ] && CONNECTOR_ENV=(DARSHAN_MOFKA_ENABLE=1 "${CONNECTOR_ENV[@]}")
 }
 
 # DARSHAN_ENV=(...) -- standard Darshan runtime env from server.config darshan:
