@@ -78,9 +78,11 @@ fi
 WL_NNODES=${#WL_NODES_ARR[@]}
 WL_TOTAL_RANKS=$(( WL_TASKS * WL_NNODES ))
 WL_NODE="${WL_NODES_ARR[0]}"   # kept for messages / single-node paths
-# bare "n1,n2,..." node list; the launch uses --map-by ppr:WL_TASKS:node to place exactly
-# WL_TASKS ranks per node against real cores (NO oversubscription -- keep WL_TASKS <= ncpus).
-WL_HOSTSPEC="$(IFS=,; echo "${WL_NODES_ARR[*]}")"
+# "node:cores,..." -- declare each node's REAL core count as slots (a bare --host defaults
+# to 1 slot and ignores the PBS allocation), so --map-by ppr:WL_TASKS:node places exactly
+# WL_TASKS ranks/node with NO oversubscription (keep WL_TASKS <= cores/node).
+WL_SLOTS="$(nproc 2>/dev/null || echo 128)"
+WL_HOSTSPEC=""; for h in "${WL_NODES_ARR[@]}"; do WL_HOSTSPEC+="${h}:${WL_SLOTS},"; done; WL_HOSTSPEC=${WL_HOSTSPEC%,}
 say "topology: ${#NODELIST[@]} node(s) | broker ranks=$NRANKS_BROKER on ${SRV_NODE} | workload ${WL_TASKS} task/node x ${WL_NNODES} node = ${WL_TOTAL_RANKS} rank(s) on: ${WL_NODES_ARR[*]}"
 
 # --- 5. broker (single or one-per-node via tm), created once ---
