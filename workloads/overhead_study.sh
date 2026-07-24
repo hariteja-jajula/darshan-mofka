@@ -149,25 +149,28 @@ for rep in $(seq 1 "$STUDY_REPS"); do
     echo "baseline,$rep,$wall,0,0,0" >> "$CSV"
 done
 
-# --- 8. streaming: connector on; consumer drains the whole phase ---
+# --- 8. streaming: connector on; a FRESH consumer/db per rep so each rep's
+#        events.jsonl holds exactly that rep (mirrors job.sh -- a single shared db
+#        would accumulate all reps and make the op-count compare 3x the native). ---
 say "8. streaming (DARSHAN_MOFKA_ENABLE=1) x$STUDY_REPS"
 export DARSHAN_MOFKA_ENABLE=1
-RUN_DIR="$ROOT/server/_flowcept_run"; rm -rf "$RUN_DIR"
-start_consumer "$RUN_DIR" "$GROUP" || die "consumer failed"
+RUN_DIR="$ROOT/server/_flowcept_run"
 LAST_RES=""
 for rep in $(seq 1 "$STUDY_REPS"); do
     RES="$RESBASE/streaming_RUN$rep"; mkdir -p "$RES"; LAST_RES="$RES"
+    rm -rf "$RUN_DIR"; start_consumer "$RUN_DIR" "$GROUP" || die "consumer failed"
     t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
     wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f", b-a}')
     read -r sends mean med < <(push_stats "$RES/workload.err")
     echo "  streaming rep$rep: wall=${wall}s sends=$sends mean_push=${mean}us median=${med}us rc=$rc"
     echo "streaming,$rep,$wall,$sends,$mean,$med" >> "$CSV"
+    stop_consumer_verdict "$RUN_DIR" "$RES/ingest.txt" "$RES/events.jsonl"  # export+kill per rep
+    echo "    exported: $(wc -l < "$RES/events.jsonl" 2>/dev/null || echo 0) events"
 done
 
-# --- 9. e2e validation from the last streaming rep (drain + reconstruct + compare) ---
+# --- 9. e2e validation from the last streaming rep (reconstruct + 1:1 compare) ---
 say "9. end-to-end validation (last streaming rep)"
 EVJSONL="$LAST_RES/events.jsonl"
-stop_consumer_verdict "$RUN_DIR" "$LAST_RES/ingest.txt" "$EVJSONL"
 echo "exported lines: $(wc -l < "$EVJSONL" 2>/dev/null || echo 0)"
 PARTIAL="$LAST_RES/partial.darshan"
 if "$B/darshan-mofka-reconstruct" "$EVJSONL" "$PARTIAL"; then
