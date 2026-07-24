@@ -200,11 +200,15 @@ for rep in $(seq 1 "$STUDY_REPS"); do
     echo "baseline,$rep,$wall,0,0,0" >> "$CSV"
 done
 
-# --- 9. streaming: connector on, pushing to the broker. No consumer needed for the
-#        timing arm -- per-send cost is producer->broker, independent of draining;
-#        the broker just buffers these events in memory. ---
+# --- 9. streaming: connector on, pushing to the broker. A single consumer drains
+#        the whole phase so the broker's memory partition doesn't fill and
+#        backpressure the producer (a consumer-less arm hangs once the partition is
+#        full). Its db accumulates across reps, but that's fine -- the e2e 1:1
+#        verdict was already taken in phase 7; here we only need wall + push cost. ---
 say "9. streaming (DARSHAN_MOFKA_ENABLE=1) x$STUDY_REPS"
 export DARSHAN_MOFKA_ENABLE=1
+RUN_DIR="$ROOT/server/_flowcept_run"; rm -rf "$RUN_DIR"
+start_consumer "$RUN_DIR" "$GROUP" || die "consumer failed"
 for rep in $(seq 1 "$STUDY_REPS"); do
     RES="$RESBASE/streaming_RUN$rep"; mkdir -p "$RES"
     t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
@@ -213,6 +217,7 @@ for rep in $(seq 1 "$STUDY_REPS"); do
     echo "  streaming rep$rep: wall=${wall}s sends=$sends mean_push=${mean}us median=${med}us rc=$rc"
     echo "streaming,$rep,$wall,$sends,$mean,$med" >> "$CSV"
 done
+stop_consumer_verdict "$RUN_DIR" "$RESBASE/streaming_ingest.txt" /dev/null 2>/dev/null || true
 
 # --- 10. report ---
 say "10. report"
