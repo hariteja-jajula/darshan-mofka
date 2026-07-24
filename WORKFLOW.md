@@ -1,7 +1,8 @@
 # How to run
 
-The whole pipeline is config-driven: you edit **two files**, then submit one command.
-Nothing else needs touching.
+The whole pipeline is config-driven: edit a config file, then submit one command.
+For a first run you usually only touch `workloads/workload.config` (and your PBS
+account); the rest have sensible defaults.
 
 ```
 program does I/O ─▶ Darshan (LD_PRELOAD) ─▶ Mofka broker ─▶ FlowCept ─▶ MongoDB
@@ -31,14 +32,16 @@ pbs:                   # how the job is submitted
   ncpus: 32
 ```
 
-## 2. Tune how it streams (optional) — two more config files
+## 2. Tune how it streams (optional)
 
-Config is split by role; you rarely need these for a first run:
-- **`workloads/workload.config`** (producer) — also holds `connector:` (batch, flush_ms, …)
+Config is split by role, so the rest is grouped where it belongs. You rarely need
+these for a first run:
+
+- `workloads/workload.config` (producer) — also holds `connector:` (batch, flush_ms, …)
   and `darshan:` env (modmem, module enable/disable), since those run on the workload node.
-- **`server/server.config`** (broker) — transport, topic, partitions, partition_type, and
+- `server/server.config` (broker) — transport, topic, partitions, partition_type, and
   `broker:` margo threads / master DB.
-- **`Client/client.config`** (consumer + sink) — the MongoDB `mongo:` settings and the
+- `Client/client.config` (consumer + sink) — the MongoDB `mongo:` settings and the
   FlowCept `consumer:` buffers.
 
 ## 3. Submit

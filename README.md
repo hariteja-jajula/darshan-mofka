@@ -65,10 +65,9 @@ env/                  environment setup (server side and workload side)
 server/               start/stop the Mofka broker
 Client/               the FlowCept consumer and the export-to-JSON tool
 Database/             get a local MongoDB
-workloads/            programs to exercise the connector (C, MPI-IO, DLIO, python-ml)
+workloads/            the workloads (C, MPI-IO, DLIO, python-ml) and job.sh, the runner
 install/              one-command setup that builds everything
-job.sh                run the full pipeline once, on a compute node
-submit.sh             send job.sh to PBS
+submit.sh             size a PBS allocation from the config and run workloads/job.sh on it
 results/              one folder per run, with all its output
 ```
 

@@ -24,8 +24,11 @@ PBS_ACCOUNT=<your_project> bash submit.sh
 ```
 
 `submit.sh` sends the job to a compute node (the broker's network transport does
-not come up on login nodes). When it finishes, look in `results/` for the newest
-`c_<timestamp>/` folder.
+not come up on login nodes). It sizes the allocation from `topology.nodes` and the
+`pbs:` block in `workloads/workload.config`. Results land in
+`results/<TAG>_<N>NODE_<P>PROC_<B>Broker-<placement>/RUN<n>/`; the folder name is
+built from your topology, so a default single-node C run is
+`results/C_1NODE_1PROC_1Broker-colocated/RUN1/`.
 
 ## What success looks like
 
@@ -37,7 +40,7 @@ modules: {'POSIX': 4, 'STDIO': 9}
 VERDICT: PASS
 ```
 
-And `results/c_<timestamp>/compare.txt` shows the rebuilt log matching the real one:
+And the run's `compare.txt` shows the rebuilt log matching the real one:
 
 ```text
 reconstructed modules: ['POSIX', 'STDIO']  op-totals: {'READS': 2, 'WRITES': 3, 'OPENS': 3}
@@ -52,9 +55,12 @@ and the synthetic job/exe metadata.
 
 ## Other workloads
 
-```bash
-PBS_ACCOUNT=<your_project> bash submit.sh python-ml     # a Python I/O workload
-PBS_ACCOUNT=<your_project> bash submit.sh mpi           # MPI-IO across ranks
+The workload is chosen by the `workload:` key in `workloads/workload.config`
+(`c`, `python-ml`, or `mpi`). Set it there, then submit as above:
+
+```yaml
+workload: python-ml    # a small Python I/O workload
+# workload: mpi        # MPI-IO across ranks
 ```
 
 ## If you already have the Mofka stack
