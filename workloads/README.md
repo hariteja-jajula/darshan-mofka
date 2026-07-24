@@ -1,15 +1,15 @@
 # workloads/
 
-Workloads for exercising the Darshan→Mofka connector, plus the one runner that drives
-the whole pipeline.
+Workloads that exercise the Darshan→Mofka connector, plus the runner that drives the
+whole pipeline.
 
-- **[`workload.config`](workload.config)** — pick the workload, its size, and the topology
-  (nodes / tasks / placement / brokers). The one file you edit to say *what to run and where*.
-- **[`job.sh`](job.sh)** — the runner. Reads `workload.config` + `../server/server.config`,
+- [`workload.config`](workload.config) — pick the workload, its size, and the topology
+  (nodes / tasks / placement / brokers). This is where you say what to run and where.
+- [`job.sh`](job.sh) — the runner. Reads `workload.config` + `../server/server.config`,
   stands up the broker + FlowCept consumer for the topology, runs the workload, reconstructs
-  the `.darshan` log from the stream, and compares it 1:1 to the native log.
+  the `.darshan` log from the stream, and compares it to the native log.
 
-**To run, see [`../WORKFLOW.md`](../WORKFLOW.md)** — the short edit-config → `submit.sh` →
+To run, see [`../WORKFLOW.md`](../WORKFLOW.md) — the edit-config → `submit.sh` →
 `results/` guide. In brief:
 
 ```bash

@@ -1,11 +1,11 @@
 # darshan-mofka manual runbook
 
 Manual steps for building and running the pipeline. Use this for debugging,
-partial rebuilds, or checking what `job.sh` and the `install/` scripts automate.
-For the fast path see the top-level [README](../README.md); for the pinned build
-from source see [install/README.md](../install/README.md).
+partial rebuilds, or checking what `workloads/job.sh` and the `install/` scripts
+automate. For the fast path see the top-level [README](../README.md); for the
+pinned build from source see [install/README.md](../install/README.md).
 
-The steps below are validated on ALCF **Polaris**; the inline notes call out the
+The steps below are validated on ALCF Polaris; the inline notes call out the
 Cray/eagle-specific workarounds.
 
 ## Prerequisites
@@ -31,8 +31,8 @@ Three external pieces must exist before the steps below work:
    filesystem (`eagle`)**, not `$HOME` (compute nodes can't see `$HOME`), and be
    fetched on a **login node** (compute nodes have no internet). Details in step 6.
 
-The quickest path once all three exist: `bash job.sh` runs the whole pipeline
-below on a compute node in one shot.
+The quickest path once all three exist: `bash workloads/job.sh` runs the whole
+pipeline below on a compute node in one shot.
 
 ## Polaris allocation
 
@@ -146,7 +146,7 @@ Build the workloads (the non-MPI smoke test and the MPI-IO test):
 
 ```bash
 "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
-"$CC" -O2 workloads/c/mofka_forward_mpiio.c -o workloads/c/mofka_forward_mpiio
+"$CC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio
 ```
 
 `mofka_forward_mpiio` exercises the MPIIO module (and its `MPI_File_close`
@@ -318,7 +318,7 @@ mpiexec -n 4 env \
   DARSHAN_MOFKA_FLUSH_MS=10000 \
   DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
   LD_PRELOAD="$(darshan_lib)" \
-  ./workloads/c/mofka_forward_mpiio /tmp/mofka-forward-mpiio \
+  ./workloads/mpi/mofka_forward_mpiio /tmp/mofka-forward-mpiio \
   > /tmp/darshan-mofka-mpiio.out \
   2> /tmp/darshan-mofka-mpiio.err
 ```
@@ -432,7 +432,8 @@ bash server/stop_server.sh
 ## One-shot command block
 
 After everything has been built once, this block runs the full pipeline. This is
-what `job.sh` automates; use `bash job.sh` unless you need to tweak steps.
+what `workloads/job.sh` automates; use it (via `submit.sh`) unless you need to
+tweak steps.
 
 ```bash
 source env/server.sh --polaris  # or: source env/server.sh --lcrc on LCRC/Improv
@@ -498,11 +499,11 @@ bash server/stop_server.sh
 
 ## Job scripts
 
-- `job.sh` (repo root) -- the canonical one-shot: builds (non-MPI), starts a
-  fresh broker, runs the C smoke workload, exports, and reconstructs +
-  compares to native. Run on a compute node: `bash job.sh`.
-- `job.sh` -- an older PBS-submission variant that also runs DLIO. Self-
-  submits (`PBS_ACCOUNT=<project> bash job.sh`) or `qsub -A <project> job.sh`.
+- `workloads/job.sh` -- the one-shot runner: builds, starts a fresh broker, runs
+  the workload from `workload.config`, exports, and reconstructs + compares to
+  native. Run it on a compute node with `bash workloads/job.sh`.
+- `submit.sh` (repo root) -- sizes a PBS allocation from the config and runs
+  `workloads/job.sh` on it: `PBS_ACCOUNT=<project> bash submit.sh`.
 
 ## Troubleshooting
 
