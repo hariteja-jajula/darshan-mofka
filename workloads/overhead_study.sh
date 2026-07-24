@@ -146,12 +146,24 @@ CSV="$RESBASE/summary.csv"; echo "condition,rep,wall_s,sends,mean_push_us,median
 say "7. end-to-end validation (1 streaming rep, full pipeline)"
 export DARSHAN_MOFKA_ENABLE=1
 VRES="$RESBASE/validation"; mkdir -p "$VRES"
+# ONE consumer for the whole study: a second start_consumer in the same job races
+# on mongod/flowcept teardown and dies on startup. So start it once here and keep
+# it alive through the streaming phase. Export phase-7's events straight from mongo
+# once they've drained (poll until the ingested count catches up to what the
+# connector sent) WITHOUT the SHUTDOWN signal, which would stop the consumer.
 RUN_DIR="$ROOT/server/_flowcept_run"; rm -rf "$RUN_DIR"
 start_consumer "$RUN_DIR" "$GROUP" || die "consumer failed"
 run_workload_once "$VRES"; echo "  validation workload rc=$?"
 EVJSONL="$VRES/events.jsonl"
-stop_consumer_verdict "$RUN_DIR" "$VRES/ingest.txt" "$EVJSONL"
-echo "exported lines: $(wc -l < "$EVJSONL" 2>/dev/null || echo 0)"
+vsends=$(grep -c 'darshan-mofka\[timing\] send' "$VRES/workload.err" 2>/dev/null || echo 0)
+n=0; for i in $(seq 1 40); do
+    "$PY" "$ROOT/Client/export_jsonl.py" 127.0.0.1 "$SRV_MONGO_DB" \
+        --mongo-port "$SRV_MONGO_PORT" > "$EVJSONL" 2>/dev/null || true
+    n=$(wc -l < "$EVJSONL" 2>/dev/null || echo 0)
+    [ "$n" -ge "$vsends" ] && break
+    sleep 3
+done
+echo "exported lines: $n (sends=$vsends)"
 PARTIAL="$VRES/partial.darshan"
 if "$B/darshan-mofka-reconstruct" "$EVJSONL" "$PARTIAL"; then
     NATIVE="$(find "$VRES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -name 'partial.darshan' -newermt '-30 min' 2>/dev/null | sort | tail -1)"
@@ -200,15 +212,13 @@ for rep in $(seq 1 "$STUDY_REPS"); do
     echo "baseline,$rep,$wall,0,0,0" >> "$CSV"
 done
 
-# --- 9. streaming: connector on, pushing to the broker. A single consumer drains
-#        the whole phase so the broker's memory partition doesn't fill and
-#        backpressure the producer (a consumer-less arm hangs once the partition is
-#        full). Its db accumulates across reps, but that's fine -- the e2e 1:1
-#        verdict was already taken in phase 7; here we only need wall + push cost. ---
+# --- 9. streaming: connector on, pushing to the broker, drained by the SAME
+#        consumer started in phase 7 (a second start_consumer races and dies; a
+#        consumer-less arm hangs once the memory partition fills). Its db just
+#        accumulates here -- the e2e 1:1 verdict was already taken in phase 7;
+#        here we only need wall + push cost. ---
 say "9. streaming (DARSHAN_MOFKA_ENABLE=1) x$STUDY_REPS"
 export DARSHAN_MOFKA_ENABLE=1
-RUN_DIR="$ROOT/server/_flowcept_run"; rm -rf "$RUN_DIR"
-start_consumer "$RUN_DIR" "$GROUP" || die "consumer failed"
 for rep in $(seq 1 "$STUDY_REPS"); do
     RES="$RESBASE/streaming_RUN$rep"; mkdir -p "$RES"
     t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
@@ -217,7 +227,8 @@ for rep in $(seq 1 "$STUDY_REPS"); do
     echo "  streaming rep$rep: wall=${wall}s sends=$sends mean_push=${mean}us median=${med}us rc=$rc"
     echo "streaming,$rep,$wall,$sends,$mean,$med" >> "$CSV"
 done
-stop_consumer_verdict "$RUN_DIR" "$RESBASE/streaming_ingest.txt" /dev/null 2>/dev/null || true
+# tear down the single consumer once, at the end
+kill "$CONSUMER_PID" 2>/dev/null; wait "$CONSUMER_PID" 2>/dev/null || true
 
 # --- 10. report ---
 say "10. report"
