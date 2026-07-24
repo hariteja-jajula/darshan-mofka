@@ -24,8 +24,11 @@ FWD=""
 [ -n "${MONGOD:-}" ]                && FWD="${FWD:+$FWD,}MONGOD=$MONGOD"
 [ -n "${DARSHAN_MOFKA_PROFILE:-}" ] && FWD="${FWD:+$FWD,}DARSHAN_MOFKA_PROFILE=$DARSHAN_MOFKA_PROFILE"
 # config-override knobs, so a run can be retargeted without editing the config file
+# (topology + broker knobs included so the stress ladder is env-driven per rung)
 for v in EVENTS CHECKPOINTS REPS DARSHAN_MOFKA_ENABLE DARSHAN_MOFKA_TIMING \
-         STUDY_EVENTS STUDY_REPS STUDY_TAG; do
+         STUDY_EVENTS STUDY_REPS STUDY_TAG STUDY_WORKLOADS \
+         NODES TASKS PLACEMENT BROKERS PARTITIONS MOFKA_PARTITION_TYPE \
+         RPC_THREAD_COUNT DRAIN_WAIT_S; do
     [ -n "${!v:-}" ] && FWD="${FWD:+$FWD,}$v=${!v}"
 done
 
