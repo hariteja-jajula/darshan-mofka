@@ -11,10 +11,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$ROOT/lib/config.sh"
 WC="$ROOT/workloads/workload.config"
 
-nodes=$(cfg_get "$WC" topology.nodes 1)
-ncpus=$(cfg_get "$WC" pbs.ncpus 32)
-walltime=$(cfg_get "$WC" pbs.walltime 00:30:00)
-queue=$(cfg_get "$WC" pbs.queue debug)
+nodes="${NODES:-$(cfg_get "$WC" topology.nodes 1)}"
+ncpus="${NCPUS:-$(cfg_get "$WC" pbs.ncpus 32)}"
+walltime="${WALLTIME:-$(cfg_get "$WC" pbs.walltime 00:30:00)}"
+queue="${QUEUE:-$(cfg_get "$WC" pbs.queue debug)}"   # QUEUE=compute for >1h / big rungs (72h cap)
 account="${PBS_ACCOUNT:-$(cfg_get "$WC" pbs.account "")}"
 [ -n "$account" ] || { echo "set an allocation: PBS_ACCOUNT=<project> bash submit.sh (or pbs.account in workload.config)"; exit 1; }
 
