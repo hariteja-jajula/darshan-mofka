@@ -118,6 +118,12 @@ record() { # $1=config $2=rep $3=RES $4=wall
 }
 
 # ---- reference arms (no broker/consumer) ----
+# references don't stream; give GROUP a harmless value so connector_env (called in
+# run_workload_once) doesn't trip set -u before the per-config broker sets it. Run
+# them on the same node the separate-placement streaming baseline uses, for a fair
+# wall-time comparison.
+GROUP="${GROUP:-}"
+WL_NODE="${NODELIST[1]:-${NODELIST[0]}}"
 say "reference: Baseline_nodarshan_nomofka x$STUDY_REPS"
 ARM_MODE=none; unset DARSHAN_MOFKA_ENABLE
 for rep in $(seq 1 "$STUDY_REPS"); do
