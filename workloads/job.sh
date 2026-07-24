@@ -68,9 +68,20 @@ export MONGOD
 mapfile -t NODELIST < <(sort -u "${PBS_NODEFILE:-/dev/null}" 2>/dev/null)
 [[ ${#NODELIST[@]} -ge 1 ]] || NODELIST=("$(hostname)")
 NRANKS_BROKER=$([[ "$WL_BROKERS" == per-node ]] && echo "${#NODELIST[@]}" || echo 1)
-SRV_NODE="${NODELIST[0]}"; WL_NODE="$SRV_NODE"
-[[ "$WL_PLACEMENT" == separate ]] && WL_NODE="${NODELIST[1]:-${NODELIST[0]}}"
-say "topology: ${#NODELIST[@]} node(s) | broker ranks=$NRANKS_BROKER on ${SRV_NODE} | workload ($WL_TASKS task) on ${WL_NODE}"
+SRV_NODE="${NODELIST[0]}"
+# workload nodes: separate -> every node except the broker head; colocated -> all nodes.
+if [[ "$WL_PLACEMENT" == separate && ${#NODELIST[@]} -ge 2 ]]; then
+    WL_NODES_ARR=("${NODELIST[@]:1}")
+else
+    WL_NODES_ARR=("${NODELIST[@]}")
+fi
+WL_NNODES=${#WL_NODES_ARR[@]}
+WL_TOTAL_RANKS=$(( WL_TASKS * WL_NNODES ))
+WL_NODE="${WL_NODES_ARR[0]}"   # kept for messages / single-node paths
+# bare "n1,n2,..." node list; the launch uses --map-by ppr:WL_TASKS:node to place exactly
+# WL_TASKS ranks per node against real cores (NO oversubscription -- keep WL_TASKS <= ncpus).
+WL_HOSTSPEC="$(IFS=,; echo "${WL_NODES_ARR[*]}")"
+say "topology: ${#NODELIST[@]} node(s) | broker ranks=$NRANKS_BROKER on ${SRV_NODE} | workload ${WL_TASKS} task/node x ${WL_NNODES} node = ${WL_TOTAL_RANKS} rank(s) on: ${WL_NODES_ARR[*]}"
 
 # --- 5. broker (single or one-per-node via tm), created once ---
 say "5. broker"
@@ -99,16 +110,17 @@ run_workload_once() {
         *)         die "unknown workload '$WL_TYPE'" ;;
     esac
     local base=(DARSHAN_LOGPATH="$RES" LD_PRELOAD="$dlib" "${CONNECTOR_ENV[@]}" "${DARSHAN_ENV[@]}" "${WORKLOAD_ENV[@]}")
-    if [[ "$WL_PLACEMENT" == separate && "$WL_NODE" != "$SRV_NODE" ]]; then
+    # Fast path: a single local rank on the head node needs no launcher. Otherwise place
+    # WL_TASKS ranks per workload node (multi-proc and/or multi-node) with ppr mapping --
+    # NO oversubscription (WL_TASKS must be <= ncpus/node or PRRTE errors, which is correct).
+    if [[ "$WL_TOTAL_RANKS" -le 1 && "$WL_NNODES" -le 1 && "$WL_NODE" == "$SRV_NODE" && "$WL_TYPE" != mpi ]]; then
+        env "${base[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
+    else
         local estr="${CONNECTOR_ENV[*]} ${DARSHAN_ENV[*]} ${WORKLOAD_ENV[*]}"
-        mpirun -n "$WL_TASKS" --host "$WL_NODE" bash -lc \
+        mpirun -n "$WL_TOTAL_RANKS" --map-by ppr:"$WL_TASKS":node --host "$WL_HOSTSPEC" \
+            --mca pml ob1 --mca btl tcp,self bash -lc \
           "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && env $estr DARSHAN_LOGPATH='$RES' LD_PRELOAD='$dlib' ${cmd[*]}" \
           > "$RES/workload.out" 2> "$RES/workload.err"
-    elif [[ "$WL_TASKS" -gt 1 || "$WL_TYPE" == mpi ]]; then
-        mpiexec --oversubscribe -n "$WL_TASKS" --mca pml ob1 --mca btl tcp,self \
-          env "${base[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
-    else
-        env "${base[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     fi
 }
 
@@ -157,9 +169,12 @@ print("VERDICT:", "PASS" if ok else "MISMATCH", "(known-OK diffs: mount label, t
 sys.exit(0 if ok else 3)
 PY
     [[ "${PIPESTATUS[0]}" == 3 ]] && FINAL_RC=3
-    # pydarshan HTML (from the results dir so the repo darshan/ doesn't shadow the package)
-    [[ -f "$RES/native.darshan" ]] && ( cd "$RES" && "$PY" -m darshan summary native.darshan >/dev/null 2>&1 \
-        && echo "  HTML: $(ls "$RES"/*.html 2>/dev/null | head -1)" ) || true
+    # pydarshan HTML, native AND reconstructed, for side-by-side comparison. Run from the
+    # results dir so the repo's darshan/ source tree doesn't shadow the installed package.
+    ( cd "$RES"
+      [[ -f native.darshan  ]] && "$PY" -m darshan summary native.darshan  >/dev/null 2>&1 || true
+      [[ -f partial.darshan ]] && "$PY" -m darshan summary partial.darshan >/dev/null 2>&1 || true
+      echo "  HTML: $(ls native_report.html partial_report.html 2>/dev/null | tr '\n' ' ')" ) || true
 done
 
 say "DONE ($WL_TYPE, $WL_REPS rep(s))"

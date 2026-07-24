@@ -206,8 +206,9 @@ start_consumer() {
 # print the INGEST verdict to <out>, then stop the consumer.
 stop_consumer_verdict() {
     local run_dir="$1" out="$2" events="$3"
+    local wait_s="${DRAIN_WAIT_S:-600}"   # drain ceiling; big backlogs need >120s (returns early once drained)
     touch "$run_dir/SHUTDOWN"
-    local i; for i in $(seq 1 120); do
+    local i; for i in $(seq 1 "$wait_s"); do
         grep -q 'Export now' "$run_dir/flowcept.out" 2>/dev/null && break
         kill -0 "$CONSUMER_PID" 2>/dev/null || break; sleep 1
     done
