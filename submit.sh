@@ -34,8 +34,10 @@ done
 
 # RUN_SCRIPT selects what the allocation runs (default: the standard runner).
 RUN_SCRIPT="${RUN_SCRIPT:-workloads/job.sh}"
-echo "submitting: select=${nodes}:ncpus=${ncpus} walltime=$walltime queue=$queue account=$account run=$RUN_SCRIPT"
-qsub -A "$account" -q "$queue" -l select="${nodes}:ncpus=${ncpus}" -l walltime="$walltime" \
+# mpiprocs=ncpus makes PBS/tm expose ncpus MPI slots per node (default is 1), so mpirun can
+# place multiple ranks/node without oversubscription.
+echo "submitting: select=${nodes}:ncpus=${ncpus}:mpiprocs=${ncpus} walltime=$walltime queue=$queue account=$account run=$RUN_SCRIPT"
+qsub -A "$account" -q "$queue" -l select="${nodes}:ncpus=${ncpus}:mpiprocs=${ncpus}" -l walltime="$walltime" \
      -N dm_run -j oe -o "$ROOT/results/" ${FWD:+-v "$FWD"} <<PBS
 cd "$ROOT"
 bash "$RUN_SCRIPT"
