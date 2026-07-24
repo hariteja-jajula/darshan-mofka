@@ -78,11 +78,14 @@ fi
 WL_NNODES=${#WL_NODES_ARR[@]}
 WL_TOTAL_RANKS=$(( WL_TASKS * WL_NNODES ))
 WL_NODE="${WL_NODES_ARR[0]}"   # kept for messages / single-node paths
-# "node:cores,..." -- declare each node's REAL core count as slots (a bare --host defaults
-# to 1 slot and ignores the PBS allocation), so --map-by ppr:WL_TASKS:node places exactly
-# WL_TASKS ranks/node with NO oversubscription (keep WL_TASKS <= cores/node).
-WL_SLOTS="$(nproc 2>/dev/null || echo 128)"
-WL_HOSTSPEC=""; for h in "${WL_NODES_ARR[@]}"; do WL_HOSTSPEC+="${h}:${WL_SLOTS},"; done; WL_HOSTSPEC=${WL_HOSTSPEC%,}
+# Hostfile of the workload nodes with real slots declared (slots = this node's entry count in
+# PBS_NODEFILE, which mpiprocs=ncpus makes = cores). A hostfile both RESTRICTS placement to the
+# workload nodes (excludes the broker head) and declares slots reliably, so
+# --map-by ppr:WL_TASKS:node puts exactly WL_TASKS ranks/node with NO oversubscription.
+WL_SLOTS="$(awk -v n="${WL_NODES_ARR[0]}" '$1==n{c++} END{print c+0}' "${PBS_NODEFILE:-/dev/null}" 2>/dev/null)"
+[ "${WL_SLOTS:-0}" -ge 1 ] 2>/dev/null || WL_SLOTS="$(nproc 2>/dev/null || echo 128)"
+WL_HOSTFILE="$ROOT/server/_wl_hostfile"
+: > "$WL_HOSTFILE"; for h in "${WL_NODES_ARR[@]}"; do echo "$h slots=$WL_SLOTS" >> "$WL_HOSTFILE"; done
 say "topology: ${#NODELIST[@]} node(s) | broker ranks=$NRANKS_BROKER on ${SRV_NODE} | workload ${WL_TASKS} task/node x ${WL_NNODES} node = ${WL_TOTAL_RANKS} rank(s) on: ${WL_NODES_ARR[*]}"
 
 # --- 5. broker (single or one-per-node via tm), created once ---
@@ -119,7 +122,7 @@ run_workload_once() {
         env "${base[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     else
         local estr="${CONNECTOR_ENV[*]} ${DARSHAN_ENV[*]} ${WORKLOAD_ENV[*]}"
-        mpirun -n "$WL_TOTAL_RANKS" --map-by ppr:"$WL_TASKS":node --host "$WL_HOSTSPEC" \
+        mpirun -n "$WL_TOTAL_RANKS" --map-by ppr:"$WL_TASKS":node --hostfile "$WL_HOSTFILE" \
             --mca pml ob1 --mca btl tcp,self bash -lc \
           "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && env $estr DARSHAN_LOGPATH='$RES' LD_PRELOAD='$dlib' ${cmd[*]}" \
           > "$RES/workload.out" 2> "$RES/workload.err"
