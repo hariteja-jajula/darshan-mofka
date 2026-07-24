@@ -138,46 +138,26 @@ RESBASE="$ROOT/results/OVERHEAD_STUDY_$(results_dir_name)"
 rm -rf "$RESBASE"; mkdir -p "$RESBASE"
 CSV="$RESBASE/summary.csv"; echo "condition,rep,wall_s,sends,mean_push_us,median_push_us" > "$CSV"
 
-# --- 7. baseline: runtime-only, no streaming, no consumer ---
-say "7. baseline (DARSHAN_MOFKA_ENABLE=0) x$STUDY_REPS"
-export DARSHAN_MOFKA_ENABLE=0
-for rep in $(seq 1 "$STUDY_REPS"); do
-    RES="$RESBASE/baseline_RUN$rep"; mkdir -p "$RES"
-    t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
-    wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f", b-a}')
-    echo "  baseline rep$rep: wall=${wall}s rc=$rc"
-    echo "baseline,$rep,$wall,0,0,0" >> "$CSV"
-done
-
-# --- 8. streaming: connector on; a FRESH consumer/db per rep so each rep's
-#        events.jsonl holds exactly that rep (mirrors job.sh -- a single shared db
-#        would accumulate all reps and make the op-count compare 3x the native). ---
-say "8. streaming (DARSHAN_MOFKA_ENABLE=1) x$STUDY_REPS"
+# --- 7. end-to-end validation: ONE clean streaming rep drained by a single
+#        consumer on a fresh topic (started once -- no per-rep restart race), then
+#        reconstructed and compared 1:1 to its native log. Done first so the topic
+#        holds exactly this rep's events; the consumer-less timing reps below add
+#        to the broker afterward without polluting this comparison. ---
+say "7. end-to-end validation (1 streaming rep, full pipeline)"
 export DARSHAN_MOFKA_ENABLE=1
-RUN_DIR="$ROOT/server/_flowcept_run"
-LAST_RES=""
-for rep in $(seq 1 "$STUDY_REPS"); do
-    RES="$RESBASE/streaming_RUN$rep"; mkdir -p "$RES"; LAST_RES="$RES"
-    rm -rf "$RUN_DIR"; start_consumer "$RUN_DIR" "$GROUP" || die "consumer failed"
-    t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
-    wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f", b-a}')
-    read -r sends mean med < <(push_stats "$RES/workload.err")
-    echo "  streaming rep$rep: wall=${wall}s sends=$sends mean_push=${mean}us median=${med}us rc=$rc"
-    echo "streaming,$rep,$wall,$sends,$mean,$med" >> "$CSV"
-    stop_consumer_verdict "$RUN_DIR" "$RES/ingest.txt" "$RES/events.jsonl"  # export+kill per rep
-    echo "    exported: $(wc -l < "$RES/events.jsonl" 2>/dev/null || echo 0) events"
-done
-
-# --- 9. e2e validation from the last streaming rep (reconstruct + 1:1 compare) ---
-say "9. end-to-end validation (last streaming rep)"
-EVJSONL="$LAST_RES/events.jsonl"
+VRES="$RESBASE/validation"; mkdir -p "$VRES"
+RUN_DIR="$ROOT/server/_flowcept_run"; rm -rf "$RUN_DIR"
+start_consumer "$RUN_DIR" "$GROUP" || die "consumer failed"
+run_workload_once "$VRES"; echo "  validation workload rc=$?"
+EVJSONL="$VRES/events.jsonl"
+stop_consumer_verdict "$RUN_DIR" "$VRES/ingest.txt" "$EVJSONL"
 echo "exported lines: $(wc -l < "$EVJSONL" 2>/dev/null || echo 0)"
-PARTIAL="$LAST_RES/partial.darshan"
+PARTIAL="$VRES/partial.darshan"
 if "$B/darshan-mofka-reconstruct" "$EVJSONL" "$PARTIAL"; then
-    NATIVE="$(find "$LAST_RES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -name 'partial.darshan' -newermt '-30 min' 2>/dev/null | sort | tail -1)"
-    "$B/darshan-parser" --show-incomplete "$PARTIAL" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$LAST_RES/r.txt" || true
-    [[ -n "$NATIVE" ]] && { cp "$NATIVE" "$LAST_RES/native.darshan"; "$B/darshan-parser" --show-incomplete "$NATIVE" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$LAST_RES/n.txt" || true; }
-    "$PY" - "$LAST_RES/r.txt" "$LAST_RES/n.txt" <<'PY' | tee "$LAST_RES/compare.txt"
+    NATIVE="$(find "$VRES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -name 'partial.darshan' -newermt '-30 min' 2>/dev/null | sort | tail -1)"
+    "$B/darshan-parser" --show-incomplete "$PARTIAL" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$VRES/r.txt" || true
+    [[ -n "$NATIVE" ]] && { cp "$NATIVE" "$VRES/native.darshan"; "$B/darshan-parser" --show-incomplete "$NATIVE" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$VRES/n.txt" || true; }
+    "$PY" - "$VRES/r.txt" "$VRES/n.txt" <<'PY' | tee "$VRES/compare.txt"
 import sys, os
 from collections import Counter
 def mods_ops(path):
@@ -202,11 +182,37 @@ print("VERDICT:", "PASS" if ok else "MISMATCH")
 PY
     # exe / mounts / heatmap presence check on the reconstructed log
     echo "-- exe/mounts --"; "$B/darshan-parser" "$PARTIAL" 2>/dev/null | grep -iE '^# exe|^# mount entry' | head
-    ( cd "$LAST_RES" && "$PY" -c "import darshan; r=darshan.DarshanReport('partial.darshan',read_all=True); print('heatmaps:', list(r.heatmaps.keys()), {m:sum(int(a.sum()) for a in h.__dict__['_data']['write'].values()) for m,h in r.heatmaps.items()})" 2>&1 | tail -1 )
-    ( cd "$LAST_RES" && "$PY" -m darshan summary partial.darshan >/dev/null 2>&1 && echo "HTML: $(ls "$LAST_RES"/*.html 2>/dev/null | head -1)" ) || true
+    ( cd "$VRES" && "$PY" -c "import darshan; r=darshan.DarshanReport('partial.darshan',read_all=True); print('heatmaps:', list(r.heatmaps.keys()), {m:sum(int(a.sum()) for a in h.__dict__['_data']['write'].values()) for m,h in r.heatmaps.items()})" 2>&1 | tail -1 )
+    ( cd "$VRES" && "$PY" -m darshan summary partial.darshan >/dev/null 2>&1 && echo "HTML: $(ls "$VRES"/*.html 2>/dev/null | head -1)" ) || true
 else
     echo "reconstruct produced no log (no events?)"
 fi
+
+# --- 8. baseline: runtime-only, connector off (ENABLE=0 -> zero-overhead early-out),
+#        no consumer. Pure Darshan wall time. ---
+say "8. baseline (DARSHAN_MOFKA_ENABLE=0) x$STUDY_REPS"
+export DARSHAN_MOFKA_ENABLE=0
+for rep in $(seq 1 "$STUDY_REPS"); do
+    RES="$RESBASE/baseline_RUN$rep"; mkdir -p "$RES"
+    t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
+    wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f", b-a}')
+    echo "  baseline rep$rep: wall=${wall}s rc=$rc"
+    echo "baseline,$rep,$wall,0,0,0" >> "$CSV"
+done
+
+# --- 9. streaming: connector on, pushing to the broker. No consumer needed for the
+#        timing arm -- per-send cost is producer->broker, independent of draining;
+#        the broker just buffers these events in memory. ---
+say "9. streaming (DARSHAN_MOFKA_ENABLE=1) x$STUDY_REPS"
+export DARSHAN_MOFKA_ENABLE=1
+for rep in $(seq 1 "$STUDY_REPS"); do
+    RES="$RESBASE/streaming_RUN$rep"; mkdir -p "$RES"
+    t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
+    wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f", b-a}')
+    read -r sends mean med < <(push_stats "$RES/workload.err")
+    echo "  streaming rep$rep: wall=${wall}s sends=$sends mean_push=${mean}us median=${med}us rc=$rc"
+    echo "streaming,$rep,$wall,$sends,$mean,$med" >> "$CSV"
+done
 
 # --- 10. report ---
 say "10. report"
