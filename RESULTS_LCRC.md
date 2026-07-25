@@ -89,9 +89,12 @@ producer-side **attach cap** and a consumer-side **drain ceiling** — plus a fl
 
 | tasks/node | example | requested | attached | attach rate |
 |---|---|---|---|---|
-| 1 | 4 nodes / 8 nodes | 4 / 8 | 4 / 8 | **100%** |
+| 1 | 4 / 8 / 24 producers | 4 / 8 / 24 | 4 / 8 / 24 | **100%** |
 | 2 | 3 / 5 / 9 nodes | 4 / 8 / 16 | 2 / 4 / 7 | **~50%** |
 | 4–32 | 2 nodes, per-node broker | 8…64 | 2…16 | **25%** |
+
+At **1 producer/node the attach rate stays 100% and scales cleanly to at least 24 producers
+(25 nodes)** — confirming the "scale by nodes" deployment.
 
 The cleanest measurement is the single-node probe (N producers on **one** node → one
 remote broker):
@@ -116,14 +119,26 @@ Init ~60–120 ms/rank; finalize grows with the shutdown backlog.
 
 | topology | events | sent | exported | verdict |
 |---|---|---|---|---|
-| 8n × 1t (**pre-fix**) | 400k | 400,104 | **95,191** | MISMATCH (76% lost) |
-| 9n × 2t, partitions=8 (**post-fix**) | 400k | 400,296 | **400,304** | **PASS** |
+| 8n × 1t (**pre-fix**), part=1 | 400k | 400,104 | **95,191** | MISMATCH (76% lost) |
+| 9n × 2t, partitions=8 (**post-fix**) | 400k | 400,296 | **400,304** | **PASS (100%)** |
+| 16 producers, partitions=1 | 320k | 320,352 | 77,584 | drain-capped |
+| 8 producers, partitions=8 | 800k | 800,296 | 101,423 | drain-capped |
 
-The loss was entirely consumer-side: `capture_flowcept.sh` rendered only 4 of the settings
-placeholders (so `client.config`'s 1000-doc batches never applied), the mongo dbpath was on
-GPFS, and the graceful stop was wrapped in `timeout 60` — truncating the final drain of a large
-backlog. The minimal fix (render the buffer/flush knobs, node-local `/tmp` dbpath,
-`timeout ${STOP_TIMEOUT:-600}`) took delivery from **24% → 100% at 400k**, no broker change needed.
+The pre-fix loss was entirely consumer-side: `capture_flowcept.sh` rendered only 4 of the
+settings placeholders (so `client.config`'s 1000-doc batches never applied), the mongo dbpath
+was on GPFS, and the graceful stop was wrapped in `timeout 60` — truncating the final drain.
+The minimal fix (render the buffer/flush knobs, node-local `/tmp` dbpath,
+`timeout ${STOP_TIMEOUT:-600}`) took delivery from **24% → 100% at 400k** with no broker change.
+
+**Two further ceilings remain (honestly bounded), both needing more than a minimal edit:**
+- **Partitions must scale with concurrency.** `partitions=1` saturates around ~7 producers /
+  ~150k events; 16 concurrent producers at `partitions=1` deliver only 24%. Use
+  `partitions ≥ producers` (a config knob) for high fan-in.
+- **Broker memory-partition shedding.** With `partition_type: memory`, ~800k events (~1.6 GB)
+  exceeds what the in-RAM partitions retain before the single consumer drains them, so only
+  ~101k reach Mongo. Beyond ~½M events, the durable path is `partition_type: default` (on-disk
+  chunks) and/or multiple `DocumentInserter` consumers — deferred as they are larger changes,
+  not one-line knobs. The validated envelope for the minimal-LOC fix is **≤400k events**.
 
 ## Workload knobs (C)
 
