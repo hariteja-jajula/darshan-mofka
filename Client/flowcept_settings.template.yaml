@@ -61,6 +61,7 @@ mq:
   type: mofka
   channel: __TOPIC__                 # MUST match the producer's DARSHAN_MOFKA_TOPIC
   group_file: __MOFKA_GROUP__
+  targets: __TARGETS__              # partition indices this consumer drains ([] / empty = all)
   host: localhost                   # unused by mofka driver (group_file carries the address)
   port: 6379
   buffer_size: __MQ_BUF__
@@ -101,7 +102,7 @@ databases:
   mongodb:
     enabled: true
     host: localhost
-    port: 27017
+    port: __MONGO_PORT__
     db: __MONGO_DB__
     create_collection_index: true
 

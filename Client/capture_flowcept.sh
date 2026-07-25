@@ -61,18 +61,24 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# --- mongod (background, NOT --fork) ---------------------------------------
-# dbpath: honor a passed MONGO_DBPATH (client.config mongo.dbpath), else a per-run dir on
-# node-local scratch -- WiredTiger over the parallel FS (GPFS) throttles every insert flush.
-MONGO_DBPATH="${MONGO_DBPATH:-${TMPDIR:-/tmp}/dm_mongo_$$}"; mkdir -p "$MONGO_DBPATH"
+# --- mongod: the LEAD starts one shared mongod; FOLLOWERS attach to it -------
+# For a sharded parallel drain, N consumers share ONE mongod: FlowCept upserts on the unique
+# task_id index, so overlapping/duplicate events collapse and reconstruct reads one collection
+# (simpler + safer than one mongod per shard). Only FC_ROLE=lead owns the mongod lifecycle.
+FC_ROLE="${FC_ROLE:-lead}"
 MONGO_LOG="$RUN_DIR/mongod.log"
-echo "=== [fc] mongod (port $MONGO_PORT, dbpath $MONGO_DBPATH) ==="
-"$MONGOD" --dbpath "$MONGO_DBPATH" --logpath "$MONGO_LOG" \
-          --port "$MONGO_PORT" --bind_ip 127.0.0.1 --nounixsocket \
-          ${MONGO_CACHE_GB:+--wiredTigerCacheSizeGB "$MONGO_CACHE_GB"} &
-MONGOD_PID=$!
-for i in $(seq 1 30); do (echo > "/dev/tcp/127.0.0.1/$MONGO_PORT") 2>/dev/null && { echo "[fc] mongod ready ${i}s"; break; }; sleep 1; done
-(echo > "/dev/tcp/127.0.0.1/$MONGO_PORT") 2>/dev/null || { echo "[fc] FAIL: mongod not up"; tail -30 "$MONGO_LOG"; exit 1; }
+if [ "$FC_ROLE" = lead ]; then
+    MONGO_DBPATH="${MONGO_DBPATH:-${TMPDIR:-/tmp}/dm_mongo_$$}"; mkdir -p "$MONGO_DBPATH"
+    echo "=== [fc] mongod (port $MONGO_PORT, dbpath $MONGO_DBPATH) ==="
+    "$MONGOD" --dbpath "$MONGO_DBPATH" --logpath "$MONGO_LOG" \
+              --port "$MONGO_PORT" --bind_ip 127.0.0.1 --nounixsocket \
+              ${MONGO_CACHE_GB:+--wiredTigerCacheSizeGB "$MONGO_CACHE_GB"} &
+    MONGOD_PID=$!
+else
+    echo "=== [fc] follower: attaching to shared mongod on port $MONGO_PORT ==="
+fi
+for i in $(seq 1 60); do (echo > "/dev/tcp/127.0.0.1/$MONGO_PORT") 2>/dev/null && { echo "[fc] mongod ready ${i}s"; break; }; sleep 1; done
+(echo > "/dev/tcp/127.0.0.1/$MONGO_PORT") 2>/dev/null || { echo "[fc] FAIL: mongod not up on $MONGO_PORT"; [ "$FC_ROLE" = lead ] && tail -30 "$MONGO_LOG"; exit 1; }
 
 # --- render flowcept settings from the template ----------------------------
 FLOWCEPT_SETTINGS="$RUN_DIR/flowcept_settings.yaml"
@@ -84,8 +90,13 @@ sed -e "s|__MOFKA_GROUP__|$MOFKA_GROUP|g" \
     -e "s|__MQ_FLUSH__|${MQ_FLUSH_SECS:-5}|g" \
     -e "s|__DB_BUF__|${DB_BUFFER_SIZE:-50}|g" \
     -e "s|__DB_FLUSH__|${DB_FLUSH_SECS:-5}|g" \
+    -e "s|__TARGETS__|${MOFKA_TARGETS:-}|g" \
+    -e "s|__MONGO_PORT__|${MONGO_PORT:-27017}|g" \
     "$SETTINGS_TEMPLATE" > "$FLOWCEPT_SETTINGS"
 export FLOWCEPT_SETTINGS_PATH="$FLOWCEPT_SETTINGS"
+# The FlowCept consumer (configs.py) reads the mongo SINK port from $MONGO_PORT; export it so a
+# per-shard consumer writes to its own mongod (parallel drain), not the default 27017.
+export MONGO_PORT MONGO_HOST="127.0.0.1"
 echo "[fc] FLOWCEPT_SETTINGS_PATH=$FLOWCEPT_SETTINGS_PATH"
 grep -E "type:|channel:|group_file:|enabled:|db:" "$FLOWCEPT_SETTINGS" | sed 's/^/    /'
 
@@ -107,7 +118,7 @@ echo "     touch $SHUTDOWN_FLAG"
 echo "     to flush + stop and land all events in mongo db '$MONGO_DB'."
 echo "===================================================================="
 while [[ ! -f "$SHUTDOWN_FLAG" ]]; do
-    kill -0 "$MONGOD_PID"   2>/dev/null || { echo "[fc] mongod died"; tail -20 "$MONGO_LOG" | sed 's/^/    /'; break; }
+    [[ -n "$MONGOD_PID" ]] && { kill -0 "$MONGOD_PID" 2>/dev/null || { echo "[fc] mongod died"; tail -20 "$MONGO_LOG" | sed 's/^/    /'; break; }; }
     kill -0 "$CONSUMER_PID" 2>/dev/null || { echo "[fc] consumer died"; tail -20 "$CONSUMER_LOG" | sed 's/^/    /'; break; }
     sleep 5
 done
@@ -116,6 +127,13 @@ done
 echo "=== [fc] graceful stop (flush) ==="
 ( timeout "${STOP_TIMEOUT:-600}" "$PY" -m flowcept.cli --stop-consumption-services 2>&1 ) | sed 's/^/    /' || echo "    (stop nonzero; cleanup will SIGTERM)"
 for i in $(seq 1 30); do kill -0 "$CONSUMER_PID" 2>/dev/null || { echo "[fc] consumer exited cleanly"; break; }; sleep 1; done
+
+# A follower has now flushed its shard into the shared mongod; the lead owns the
+# verdict/export/teardown, so the follower is done.
+if [ "$FC_ROLE" != lead ]; then
+    echo "[fc] follower drained its shard + stopped; exiting (lead keeps the shared mongod up)"
+    exit 0
+fi
 
 # --- ingest verdict --------------------------------------------------------
 echo "=== [fc] mongo ingest verdict (db=$MONGO_DB) ==="

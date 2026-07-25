@@ -1,0 +1,46 @@
+diff --git a/src/MofkaDriver.cpp b/src/MofkaDriver.cpp
+index 9c910b7..dcd698e 100644
+--- a/src/MofkaDriver.cpp
++++ b/src/MofkaDriver.cpp
+@@ -18,6 +18,7 @@
+ #include <spdlog/spdlog.h>
+ 
+ #include <fstream>
++#include <cstdlib>
+ 
+ namespace mofka {
+ 
+@@ -97,6 +98,16 @@ std::shared_ptr<diaspora::DriverInterface> MofkaDriver::create(const diaspora::M
+                 server_addresses.push_back(addr);
+         }
+         auto protocol = server_addresses[0].substr(0, server_addresses[0].find(':'));
++        // Providers like verbs require the LOCAL na_ofi domain to be named on the CONNECT side --
++        // a client engine can't auto-select it the way a listening server (e.g. bedrock) does, so it
++        // fails with `No provider found for "verbs;ofi_rxm" on domain "(null)"`. If MOFKA_NA_DOMAIN
++        // is set and the protocol carries no domain, qualify it, e.g.
++        // ofi+verbs;ofi_rxm  ->  ofi+verbs;ofi_rxm://mlx5_0
++        {
++            const char* _na_dom = std::getenv("MOFKA_NA_DOMAIN");
++            if (_na_dom && *_na_dom && protocol.find("://") == std::string::npos)
++                protocol += std::string("://") + _na_dom;
++        }
+ 
+         // get the margo configuration
+         auto margo_config = config.value("margo", nlohmann::json::object());
+@@ -125,8 +136,15 @@ std::shared_ptr<diaspora::DriverInterface> MofkaDriver::create(const diaspora::M
+                     " Some options may be ignored as a consequence.");
+         } else {
+             auto margo_config_str = margo_config.dump();
++            // A producer-only client (e.g. the Darshan connector) can set MOFKA_CLIENT_MODE=1 so its
++            // Mercury endpoint is non-listening (THALLIUM_CLIENT_MODE, ~512-deep queues) instead of a
++            // SERVER_MODE listener (~4096-deep, special-cased for tcp/cxi). Many producers per node
++            // then attach without exhausting the NIC's fabric queues. Consumers (which must receive
++            // pushed batches) leave it unset and keep SERVER_MODE.
++            auto _mofka_engine_mode = std::getenv("MOFKA_CLIENT_MODE")
++                                    ? THALLIUM_CLIENT_MODE : THALLIUM_SERVER_MODE;
+             engine = thallium::engine{
+-                protocol.c_str(), THALLIUM_SERVER_MODE, margo_config_str.c_str()};
++                protocol.c_str(), _mofka_engine_mode, margo_config_str.c_str()};
+         }
+ 
+         // create the bedrock ServiceGroupHandle
