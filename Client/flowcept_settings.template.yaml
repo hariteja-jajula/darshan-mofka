@@ -63,8 +63,8 @@ mq:
   group_file: __MOFKA_GROUP__
   host: localhost                   # unused by mofka driver (group_file carries the address)
   port: 6379
-  buffer_size: 50
-  insertion_buffer_time_secs: 5
+  buffer_size: __MQ_BUF__
+  insertion_buffer_time_secs: __MQ_FLUSH__
   timing: false
   chunk_size: -1
   same_as_kvdb: false
@@ -85,8 +85,8 @@ extra_metadata:
   pipeline: "darshan-mofka-flowcept-ingest"
 
 db_buffer:
-  insertion_buffer_time_secs: 5
-  buffer_size: 50
+  insertion_buffer_time_secs: __DB_FLUSH__
+  buffer_size: __DB_BUF__
   remove_empty_fields: false
   stop_max_trials: 300
   stop_trials_sleep: 0.1
