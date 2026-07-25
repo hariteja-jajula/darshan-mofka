@@ -54,6 +54,7 @@ load_run_config() {
     C_TIMING=$(_cfg_env DARSHAN_MOFKA_TIMING "$WORKLOAD_CONFIG" connector.timing 1)
     C_CLIENT_MODE=$(_cfg_env MOFKA_CLIENT_MODE "$WORKLOAD_CONFIG" connector.client_mode 1)  # producer non-listening endpoint (attach fix)
     C_NA_DOMAIN=$(_cfg_env MOFKA_NA_DOMAIN "$WORKLOAD_CONFIG" connector.na_domain "")        # local na_ofi domain (verbs needs it, e.g. mlx5_0)
+    C_FINAL_SWEEP=$(_cfg_env DARSHAN_MOFKA_FINAL_SWEEP "$WORKLOAD_CONFIG" connector.final_sweep 0)  # re-stream final records at shutdown; DISABLED (hangs python-ml, see run.sh connector_env note)
     D_NONMPI=$(_cfg_env DARSHAN_ENABLE_NONMPI "$WORKLOAD_CONFIG" darshan.enable_nonmpi 1)
     D_MODMEM=$(_cfg_env DARSHAN_MODMEM "$WORKLOAD_CONFIG" darshan.modmem "")
     D_MOD_ENABLE=$(_cfg_env DARSHAN_MOD_ENABLE "$WORKLOAD_CONFIG" darshan.mod_enable "")
@@ -117,6 +118,13 @@ connector_env() {
     # Name the local na_ofi domain for the producer (verbs can't default it on connect). Patched
     # mofka reads MOFKA_NA_DOMAIN and qualifies the engine protocol (ofi+verbs;ofi_rxm://mlx5_0).
     [ -n "$C_NA_DOMAIN" ] && CONNECTOR_ENV+=( MOFKA_NA_DOMAIN="$C_NA_DOMAIN" )
+    # Finalize records-sweep: would re-stream every module record's final struct at shutdown to
+    # close the python-ml init-window counter gap. DISABLED by default: enabling it hangs python-ml
+    # at finalize (the extra records are new async sends from the atexit context, and mofka's
+    # producer sender runs on the margo progress pool, so they never progress). Only an explicit
+    # final_sweep:1 / DARSHAN_MOFKA_FINAL_SWEEP=1 turns it on -- for experiments once mofka is fixed.
+    # See the KNOWN ISSUE note in darshan_mofka_connector_flush_records (darshan-mofka.c).
+    [ "$C_FINAL_SWEEP" = 1 ] && CONNECTOR_ENV+=( DARSHAN_MOFKA_FINAL_SWEEP=1 )
 }
 
 # DARSHAN_ENV=(...) -- standard Darshan runtime env from server.config darshan:
