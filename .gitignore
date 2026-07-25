@@ -62,3 +62,11 @@ __pycache__/
 
 # overnight driver logs
 /overnight_logs/
+
+# machine-specific spack symlink (trailing-slash rule misses the symlink)
+/install/_spack
+# broker + workload runtime outputs
+/server/_broker/
+/server/_wl_hostfile
+# results run-id marker (dotfile not caught by /results/*/ or *.OU)
+/results/.g8_base_jobid
