@@ -1,7 +1,7 @@
 # Polaris-native Spack environment for the Mofka/FlowCept stack this demo needs
 # (Bedrock, Mochi (margo/mercury/thallium/warabi/yokan/flock), Mofka, Darshan).
 #
-# This is the dependency spec for the stack that `server/env_polaris.sh` expects to
+# This is the dependency spec for the stack that `env/polaris.sh` expects to
 # find as a built Spack *view*. The prebuilt binaries are NOT in git (they are ~1GB
 # of compiled artifacts); this file + spack.lock are how you rebuild them on Polaris.
 #
