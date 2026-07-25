@@ -1,4 +1,4 @@
-# LCRC/Improv multi-node + overhead results (2026-07-23)
+# LCRC/Improv multi-node + overhead results (updated 2026-07-25)
 
 All runs on Improv, account `radix-io`, `debug` queue. No SSH anywhere: remote ranks
 are launched through the PBS **`tm`** launcher of the **system** Open MPI
@@ -79,6 +79,44 @@ sustained (~50k events) — it's a flat per-event tax, so a real long job's conn
 `events × ~37 µs`. The only load-dependent term is the **finalize drain** (~360 ms at smoke →
 ~600 ms at 50k), which scales with the pending-batch backlog at shutdown (robustness item G8).
 
+## 5. Multi-node scaling, attach curve, and the drain ceiling (2026-07-25 campaign)
+
+A chained campaign (`workloads/job.sh` per cell, dedicated-broker `separate` topology
+unless noted) mapped how the pipeline scales. Two independent limits emerged — a
+producer-side **attach cap** and a consumer-side **drain ceiling** — plus a flat per-event cost.
+
+**Attach rate** (`attached` = connector `initialize` count; `requested` = tasks × workload-nodes):
+
+| tasks/node | example | requested | attached | attach rate |
+|---|---|---|---|---|
+| 1 | 4 nodes / 8 nodes | 4 / 8 | 4 / 8 | **100%** |
+| 2 | 3 / 5 / 9 nodes | 4 / 8 / 16 | 2 / 4 / 7 | **~50%** |
+| 4–32 | 2 nodes, per-node broker | 8…64 | 2…16 | **25%** |
+
+Improv over tcp attaches **cleanly only at 1 task/node** and degrades with co-located
+producers. A per-node *local* broker gives no benefit (2n×4t still 25%), so it is not
+broker fan-in. Polaris's CXI fabric shows the *same* failure signature (`einval == 3·N`)
+but a gentler slope (100% at 2/node, ~75% at 4–32) — pinning the root cause to **Mofka
+client concurrency (upstream), not the transport**. Practical rule: **scale by nodes at
+1 producer/node**; treat >1/node as an overhead-under-contention curve, not a clean config.
+
+**Per-event push cost is flat ~24.5 µs (median)** across every cell — 2 to 16 producers,
+10k to 400k events, co-located or split — i.e. it does not degrade under attach pressure.
+Init ~60–120 ms/rank; finalize grows with the shutdown backlog.
+
+**Drain ceiling — found and fixed.** A single FlowCept consumer + mongod caps throughput:
+
+| topology | events | sent | exported | verdict |
+|---|---|---|---|---|
+| 8n × 1t (**pre-fix**) | 400k | 400,104 | **95,191** | MISMATCH (76% lost) |
+| 9n × 2t, partitions=8 (**post-fix**) | 400k | 400,296 | **400,304** | **PASS** |
+
+The loss was entirely consumer-side: `capture_flowcept.sh` rendered only 4 of the settings
+placeholders (so `client.config`'s 1000-doc batches never applied), the mongo dbpath was on
+GPFS, and the graceful stop was wrapped in `timeout 60` — truncating the final drain of a large
+backlog. The minimal fix (render the buffer/flush knobs, node-local `/tmp` dbpath,
+`timeout ${STOP_TIMEOUT:-600}`) took delivery from **24% → 100% at 400k**, no broker change needed.
+
 ## Workload knobs (C)
 
 `workloads/workload.config` — two knobs, event count known ahead of time:
@@ -92,13 +130,20 @@ Override per-run with env `EPOCHS` / `CHECKPOINT_EVERY` (both set ⇒ exact coun
 
 ## Reproduce
 
+The standalone `study/*.pbs` drivers that produced §1–4 have been folded into the one
+config-driven runner (`workloads/job.sh`) + `submit.sh`; every result reproduces by passing
+the topology/scale as env overrides (each is one PBS job):
+
 ```bash
-R=/home/hjajula/repro-fromscratch/darshan-mofka   # a checkout on the system-external-openmpi stack
-qsub -A radix-io -v REPO=$R study/mn_broker_lcrc.pbs       # multi-node broker + ingest
-qsub -A radix-io -v REPO=$R study/mn_split_lcrc.pbs        # server/workload split + ingest
-qsub -A radix-io -v REPO=$R study/overhead_split_lcrc.pbs  # overhead study (default 8 epochs)
-qsub -A radix-io -v REPO=$R,EPOCHS=50000,CHECKPOINT_EVERY=1000 study/overhead_split_lcrc.pbs  # sustained
+cd /home/hjajula/repro-fromscratch/darshan-mofka   # a checkout on the system-external-openmpi stack
+PBS_ACCOUNT=radix-io NODES=2 BROKERS=per-node bash submit.sh                              # §1 multi-node broker
+PBS_ACCOUNT=radix-io NODES=2 PLACEMENT=separate bash submit.sh                            # §2 server/workload split
+PBS_ACCOUNT=radix-io NODES=3 TASKS=2 PLACEMENT=separate EVENTS=20000 bash submit.sh       # §5 multi-node scaling
+PBS_ACCOUNT=radix-io NODES=9 TASKS=2 PLACEMENT=separate PARTITIONS=8 EVENTS=50000 bash submit.sh  # §5 400k drain
 ```
+
+Each run lands in `results/C_<N>NODE_<P>PROC_<B>Broker-<placement>/RUN*/` with the native and
+reconstructed `.darshan`, the streamed `events.jsonl`, the ingest verdict, and the reconstruct diff.
 
 Validate reconstruct.c 1:1 (native vs reconstructed HTML, from a neutral dir to avoid the
 repo `darshan/` source shadowing the pip package):
