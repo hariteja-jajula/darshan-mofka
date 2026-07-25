@@ -52,6 +52,8 @@ load_run_config() {
     C_MAX_BATCHES=$(_cfg_env DARSHAN_MOFKA_MAX_BATCHES "$WORKLOAD_CONFIG" connector.max_batches 64)
     C_FLUSH_MS=$(_cfg_env DARSHAN_MOFKA_FLUSH_MS "$WORKLOAD_CONFIG" connector.flush_ms 5000)
     C_TIMING=$(_cfg_env DARSHAN_MOFKA_TIMING "$WORKLOAD_CONFIG" connector.timing 1)
+    C_CLIENT_MODE=$(_cfg_env MOFKA_CLIENT_MODE "$WORKLOAD_CONFIG" connector.client_mode 1)  # producer non-listening endpoint (attach fix)
+    C_NA_DOMAIN=$(_cfg_env MOFKA_NA_DOMAIN "$WORKLOAD_CONFIG" connector.na_domain "")        # local na_ofi domain (verbs needs it, e.g. mlx5_0)
     D_NONMPI=$(_cfg_env DARSHAN_ENABLE_NONMPI "$WORKLOAD_CONFIG" darshan.enable_nonmpi 1)
     D_MODMEM=$(_cfg_env DARSHAN_MODMEM "$WORKLOAD_CONFIG" darshan.modmem "")
     D_MOD_ENABLE=$(_cfg_env DARSHAN_MOD_ENABLE "$WORKLOAD_CONFIG" darshan.mod_enable "")
@@ -66,6 +68,7 @@ load_run_config() {
     CONS_MQ_FLUSH=$(_cfg_env MQ_FLUSH_SECS "$CLIENT_CONFIG" consumer.mq_flush_secs 5)
     CONS_DB_BUF=$(_cfg_env DB_BUFFER_SIZE "$CLIENT_CONFIG" consumer.db_buffer_size 50)
     CONS_DB_FLUSH=$(_cfg_env DB_FLUSH_SECS "$CLIENT_CONFIG" consumer.db_flush_secs 5)
+    CONS_N=$(_cfg_env CONSUMERS "$CLIENT_CONFIG" consumer.consumers 1)   # parallel sharded drainers
     BRK_RPC_THREADS=$(_cfg_env RPC_THREAD_COUNT "$SERVER_CONFIG" broker.rpc_thread_count 4)
     BRK_PROGRESS=$(_cfg_env USE_PROGRESS_THREAD "$SERVER_CONFIG" broker.use_progress_thread true)
     BRK_MASTER_DB=$(_cfg_env MASTER_DB "$SERVER_CONFIG" broker.master_db map)
@@ -102,6 +105,18 @@ connector_env() {
         DARSHAN_MOFKA_TIMING="$C_TIMING"
         DARSHAN_MOFKA_FLUSH_MS="$C_FLUSH_MS"
     )
+    # Producer-only: make the connector's Mofka engine non-listening (patched mofka reads
+    # MOFKA_CLIENT_MODE) so many producers/node stop exhausting the NIC's fabric queues. Only
+    # added to the PRODUCER env here; the FlowCept consumer never sees it, so it keeps SERVER_MODE.
+    [ "$C_CLIENT_MODE" = 1 ] && CONNECTOR_ENV+=( MOFKA_CLIENT_MODE=1 )
+    # Optional: shrink the producer's Mercury na_ofi send/recv queues further (CLIENT_MODE gives
+    # 512; smaller = fewer per-node fabric resources = more producers/node attach). Passed through
+    # when set in the environment (na_ofi.c reads NA_OFI_TX_SIZE/RX_SIZE).
+    [ -n "${NA_OFI_TX_SIZE:-}" ] && CONNECTOR_ENV+=( NA_OFI_TX_SIZE="$NA_OFI_TX_SIZE" )
+    [ -n "${NA_OFI_RX_SIZE:-}" ] && CONNECTOR_ENV+=( NA_OFI_RX_SIZE="$NA_OFI_RX_SIZE" )
+    # Name the local na_ofi domain for the producer (verbs can't default it on connect). Patched
+    # mofka reads MOFKA_NA_DOMAIN and qualifies the engine protocol (ofi+verbs;ofi_rxm://mlx5_0).
+    [ -n "$C_NA_DOMAIN" ] && CONNECTOR_ENV+=( MOFKA_NA_DOMAIN="$C_NA_DOMAIN" )
 }
 
 # DARSHAN_ENV=(...) -- standard Darshan runtime env from server.config darshan:
@@ -184,36 +199,81 @@ broker_topic_partitions() {
     done
 }
 
-# start the FlowCept consumer (drains topic -> mongo) in the background; sets CONSUMER_PID
-start_consumer() {
-    local run_dir="$1" group="$2"; load_run_config; mkdir -p "$run_dir"
-    RUN_DIR="$run_dir" MONGO_DB="$SRV_MONGO_DB" MONGO_PORT="$SRV_MONGO_PORT" MONGOD="$MONGOD" \
-      TOPIC="$SRV_TOPIC" MOFKA_GROUP="$group" \
-      MQ_BUFFER_SIZE="$CONS_MQ_BUF" MQ_FLUSH_SECS="$CONS_MQ_FLUSH" \
-      DB_BUFFER_SIZE="$CONS_DB_BUF" DB_FLUSH_SECS="$CONS_DB_FLUSH" \
-      MONGO_CACHE_GB="$SRV_MONGO_CACHE_GB" MONGO_DBPATH="$SRV_MONGO_DBPATH" \
-      bash "$REPO_ROOT/Client/capture_flowcept.sh" > "$run_dir/flowcept.out" 2>&1 &
-    CONSUMER_PID=$!
-    local i; for i in $(seq 1 120); do
-        grep -q 'consumer alive' "$run_dir/flowcept.out" 2>/dev/null && return 0
-        kill -0 "$CONSUMER_PID" 2>/dev/null || { echo "consumer died:"; tail -20 "$run_dir/flowcept.out"; return 1; }
-        sleep 1
-    done
-    echo "consumer did not come up in 120s"; return 1
+# Parallel sharded drain: CONS_N FlowCept consumers each pinned to a DISJOINT partition subset
+# (Mofka `targets`), ALL sharing ONE mongod. FlowCept upserts on the unique task_id index, so a
+# shared sink de-dups for free and reconstruct reads one collection -- simpler and safer than one
+# mongod per shard (an over- or mis-set shard just re-upserts, never duplicates). Consumer 0 is the
+# LEAD (owns the mongod + verdict/export); 1..N-1 are followers that attach to it. CONS_N=1 is the
+# original single-consumer path (identical). Set consumer.consumers (CONSUMERS) with server
+# partitions >= consumers to scale the pull. Fills CONSUMER_PIDS / CONSUMER_DIRS.
+
+# partition indices for shard k of C over P partitions -> "[i,j,..]" (contiguous, remainder
+# spread to the first shards; empty for the single-consumer case = all partitions).
+_shard_targets() {
+    local k="$1" C="$2" P="$3"
+    [ "$C" -le 1 ] && { echo ""; return; }
+    local base=$((P / C)) rem=$((P % C)) start count i list=""
+    if [ "$k" -lt "$rem" ]; then start=$((k * (base + 1))); count=$((base + 1))
+    else start=$((rem * (base + 1) + (k - rem) * base)); count=$base; fi
+    for ((i = 0; i < count; i++)); do list="${list:+$list,}$((start + i))"; done
+    echo "[$list]"
 }
 
-# signal the consumer to drain, export mongo->JSONL (<events>) WHILE mongod is still up,
-# print the INGEST verdict to <out>, then stop the consumer.
+# launch consumer shard k (role lead|follower) into $cdir; ALL share MONGO_PORT (one mongod).
+_launch_consumer() {
+    local k="$1" C="$2" P="$3" group="$4" role="$5" cdir="$6"
+    local targets; targets="$(_shard_targets "$k" "$C" "$P")"; mkdir -p "$cdir"
+    FC_ROLE="$role" RUN_DIR="$cdir" MONGO_DB="$SRV_MONGO_DB" MONGO_PORT="$SRV_MONGO_PORT" \
+      MONGOD="$MONGOD" MONGO_CACHE_GB="$SRV_MONGO_CACHE_GB" MONGO_DBPATH="$SRV_MONGO_DBPATH" \
+      TOPIC="$SRV_TOPIC" MOFKA_GROUP="$group" MOFKA_TARGETS="$targets" \
+      MQ_BUFFER_SIZE="$CONS_MQ_BUF" MQ_FLUSH_SECS="$CONS_MQ_FLUSH" \
+      DB_BUFFER_SIZE="$CONS_DB_BUF" DB_FLUSH_SECS="$CONS_DB_FLUSH" \
+      bash "$REPO_ROOT/Client/capture_flowcept.sh" > "$cdir/flowcept.out" 2>&1 &
+    CONSUMER_PIDS+=("$!"); CONSUMER_DIRS+=("$cdir")
+}
+
+_wait_alive() {   # $1=pid $2=dir $3=label
+    local i; for i in $(seq 1 120); do
+        grep -q 'consumer alive' "$2/flowcept.out" 2>/dev/null && return 0
+        kill -0 "$1" 2>/dev/null || { echo "$3 died:"; tail -20 "$2/flowcept.out"; return 1; }
+        sleep 1
+    done
+    echo "$3 did not come up in 120s"; return 1
+}
+
+start_consumer() {
+    local run_dir="$1" group="$2"; load_run_config; mkdir -p "$run_dir"
+    local C="${CONS_N:-1}" P="$SRV_PARTITIONS" k
+    [ "$C" -gt "$P" ] && { echo "CONSUMERS=$C > PARTITIONS=$P; clamping to $P"; C="$P"; }
+    CONSUMER_PIDS=(); CONSUMER_DIRS=()
+    # lead (k=0) starts the one shared mongod, then followers attach to it.
+    local lead_dir; [ "$C" -le 1 ] && lead_dir="$run_dir" || lead_dir="$run_dir/c0"
+    _launch_consumer 0 "$C" "$P" "$group" lead "$lead_dir"
+    _wait_alive "${CONSUMER_PIDS[0]}" "${CONSUMER_DIRS[0]}" "lead consumer" || return 1
+    for ((k = 1; k < C; k++)); do
+        _launch_consumer "$k" "$C" "$P" "$group" follower "$run_dir/c$k"
+        _wait_alive "${CONSUMER_PIDS[$k]}" "${CONSUMER_DIRS[$k]}" "consumer $k" || return 1
+    done
+    echo "started $C consumer(s) sharing mongod:$SRV_MONGO_PORT ($C shard(s) of $P partition(s))"
+    return 0
+}
+
+# stop followers first (they flush their shard into the shared mongod), then the lead (flush +
+# hold mongod open); export ONCE -> <events>, verdict -> <out>, then stop everything.
 stop_consumer_verdict() {
     local run_dir="$1" out="$2" events="$3"
-    local wait_s="${DRAIN_WAIT_S:-600}"   # drain ceiling; big backlogs need >120s (returns early once drained)
-    touch "$run_dir/SHUTDOWN"
-    local i; for i in $(seq 1 "$wait_s"); do
-        grep -q 'Export now' "$run_dir/flowcept.out" 2>/dev/null && break
-        kill -0 "$CONSUMER_PID" 2>/dev/null || break; sleep 1
+    local wait_s="${DRAIN_WAIT_S:-600}" n="${#CONSUMER_PIDS[@]}" k i
+    for ((k = 1; k < n; k++)); do touch "${CONSUMER_DIRS[$k]}/SHUTDOWN"; done
+    for ((k = 1; k < n; k++)); do
+        for i in $(seq 1 "$wait_s"); do kill -0 "${CONSUMER_PIDS[$k]}" 2>/dev/null || break; sleep 1; done
+    done
+    touch "${CONSUMER_DIRS[0]}/SHUTDOWN"
+    for i in $(seq 1 "$wait_s"); do
+        grep -q 'Export now' "${CONSUMER_DIRS[0]}/flowcept.out" 2>/dev/null && break
+        kill -0 "${CONSUMER_PIDS[0]}" 2>/dev/null || break; sleep 1
     done
     "$PY" "$REPO_ROOT/Client/export_jsonl.py" 127.0.0.1 "$SRV_MONGO_DB" \
         --mongo-port "$SRV_MONGO_PORT" > "$events" 2> "${events%.jsonl}.count" || true
-    grep -E 'INGEST:|tasks total=' "$run_dir/flowcept.out" | tee "$out"
-    kill "$CONSUMER_PID" 2>/dev/null; wait "$CONSUMER_PID" 2>/dev/null || true
+    grep -E 'INGEST:|tasks total=' "${CONSUMER_DIRS[0]}/flowcept.out" | tee "$out"
+    for ((k = 0; k < n; k++)); do kill "${CONSUMER_PIDS[$k]}" 2>/dev/null; wait "${CONSUMER_PIDS[$k]}" 2>/dev/null || true; done
 }

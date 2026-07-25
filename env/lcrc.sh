@@ -7,7 +7,8 @@
 # Profile default transport, used when server.config says protocol: auto. tcp works on
 # every Improv compute node; the OFI verbs provider has no usable domain there. Override
 # in server/server.config (protocol:) or MOFKA_PROTOCOL for a faster fabric where present.
-export MOFKA_PROTOCOL_DEFAULT="${MOFKA_PROTOCOL_DEFAULT:-tcp}"
+export MOFKA_PROTOCOL_DEFAULT="${MOFKA_PROTOCOL_DEFAULT:-verbs}"   # verbs (IB mlx5_0) scales to full-node
+                                                                  # multi-proc; tcp caps ~2 producers/node.
 
 # Native Mofka/Bedrock stack (spack env). Prefer the repo-local install/_spack
 # built by install/setup.sh (env 'flowcept-mofka-lcrc'); else the legacy
