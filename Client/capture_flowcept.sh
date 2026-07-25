@@ -62,11 +62,14 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --- mongod (background, NOT --fork) ---------------------------------------
-MONGO_DBPATH="$RUN_DIR/mongo_data"; mkdir -p "$MONGO_DBPATH"
+# dbpath: honor a passed MONGO_DBPATH (client.config mongo.dbpath), else a per-run dir on
+# node-local scratch -- WiredTiger over the parallel FS (GPFS) throttles every insert flush.
+MONGO_DBPATH="${MONGO_DBPATH:-${TMPDIR:-/tmp}/dm_mongo_$$}"; mkdir -p "$MONGO_DBPATH"
 MONGO_LOG="$RUN_DIR/mongod.log"
 echo "=== [fc] mongod (port $MONGO_PORT, dbpath $MONGO_DBPATH) ==="
 "$MONGOD" --dbpath "$MONGO_DBPATH" --logpath "$MONGO_LOG" \
-          --port "$MONGO_PORT" --bind_ip 127.0.0.1 --nounixsocket &
+          --port "$MONGO_PORT" --bind_ip 127.0.0.1 --nounixsocket \
+          ${MONGO_CACHE_GB:+--wiredTigerCacheSizeGB "$MONGO_CACHE_GB"} &
 MONGOD_PID=$!
 for i in $(seq 1 30); do (echo > "/dev/tcp/127.0.0.1/$MONGO_PORT") 2>/dev/null && { echo "[fc] mongod ready ${i}s"; break; }; sleep 1; done
 (echo > "/dev/tcp/127.0.0.1/$MONGO_PORT") 2>/dev/null || { echo "[fc] FAIL: mongod not up"; tail -30 "$MONGO_LOG"; exit 1; }
@@ -77,6 +80,10 @@ sed -e "s|__MOFKA_GROUP__|$MOFKA_GROUP|g" \
     -e "s|__MONGO_DB__|$MONGO_DB|g" \
     -e "s|__TOPIC__|$TOPIC|g" \
     -e "s|__ENV_ID__|$(hostname -s)-$$|g" \
+    -e "s|__MQ_BUF__|${MQ_BUFFER_SIZE:-50}|g" \
+    -e "s|__MQ_FLUSH__|${MQ_FLUSH_SECS:-5}|g" \
+    -e "s|__DB_BUF__|${DB_BUFFER_SIZE:-50}|g" \
+    -e "s|__DB_FLUSH__|${DB_FLUSH_SECS:-5}|g" \
     "$SETTINGS_TEMPLATE" > "$FLOWCEPT_SETTINGS"
 export FLOWCEPT_SETTINGS_PATH="$FLOWCEPT_SETTINGS"
 echo "[fc] FLOWCEPT_SETTINGS_PATH=$FLOWCEPT_SETTINGS_PATH"
@@ -107,7 +114,7 @@ done
 
 # --- graceful stop so DocumentInserter flushes its buffer to mongo ----------
 echo "=== [fc] graceful stop (flush) ==="
-( timeout 60 "$PY" -m flowcept.cli --stop-consumption-services 2>&1 ) | sed 's/^/    /' || echo "    (stop nonzero; cleanup will SIGTERM)"
+( timeout "${STOP_TIMEOUT:-600}" "$PY" -m flowcept.cli --stop-consumption-services 2>&1 ) | sed 's/^/    /' || echo "    (stop nonzero; cleanup will SIGTERM)"
 for i in $(seq 1 30); do kill -0 "$CONSUMER_PID" 2>/dev/null || { echo "[fc] consumer exited cleanly"; break; }; sleep 1; done
 
 # --- ingest verdict --------------------------------------------------------
