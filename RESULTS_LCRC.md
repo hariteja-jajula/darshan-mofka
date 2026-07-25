@@ -89,12 +89,11 @@ producer-side **attach cap** and a consumer-side **drain ceiling** — plus a fl
 
 | tasks/node | example | requested | attached | attach rate |
 |---|---|---|---|---|
-| 1 | 4 / 8 / 24 producers | 4 / 8 / 24 | 4 / 8 / 24 | **100%** |
+| 1 | 4 / 8 / 24 / 32 producers | 4…32 | 4…32 | **100%** |
 | 2 | 3 / 5 / 9 nodes | 4 / 8 / 16 | 2 / 4 / 7 | **~50%** |
 | 4–32 | 2 nodes, per-node broker | 8…64 | 2…16 | **25%** |
 
-At **1 producer/node the attach rate stays 100% and scales cleanly to at least 24 producers
-(25 nodes)** — confirming the "scale by nodes" deployment.
+At **1 producer/node the attach rate stays 100% and scales cleanly to at least 32 producers (33 nodes)** — confirming the "scale by nodes" deployment.
 
 The cleanest measurement is the single-node probe (N producers on **one** node → one
 remote broker):
