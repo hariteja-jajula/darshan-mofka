@@ -93,9 +93,17 @@ producer-side **attach cap** and a consumer-side **drain ceiling** — plus a fl
 | 2 | 3 / 5 / 9 nodes | 4 / 8 / 16 | 2 / 4 / 7 | **~50%** |
 | 4–32 | 2 nodes, per-node broker | 8…64 | 2…16 | **25%** |
 
-Improv over tcp attaches **cleanly only at 1 task/node** and degrades with co-located
-producers. A per-node *local* broker gives no benefit (2n×4t still 25%), so it is not
-broker fan-in. Polaris's CXI fabric shows the *same* failure signature (`einval == 3·N`)
+The cleanest measurement is the single-node probe (N producers on **one** node → one
+remote broker):
+
+| N producers on one node | 1 | 2 | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|---|---|
+| attached | 1 | 1 | 1 | 2 | 4 | 8 |
+| attach rate | 100% | 50% | 25% | 25% | 25% | 25% |
+
+Improv over tcp attaches **cleanly only at 1 task/node**: it falls to 50% at 2 and a hard
+25% floor (attached ≈ N/4) beyond. A per-node *local* broker gives no benefit (2n×4t still
+25%), so it is not broker fan-in. Polaris's CXI fabric shows the *same* failure signature (`einval == 3·N`)
 but a gentler slope (100% at 2/node, ~75% at 4–32) — pinning the root cause to **Mofka
 client concurrency (upstream), not the transport**. Practical rule: **scale by nodes at
 1 producer/node**; treat >1/node as an overhead-under-contention curve, not a clean config.
