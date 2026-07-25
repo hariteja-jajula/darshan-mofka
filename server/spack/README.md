@@ -35,7 +35,7 @@ export MOFKA_SPACK_VIEW="$(spack location --env flowcept-mofka-polaris)/.spack-e
 source env/server.sh --polaris
 ```
 
-`env_polaris.sh` honors `$MOFKA_SPACK_VIEW`, so once it points at this view the rest of
+`env/polaris.sh` honors `$MOFKA_SPACK_VIEW`, so once it points at this view the rest of
 the README works unchanged.
 
 ## Notes
@@ -48,4 +48,4 @@ the README works unchanged.
 - To reproduce the exact validated versions instead of re-concretizing, use the
   committed `spack.lock` (`spack env create <name> spack.lock`).
 - The Python side (mochi-margo, flowcept, pymongo, …) lives in a separate venv; see the
-  top-level README section 2. `flowcept` itself is the pinned submodule under `flowcept/`.
+  top-level README. `flowcept` itself is the pinned submodule under `flowcept/`.

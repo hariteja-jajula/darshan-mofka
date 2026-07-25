@@ -1,7 +1,7 @@
 # install/ -- automated setup (backup path)
 
 This is the **automated backup** to the manual setup in the top-level
-[README](../README.md). Prefer the README's "Dependencies & Environments" steps
+[README](../README.md). Prefer the README's "Quick start" steps
 if you already have parts of the stack (run `bash check-deps.sh` first to see what
 you're missing). Use `setup.sh` when you'd rather build everything in one shot.
 

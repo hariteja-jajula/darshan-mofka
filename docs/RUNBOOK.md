@@ -19,7 +19,7 @@ Three external pieces must exist before the steps below work:
 2. **A Python venv** with the FlowCept consumer's deps, on top of the Spack
    view's python:
    ```bash
-   python -m venv ../envs/flowcept-py314        # or anywhere; see env_polaris.sh
+   python -m venv ../envs/flowcept-py314        # or anywhere; see env/polaris.sh
    source ../envs/flowcept-py314/bin/activate
    pip install -r server/requirements.txt       # PyPI deps (pymongo, redis, ...)
    pip install -e flowcept/                      # the flowcept submodule
