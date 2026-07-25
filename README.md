@@ -55,6 +55,22 @@ PBS_ACCOUNT=<your_project> bash submit.sh
 
 See [REPRODUCE.md](REPRODUCE.md) for the exact expected output.
 
+## Results
+
+The reconstructed log is faithful to the one Darshan writes natively:
+
+- **Single rank — byte-identical.** The streamed-and-rebuilt log matches the native
+  log exactly: executable, run time, the I/O HEATMAP, all 154 POSIX/STDIO counters,
+  and the mount table all compare equal (`DATA: IDENTICAL`).
+- **Multi-node — validated end-to-end.** With a dedicated broker node and producers
+  spread across separate workload nodes, every producer streams and the reconstruct
+  step passes against native. The same topology validates on both LCRC/Improv (tcp)
+  and ALCF/Polaris (CXI).
+- **Cost.** Steady-state the connector adds ~25–45 µs per I/O event (median ~25 µs);
+  startup ~0.5 s per rank.
+
+See [RESULTS_LCRC.md](RESULTS_LCRC.md) for the full topology and overhead numbers.
+
 ## What's in here
 
 ```text
@@ -90,9 +106,21 @@ Set these in the environment of the Darshan-instrumented program:
 When Darshan is built without the connector (`--with-diaspora-c` absent), none of
 this exists and Darshan behaves exactly as it does upstream.
 
+## Limitations
+
+- **Producers per node.** Many producers on one node all connecting to a single
+  broker exhaust the node's fabric endpoints (~2–3 attach over `ofi+tcp` on Improv;
+  the same class of limit appears as "CXI alloc failed" on Polaris, degrading to
+  ~75% attach). The fix is topology, not tuning: dedicate a broker node and scale
+  out by adding workload nodes rather than stacking ranks on one.
+- **Drain throughput.** A single FlowCept consumer + MongoDB is the ceiling under
+  bursty, high-volume streaming. Raise it with larger consumer buffers (`client.config`),
+  more topic partitions (`server.config`), and a node-local Mongo dbpath.
+
 ## More docs
 
 - [REPRODUCE.md](REPRODUCE.md) — build from scratch and check the result.
+- [RESULTS_LCRC.md](RESULTS_LCRC.md) — multi-node topology and overhead numbers.
 - [docs/SCHEMA.md](docs/SCHEMA.md) — what one streamed event contains.
 - [docs/MOFKA_NOTES.md](docs/MOFKA_NOTES.md) — how the Mofka pieces are configured, from the official docs.
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) — the full manual pipeline, step by step.
