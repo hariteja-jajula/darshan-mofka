@@ -105,10 +105,33 @@ remote broker):
 
 Improv over tcp attaches **cleanly only at 1 task/node**: it falls to 50% at 2 and a hard
 25% floor (attached ≈ N/4) beyond. A per-node *local* broker gives no benefit (2n×4t still
-25%), so it is not broker fan-in. Polaris's CXI fabric shows the *same* failure signature (`einval == 3·N`)
-but a gentler slope (100% at 2/node, ~75% at 4–32) — pinning the root cause to **Mofka
-client concurrency (upstream), not the transport**. Practical rule: **scale by nodes at
-1 producer/node**; treat >1/node as an overhead-under-contention curve, not a clean config.
+25%), so it is not broker fan-in. Polaris's CXI fabric shows the *same* failure signature
+(`einval == 3·N`) but a gentler slope (100% at 2/node, ~75% at 4–32). Practical rule:
+**scale by nodes at 1 producer/node**; treat >1/node as an overhead-under-contention curve.
+
+### Root cause (source-level) and the fix
+
+The failing ranks die in **Mercury 2.4.1 `na_ofi`**, not Mofka:
+`na_ofi.c:6268 na_ofi_msg_send() fi_senddata(... data=1) → -22 (EINVAL)` →
+`mercury_core.c:4180 hg_core_forward_na()`. Traced through the stack:
+
+1. The connector creates **one Mofka producer per process, no per-node gating**
+   (`darshan-mofka.c` init runs in every rank).
+2. diaspora's Mofka driver builds each producer's Thallium engine in
+   **`THALLIUM_SERVER_MODE` (listener)** (`MofkaDriver.cpp:128-129`); the engine cache is
+   per-process, so N ranks/node ⇒ **N listening `na_ofi` endpoints on one NIC**.
+3. Listener endpoints request **8× larger fabric queues** — `na_ofi.c:3688-3709` sizes
+   tx/rx at 4096 vs 512 for a client, **special-cased to exactly tcp and cxi** (why both
+   fabrics fail). N endpoints × 8× queues exhausts per-NIC resources; the EINVAL surfaces
+   from the lazy connect under the concurrent burst. `errcount==3·N` = client RPC retry × N.
+
+Confirmed cross-cluster with the Polaris agent (identical `na_ofi` frame on CXI). No existing
+upstream fix (installed Mofka is already `main` HEAD `6bddc5b` with Dorier's producer fixes).
+**The fix is a producer-only `THALLIUM_CLIENT_MODE` engine** in `MofkaDriver.cpp:129` — a
+producer only pushes, so it needn't be a listener; client endpoints are non-listening and
+512-deep. That is a small `mochi-hpc/mofka` change (validated as safe: the Mofka producer is
+push-only) and is the tracked upstream PR to let >1 producer/node attach on both fabrics.
+A zero-rebuild mitigation to confirm the mechanism is `NA_OFI_TX_SIZE=512 NA_OFI_RX_SIZE=512`.
 
 **Per-event push cost is flat ~24.5 µs (median)** across every cell — 2 to 16 producers,
 10k to 400k events, co-located or split — i.e. it does not degrade under attach pressure.
