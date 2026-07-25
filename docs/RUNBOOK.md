@@ -5,8 +5,10 @@ partial rebuilds, or checking what `workloads/job.sh` and the `install/` scripts
 automate. For the fast path see the top-level [README](../README.md); for the
 pinned build from source see [install/README.md](../install/README.md).
 
-The steps below are validated on ALCF Polaris; the inline notes call out the
-Cray/eagle-specific workarounds.
+The steps below are validated on ALCF Polaris and LCRC/Improv; the headline
+multi-node results are on LCRC/Improv (see [../RESULTS_LCRC.md](../RESULTS_LCRC.md)).
+Inline notes call out the Polaris Cray/eagle-specific workarounds; substitute
+`--lcrc` for `--polaris` and skip those notes on LCRC.
 
 ## Prerequisites
 
@@ -19,8 +21,8 @@ Three external pieces must exist before the steps below work:
 2. **A Python venv** with the FlowCept consumer's deps, on top of the Spack
    view's python:
    ```bash
-   python -m venv ../envs/flowcept-py314        # or anywhere; see env/polaris.sh
-   source ../envs/flowcept-py314/bin/activate
+   python -m venv install/_venv                 # env/server.sh auto-detects install/_venv; else export PY=/path/to/venv/bin/python3
+   source install/_venv/bin/activate
    pip install -r server/requirements.txt       # PyPI deps (pymongo, redis, ...)
    pip install -e flowcept/                      # the flowcept submodule
    ```
@@ -34,11 +36,14 @@ Three external pieces must exist before the steps below work:
 The quickest path once all three exist: `bash workloads/job.sh` runs the whole
 pipeline below on a compute node in one shot.
 
-## Polaris allocation
+## Allocation (Polaris / LCRC)
 
 ```bash
 qsub -I -A <project> -q <queue> -l select=<nodes>:ncpus=<cpus> -l walltime=<HH:MM:SS> -l filesystems=<filesystems>
 ```
+
+On LCRC/Improv use the same `qsub -l select=<nodes>:ncpus=<cpus>` but drop the
+`-l filesystems=` argument (that flag is Polaris-specific).
 
 ## 1. Prepare environment
 
@@ -71,16 +76,18 @@ printf 'DIASPORA_C=%s\n' "$DIASPORA_C"
 printf 'DARSHAN_PREFIX=%s\n' "$DARSHAN_PREFIX"
 ```
 
-For other systems, either set `DARSHAN_MOFKA_ENV` to another committed profile or
-create a local machine config:
+For other systems there is no local machine config to edit; add a cluster profile
+instead. Copy the closest existing profile (`env/lcrc.sh` or `env/polaris.sh`),
+edit it for your machine, and select it by name with `DARSHAN_MOFKA_PROFILE`:
 
 ```bash
-cp server/env.local.sh.example server/env.local.sh
-source env/server.sh
+cp env/polaris.sh env/mycluster.sh                 # then edit: MOFKA_SPACK_VIEW, modules, transport
+DARSHAN_MOFKA_PROFILE=mycluster source env/server.sh
 ```
 
-Then edit `server/env.local.sh` to load modules or set paths for your cluster.
-`server/env.local.sh` is ignored by git.
+For a one-off tweak you don't even need a new profile: export the relevant knob
+before sourcing (`MOFKA_SPACK_VIEW`, `ENV_MODULES`, `ENV_SPACK_ENV`, `PY`, `MONGOD`),
+then `source env/server.sh` (with `--lcrc`/`--polaris`, or let it auto-detect).
 
 ## 2. Build dependencies
 
@@ -525,7 +532,9 @@ If that count is zero, check that `LD_PRELOAD` points at the Darshan build:
 darshan_lib
 ```
 
-If Python cannot import Mofka, check `$PY`, `$PYTHONPATH`, and `server/env.local.sh`:
+If Python cannot import Mofka, check `$PY` and `$PYTHONPATH`, and that `env/server.sh`
+was sourced for your cluster (e.g. `source env/server.sh --lcrc`) so `MOFKA_SPACK_VIEW`
+is set:
 
 ```bash
 "$PY" - <<'PY'
