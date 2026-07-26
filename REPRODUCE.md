@@ -1,11 +1,10 @@
 # Reproduce the result
 
-This walks you through building everything from a clean clone on LCRC/Improv and
-running the demo end to end. It ends with an exact check you can compare against,
-so you know it worked.
+Build everything from a clean clone on LCRC/Improv and run the pipeline end to end.
+It finishes with an exact check you can compare against, so you know it worked.
 
-The whole native software stack (Mofka, Mochi, Bedrock) is built from source by
-the setup script, so you do not need any pre-existing install.
+The native software stack (Mofka, Mochi, Bedrock) is built from source by the setup
+script, so you do not need a pre-existing install.
 
 ## Steps
 
@@ -62,6 +61,12 @@ The workload is chosen by the `workload:` key in `workloads/workload.config`
 workload: python-ml    # a small Python I/O workload
 # workload: mpi        # MPI-IO across ranks
 ```
+
+The C workload is the byte-exact reference. python-ml completes but its
+reconstruction is approximate: interpreter-startup files (stdlib `.py`,
+`lib-dynload/*.so`, `<STDIN>`/`<STDERR>`) are opened during the connector's
+~215 ms init window, before the producer is up, so their records never reach the
+stream and are missing from the rebuilt log. See RESULTS_LCRC.md for the detail.
 
 ## If you already have the Mofka stack
 
