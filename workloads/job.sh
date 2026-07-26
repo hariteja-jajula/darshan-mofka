@@ -112,13 +112,27 @@ run_workload_once() {
         c)         cmd=(./workloads/c/mofka_forward_smoke "$scratch") ;;
         python-ml) cmd=("$PY" workloads/python-ml/train.py "$scratch") ;;
         mpi)       cmd=(./workloads/mpi/mofka_forward_mpiio "$scratch") ;;
+        dlio)      # DLIO benchmark from its own isolated venv (install/_dlio_venv); tensorflow
+                   # data loader avoids the torch/DALI(GPU) deps. generate_data + a short train
+                   # exercise real POSIX I/O, captured by the LD_PRELOAD connector like any process.
+                   # generate_data only: distributed dataset writes = real POSIX I/O, fast, and no
+                   # slow CPU TF train loop (train=True runs a full train+eval that dominates wall
+                   # time and floods the finalize flush). num_files scales with WL_EVENTS.
+                   cmd=("$ROOT/install/_dlio_venv/bin/dlio_benchmark"
+                        "++workload.workflow.generate_data=True" "++workload.workflow.train=False"
+                        "++workload.framework=tensorflow" "++workload.reader.data_loader=tensorflow"
+                        "++workload.dataset.format=npz" "++workload.dataset.data_folder=$scratch"
+                        "++workload.dataset.num_files_train=${WL_EVENTS}"
+                        "++workload.dataset.num_samples_per_file=4"
+                        "++workload.dataset.record_length=4096"
+                        "++hydra.run.dir=$scratch/hydra" "++hydra.output_subdir=null") ;;
         *)         die "unknown workload '$WL_TYPE'" ;;
     esac
     local base=(DARSHAN_LOGPATH="$RES" LD_PRELOAD="$dlib" "${CONNECTOR_ENV[@]}" "${DARSHAN_ENV[@]}" "${WORKLOAD_ENV[@]}")
     # Fast path: a single local rank on the head node needs no launcher. Otherwise place
     # WL_TASKS ranks per workload node (multi-proc and/or multi-node) with ppr mapping --
     # NO oversubscription (WL_TASKS must be <= ncpus/node or PRRTE errors, which is correct).
-    if [[ "$WL_TOTAL_RANKS" -le 1 && "$WL_NNODES" -le 1 && "$WL_NODE" == "$SRV_NODE" && "$WL_TYPE" != mpi ]]; then
+    if [[ "$WL_TOTAL_RANKS" -le 1 && "$WL_NNODES" -le 1 && "$WL_NODE" == "$SRV_NODE" && "$WL_TYPE" != mpi && "$WL_TYPE" != dlio ]]; then
         env "${base[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     else
         local estr="${CONNECTOR_ENV[*]} ${DARSHAN_ENV[*]} ${WORKLOAD_ENV[*]}"
