@@ -57,6 +57,7 @@
 *.pyc
 core
 core.*
+core-*
 __pycache__/
 
 
