@@ -94,8 +94,8 @@ sed -e "s|__MOFKA_GROUP__|$MOFKA_GROUP|g" \
     -e "s|__MONGO_PORT__|${MONGO_PORT:-27017}|g" \
     "$SETTINGS_TEMPLATE" > "$FLOWCEPT_SETTINGS"
 export FLOWCEPT_SETTINGS_PATH="$FLOWCEPT_SETTINGS"
-# The FlowCept consumer (configs.py) reads the mongo SINK port from $MONGO_PORT; export it so a
-# per-shard consumer writes to its own mongod (parallel drain), not the default 27017.
+# The FlowCept consumer (configs.py) reads the mongo SINK port from $MONGO_PORT; export it so each
+# shard's consumer writes to the shared mongod on this port (all shards share one mongod).
 export MONGO_PORT MONGO_HOST="127.0.0.1"
 echo "[fc] FLOWCEPT_SETTINGS_PATH=$FLOWCEPT_SETTINGS_PATH"
 grep -E "type:|channel:|group_file:|enabled:|db:" "$FLOWCEPT_SETTINGS" | sed 's/^/    /'
