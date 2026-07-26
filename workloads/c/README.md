@@ -23,12 +23,11 @@ so it links MPI automatically; on other systems use `mpicc` for the MPI-IO build
 
 ## Run
 
-The full run env block (`LD_PRELOAD`, the `DARSHAN_MOFKA_*` variables, and the
-`darshan_ensure_logdir` / `mpiexec` invocation) is in
-[docs/RUNBOOK.md](../../docs/RUNBOOK.md) step 7. In short: run the smoke test
-non-MPI (`DARSHAN_ENABLE_NONMPI=1`), and run the MPI-IO test under `mpiexec -n 4`
-with `DARSHAN_ENABLE_NONMPI` *unset* so the shared-file / cross-rank behavior is
-exercised.
+Normally the harness runs these for you (`PBS_ACCOUNT=<acct> bash submit.sh`, or
+`workloads/job.sh`), setting `LD_PRELOAD=$(darshan_lib)` and the `DARSHAN_MOFKA_*`
+env automatically (see the connector env table in the top-level README). The smoke
+runs non-MPI (`DARSHAN_ENABLE_NONMPI=1`); the MPI-IO test runs under `mpirun` with
+`DARSHAN_ENABLE_NONMPI` *unset* so shared-file / cross-rank behavior is exercised.
 
 ## Verify
 

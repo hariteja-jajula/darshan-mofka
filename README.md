@@ -105,8 +105,8 @@ Verified on LCRC/Improv, 2026-07-25.
 - **Steady-state cost is ~25 µs per I/O event** (p50, flat to 128 producers/node);
   init and finalize are one-time.
 
-See [docs/scaling/REPORT.md](docs/scaling/REPORT.md) for the full-scale results:
-topology, attach/transport root cause, and overhead numbers.
+See `results/{c,python-ml,mpi}/` for each workload's native and streamed `.darshan` logs plus
+their pydarshan HTML summaries (`native.html`, `streamed.html`).
 
 ## What's in here
 
@@ -121,7 +121,7 @@ Database/             get a local MongoDB
 workloads/            the workloads (C, MPI-IO, DLIO, python-ml) and job.sh, the runner
 install/              one-command setup that builds everything
 submit.sh             size a PBS allocation from the config and run workloads/job.sh on it
-results/              one folder per run, with all its output
+results/              c/ python-ml/ mpi/ = per-workload artifacts (native/streamed .darshan + HTML); run folders land here too
 ```
 
 Each folder has its own README with the details.
@@ -156,11 +156,8 @@ this exists and Darshan behaves exactly as it does upstream.
 
 ## More docs
 
-- [docs/scaling/REPORT.md](docs/scaling/REPORT.md) — full-scale results: topology, attach/transport root cause, overhead, and the python-ml/MPI fidelity limitations.
-- [docs/scaling/REPORT.md](docs/scaling/REPORT.md) — the scaling study.
-- [docs/SCHEMA.md](docs/SCHEMA.md) — what one streamed event contains.
-- [docs/MOFKA_NOTES.md](docs/MOFKA_NOTES.md) — how the Mofka pieces are configured, from the official docs.
-- [docs/RUNBOOK.md](docs/RUNBOOK.md) — the full manual pipeline, step by step.
 - [workloads/README.md](workloads/README.md) — the test workloads and how to run them.
+- `results/<workload>/` — per-workload artifacts: native + streamed `.darshan` logs and their
+  pydarshan HTML (`native.html`, `streamed.html`).
 </content>
 </invoke>

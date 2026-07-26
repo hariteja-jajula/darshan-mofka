@@ -1,3 +1,0 @@
-reconstructed modules: ['POSIX', 'STDIO']  op-totals: {'READS': 382, 'WRITES': 53, 'OPENS': 117}
-native        modules: ['POSIX', 'STDIO']  op-totals: {'READS': 295, 'WRITES': 34, 'OPENS': 97}
-VERDICT: MISMATCH (known-OK diffs: mount label, timestamps, pid, job/exe meta)
