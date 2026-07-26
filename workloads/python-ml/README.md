@@ -11,10 +11,13 @@ It uses PyTorch if it is installed and falls back to NumPy-free plain Python if 
 is not, so it runs even on Python builds without a PyTorch wheel. The file I/O is
 identical either way.
 
-## Run it through job.sh
+## Run it through the pipeline
+
+Select it with `WORKLOAD=python-ml` (or set `workload: python-ml` in
+`workloads/workload.config`), then submit:
 
 ```bash
-bash job.sh python-ml
+WORKLOAD=python-ml PBS_ACCOUNT=<acct> bash submit.sh
 ```
 
 ## Run it by hand

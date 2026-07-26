@@ -68,12 +68,16 @@ gap, not a scaling failure. (The finalize records-sweep that would recover the s
 disabled — it hangs python-ml; see the connector's KNOWN ISSUE note.)
 
 **MPI-IO (`docs/scaling/mpi/`)** — INGEST PASS, full drain of ~139k ops (STDIO-heavy). ²`VERDICT:
-MISMATCH` here is a **multi-rank comparison-scope artifact**, not a fidelity failure: the harness
-copies a single rank's native log as `native.darshan`, whereas the reconstruction aggregates many
-ranks (131 of 512 present). READS matched exactly (249=249); the OPENS/WRITES differences are the
-single-rank-native vs aggregate-reconstruction scope. (Non-MPI workloads like C/python collapse to
-rank 0 so their reconstruction dedups to one record/file, which is why C's single-vs-aggregate
-compare happens to pass; MPI uses real ranks, so it doesn't.)
+MISMATCH` in this campaign was a **rank/comparison-scope artifact**, not a streaming failure: the run
+used the non-MPI Darshan lib, so every process streamed as rank 0 and the reconstruction collapsed
+distinct ranks; the compare also pitted a single native rank-log against the aggregate.
+
+**Update — root-caused and fixed (post-campaign, darshan f8dc875f + parent 359d271):** the connector
+now stamps each event with the real launcher rank (`OMPI_COMM_WORLD_RANK`), and the harness compares
+against the aggregate of all per-rank native logs. Re-verified at 4 ranks: MPI **reads/writes/STDIO-
+opens match native exactly**, and **C stays byte-exact** (VERDICT PASS). Residual for MPI is a few
+POSIX opens (1/rank) from the pre-attach init window — the same gap as python-ml. The 512-rank MPI
+artifacts in `docs/scaling/mpi/` predate this fix (they reflect the rank-0-collapsed run).
 
 ## Fidelity caveat at multi-rank
 
