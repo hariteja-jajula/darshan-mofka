@@ -1,0 +1,3 @@
+reconstructed modules: ['POSIX', 'STDIO']  op-totals: {'READS': 0, 'WRITES': 602, 'OPENS': 4}
+native        modules: ['POSIX', 'STDIO']  op-totals: {'READS': 0, 'WRITES': 602, 'OPENS': 4}
+VERDICT: PASS (known-OK diffs: mount label, timestamps, pid, job/exe meta)
