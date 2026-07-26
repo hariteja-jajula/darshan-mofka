@@ -31,7 +31,6 @@
 # automated setup build outputs (rebuilt by install/setup.sh from install/config.yaml)
 /install/_spack/
 /install/_venv/
-/install/_dlio_venv/
 /install/_mofka/
 /server/_mongo_env/
 /Database/_mongo_env/
