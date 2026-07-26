@@ -1,12 +1,17 @@
-# Rebuilding the Mofka / FlowCept stack on Polaris
+# Rebuilding the Mofka / FlowCept stack (LCRC + Polaris)
 
-`env/polaris.sh` expects a **built Spack view** containing Bedrock, the Mochi
-libraries (margo, mercury, thallium, warabi, yokan, flock), Mofka, and Darshan. Those
-binaries are ~1 GB of compiled artifacts and are **not** committed. This directory holds
-the dependency spec so you can rebuild them natively on Polaris:
+The cluster profile (`env/lcrc.sh` / `env/polaris.sh`) expects a **built Spack view**
+containing Bedrock, the Mochi libraries (margo, mercury, thallium, warabi, yokan,
+flock), Mofka, and Darshan. Those binaries are ~1 GB of compiled artifacts and are
+**not** committed. This directory holds the dependency spec so you can rebuild them
+natively:
 
-- `spack.yaml` — the environment spec (compiler, MPI, externals, package requirements).
+- `spack.yaml` — the Polaris environment spec (compiler, MPI, externals, package requirements).
+- `spack-lcrc.yaml` — the LCRC/Improv spec (system Open MPI with `--with-tm`, verbs transport).
 - `spack.lock` — the exact concretized versions from the validated build (fully pinned).
+
+Use the spec that matches your cluster in place of `spack.yaml` in the steps below
+(e.g. `server/spack/spack-lcrc.yaml` on LCRC).
 
 ## Build
 

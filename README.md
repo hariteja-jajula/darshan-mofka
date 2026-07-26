@@ -35,14 +35,23 @@ repo is the harness that runs it and checks it against native Darshan.
 
 ## Quick start
 
-First see what you already have (this downloads nothing):
+Clone with submodules:
+
+```bash
+git clone https://github.com/hariteja-jajula/darshan-mofka.git
+cd darshan-mofka
+git submodule update --init --recursive
+```
+
+See what you already have (this downloads nothing):
 
 ```bash
 bash check-deps.sh
 ```
 
-If anything is missing, build it all from source with one command (run on a login
-node; it has internet):
+If anything is missing, build it all from source with one command. Run this on a
+login node (it needs internet); the first build compiles the full Mofka stack, so
+it takes a while:
 
 ```bash
 DARSHAN_MOFKA_PROFILE=lcrc bash install/setup.sh
@@ -54,32 +63,50 @@ Then run the whole pipeline on a compute node and check the result:
 PBS_ACCOUNT=<your_project> bash submit.sh
 ```
 
-See [REPRODUCE.md](REPRODUCE.md) for the exact expected output.
+`submit.sh` sizes the PBS allocation from `topology.nodes` and the `pbs:` block in
+`workloads/workload.config`, runs the workload on a compute node (the broker's
+network transport does not come up on login nodes), reconstructs a `.darshan` log
+from the stream, and compares it to the native one. Results land in
+`results/<TAG>_<N>NODE_<P>PROC_<B>Broker-<placement>/RUN<n>/`; a default single-node
+C run is `results/C_1NODE_1PROC_1Broker-colocated/RUN1/`.
 
-## Results
+### What success looks like
 
-Verified on LCRC/Improv, 2026-07-25, single rank, verbs transport.
+The job output ends with:
 
-- **C workload — byte-exact.** The rebuilt log matches the native one exactly:
-  `darshan-parser` reports zero counter differences, and pydarshan reports the
-  counters identical. Ingest and the reconstruct verdict both pass.
-- **python-ml workload — approximate.** The pipeline completes, but the rebuilt log
-  is missing records, not counter-exact. Roughly 15 of ~36 POSIX records are Python
-  interpreter-startup files (stdlib `.py`, `lib-dynload/*.so`, `<STDIN>`/`<STDERR>`)
-  opened during the connector's ~215 ms init window, before the producer is up.
-  Their per-op sends are no-ops at that point, so those records never reach the
-  stream even though Darshan records them in memory. They appear in the native log
-  but not in the reconstruction. See [RESULTS_LCRC.md](RESULTS_LCRC.md) for the
-  detail and the disabled workaround.
-- **Scaling.** Over verbs (InfiniBand, `mlx5_0`) with the producer's local domain
-  named via `MOFKA_NA_DOMAIN` and `MOFKA_CLIENT_MODE=1`, ~128 producers attach per
-  node. tcp caps at ~2 producers per node. See RESULTS for the attach curve and
-  root cause.
-- **Cost.** Steady-state the connector adds ~25 µs per I/O event (p50), flat out to
-  128 producers/node. Init is ~0.22–0.24 s per rank (one-time) and finalize is
-  ~0.2–0.38 s.
+```text
+INGEST: PASS
+modules: {'POSIX': 4, 'STDIO': 9}
+VERDICT: PASS
+```
 
-See [RESULTS_LCRC.md](RESULTS_LCRC.md) for the full topology and overhead numbers.
+and the run's `compare.txt` shows the rebuilt log matching the real one:
+
+```text
+reconstructed modules: ['POSIX', 'STDIO']  op-totals: {'READS': 2, 'WRITES': 3, 'OPENS': 3}
+native        modules: ['POSIX', 'STDIO']  op-totals: {'READS': 2, 'WRITES': 3, 'OPENS': 3}
+VERDICT: PASS
+```
+
+`VERDICT: PASS` means the log rebuilt from the Mofka stream has the same modules and
+the same open/read/write counts as the real Darshan log. Small differences are
+expected and allowed: the mount label (`unknown` vs `rootfs`), timestamps, the pid,
+and the synthetic job/exe metadata.
+
+## Results at a glance
+
+Verified on LCRC/Improv, 2026-07-25.
+
+- **The C workload is byte-exact** over verbs — the rebuilt log matches the native
+  one with zero counter differences. python-ml completes but its reconstruction is
+  approximate (interpreter-startup files opened during connector init are missed).
+- **Scales to ~128 producers/node over verbs** (`MOFKA_NA_DOMAIN` +
+  `MOFKA_CLIENT_MODE=1`); tcp caps at ~2/node.
+- **Steady-state cost is ~25 µs per I/O event** (p50, flat to 128 producers/node);
+  init and finalize are one-time.
+
+See [RESULTS_LCRC.md](RESULTS_LCRC.md) for the topology, root cause, and overhead
+numbers, and [docs/scaling/REPORT.md](docs/scaling/REPORT.md) for the scaling study.
 
 ## What's in here
 
@@ -127,33 +154,13 @@ control how the producer attaches to the fabric:
 When Darshan is built without the connector (`--with-diaspora-c` absent), none of
 this exists and Darshan behaves exactly as it does upstream.
 
-## Limitations
-
-- **python-ml reconstruction is not counter-exact.** Interpreter-startup files
-  opened during the connector's init window are missed (see Results). The C
-  workload is byte-exact. A finalize records-sweep
-  (`DARSHAN_MOFKA_FINAL_SWEEP`) was written to close the gap but is disabled by
-  default: enabling it hangs python-ml at shutdown, because the sweep's sends are
-  issued from the atexit context and Mofka's producer sender runs on the margo
-  progress pool, which no longer advances as the process exits. Closing this
-  properly needs a Mofka-side change.
-- **Producers per node depends on transport.** Over tcp, only ~2 producers per node
-  attach before the NIC's fabric endpoints are exhausted. Over verbs, name the
-  producer's domain (`MOFKA_NA_DOMAIN`) and set `MOFKA_CLIENT_MODE=1` and ~128
-  producers per node attach. See RESULTS_LCRC.md for the na_ofi root cause.
-- **Drain throughput.** A single FlowCept consumer plus MongoDB is the ceiling under
-  bursty, high-volume streaming. The runner shards the drain: N consumers each pin a
-  disjoint subset of Mofka partitions and share one mongod, with FlowCept upserting
-  on a unique `task_id` so shards dedup safely. Also raise partition count
-  (`server.config`) and use a node-local Mongo dbpath.
-
 ## More docs
 
-- [REPRODUCE.md](REPRODUCE.md) — build from scratch and check the result.
-- [RESULTS_LCRC.md](RESULTS_LCRC.md) — multi-node topology and overhead numbers.
+- [RESULTS_LCRC.md](RESULTS_LCRC.md) — multi-node topology, root cause, and overhead numbers (incl. the limitations: python-ml fidelity, transport/attach, drain throughput).
+- [docs/scaling/REPORT.md](docs/scaling/REPORT.md) — the scaling study.
 - [docs/SCHEMA.md](docs/SCHEMA.md) — what one streamed event contains.
 - [docs/MOFKA_NOTES.md](docs/MOFKA_NOTES.md) — how the Mofka pieces are configured, from the official docs.
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) — the full manual pipeline, step by step.
-- [workloads/README.md](workloads/README.md) — the test workloads.
+- [workloads/README.md](workloads/README.md) — the test workloads and how to run them.
 </content>
 </invoke>

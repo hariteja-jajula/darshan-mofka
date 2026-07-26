@@ -136,14 +136,9 @@ PY
 
 Build the Darshan fork with Mofka support.
 
-> **Polaris note (validated):** re-sourcing `env/server.sh` after step 2 re-adds
-> the system darshan pkg-config path, so re-apply the fix from step 2 before
-> building the runtime:
->
-> ```bash
-> module unload darshan   # avoids Cray cc wrapper's darshan-runtime pkg-config hook
-> export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH#/soft/perftools/darshan/darshan-3.4.4/lib/pkgconfig:}"
-> ```
+> **Polaris note:** re-sourcing `env/server.sh` after step 2 re-adds the system
+> darshan pkg-config path, so re-apply the step-2 pkg-config fix before building the
+> runtime.
 
 ```bash
 ./build.sh
@@ -433,74 +428,6 @@ module record snapshots that reached Mofka, plus synthetic job/exe/mount metadat
 Stop the broker when done:
 
 ```bash
-bash server/stop_server.sh
-```
-
-## One-shot command block
-
-After everything has been built once, this block runs the full pipeline. This is
-what `workloads/job.sh` automates; use it (via `submit.sh`) unless you need to
-tweak steps.
-
-```bash
-source env/server.sh --polaris  # or: source env/server.sh --lcrc on LCRC/Improv
-bash server/start_server.sh
-"$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke
-
-RUN_DIR="${RUN_DIR:-$ROOT/server/_flowcept_run}"
-MONGO_DB="${MONGO_DB:-darshan_stream}"
-MONGO_PORT="${MONGO_PORT:-27017}"
-EVENTS_JSONL="${EVENTS_JSONL:-/tmp/darshan-mofka-events.jsonl}"
-mkdir -p "$RUN_DIR"
-MONGOD="${MONGOD:-$(command -v mongod || true)}"
-[[ -x "$MONGOD" ]] || { echo "mongod not found; load MongoDB or set MONGOD=/path/to/mongod"; exit 1; }
-RUN_DIR="$RUN_DIR" MONGO_DB="$MONGO_DB" MONGO_PORT="$MONGO_PORT" MONGOD="$MONGOD" \
-MOFKA_GROUP="$ROOT/server/mofka.json" \
-bash Client/capture_flowcept.sh > "$RUN_DIR/flowcept_capture.out" 2>&1 &
-FLOWCEPT_CAPTURE_PID=$!
-until grep -q 'consumer alive' "$RUN_DIR/flowcept_capture.out"; do
-  kill -0 "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || { cat "$RUN_DIR/flowcept_capture.out"; exit 1; }
-  sleep 1
-done
-
-darshan_ensure_logdir
-
-env \
-  DARSHAN_ENABLE_NONMPI=1 \
-  DARSHAN_MOFKA_ENABLE=1 \
-  DARSHAN_MOFKA_GROUP_FILE="$ROOT/server/mofka.json" \
-  DARSHAN_MOFKA_TOPIC=darshan \
-  DARSHAN_MOFKA_TIMING=1 \
-  DARSHAN_MOFKA_BATCH=0 \
-  DARSHAN_MOFKA_MAX_BATCHES=64 \
-  DARSHAN_LOGPATH="$DARSHAN_LOGPATH" \
-  LD_PRELOAD="$(darshan_lib)" \
-  ./workloads/c/mofka_forward_smoke /tmp/mofka-forward-smoke \
-  > /tmp/darshan-mofka-workload.out \
-  2> /tmp/darshan-mofka-workload.err
-
-touch "$RUN_DIR/SHUTDOWN"
-until grep -q 'Export now' "$RUN_DIR/flowcept_capture.out"; do
-  kill -0 "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || { cat "$RUN_DIR/flowcept_capture.out"; exit 1; }
-  sleep 1
-done
-"$PY" Client/export_jsonl.py 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" \
-  > "$EVENTS_JSONL" \
-  2> "$RUN_DIR/export.count"
-kill "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
-wait "$FLOWCEPT_CAPTURE_PID" 2>/dev/null || true
-
-cat /tmp/darshan-mofka-workload.out
-cat "$RUN_DIR/export.count"
-grep '"module":"POSIX"' "$EVENTS_JSONL" | head
-grep '"module":"STDIO"' "$EVENTS_JSONL" | head
-grep -E '"op":"(read|write)"' "$EVENTS_JSONL" | head
-
-./darshan/install/bin/darshan-mofka-reconstruct \
-  "$EVENTS_JSONL" \
-  /tmp/job_partial.darshan
-./darshan/install/bin/darshan-parser --show-incomplete /tmp/job_partial.darshan | head -80
-
 bash server/stop_server.sh
 ```
 
