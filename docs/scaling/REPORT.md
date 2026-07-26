@@ -25,8 +25,12 @@ per-rank `darshan-mofka[timing]` lines. "Produced" = per-op `send` calls across 
 - **Attach scales cleanly to 512 producers.** Zero `fi_senddata` / `No provider` /
   `domain "(null)"` errors on any run — 128 producers/node × 4 nodes all attach over verbs. This is
   the verbs + `MOFKA_NA_DOMAIN` + `MOFKA_CLIENT_MODE` fix holding at full node scale across nodes.
-- **End-to-end drain works at scale.** Every run is `INGEST: PASS` with **produced ≈ drained**
-  (full drain, no shortfall) — the 8-shard consumer/one-mongod path keeps up with 512 producers.
+- **End-to-end drain works at scale.** Every run is `INGEST: PASS` with **full drain, no shortfall** —
+  the 8-shard consumer/one-mongod path keeps up with 512 producers. (Drained slightly exceeds the
+  per-op "streamed" count because each producer also emits **one metadata doc** — host/pid/job/
+  exe+mounts — on its first send, which isn't a per-op event. C: 109,056 ops + 512 metadata =
+  109,568; MPI: 138,755 + 512 = 139,267; python-ml: 1,804 + **6** metadata = 1,810 — only 6 of 512
+  ranks streamed anything at all, the rest did their entire I/O in the interpreter-init window.)
 - **Per-op streaming cost stays flat at scale:** push p50 ≈ **23–33 µs** at 512 producers, matching
   the ~25 µs single-node figure — the connector's per-I/O overhead does not degrade with node/rank
   count. Producer init (attach) is ~218–234 ms, finalize ~39–131 ms.
@@ -65,29 +69,6 @@ not a clean multi-rank fidelity metric — the trustworthy multi-rank signals he
 
 Per workload: `native_report.html` + `partial_report.html` (pydarshan `python -m darshan summary`),
 `compare.txt` (verdict), `ingest.txt` (drain counts), under `docs/scaling/<workload>/`.
-
-## DLIO (fourth workload) — integrated + streaming; end-to-end run needs generous walltime
-
-DLIO is now **wired into the harness** (`WORKLOAD=dlio`; `dlio)` cases in `job.sh`/`lib/run.sh`,
-allowed value in `workload.config`) and **runs + streams under the connector**: across 2-node/4-rank
-smokes DLIO generated its dataset and streamed **~8,600 POSIX I/O events over verbs at ~23–150 µs/push,
-zero attach errors, no backpressure**. So the connector captures and streams a real DL I/O benchmark.
-
-**Dependency wall (solved).** `dlio_benchmark 2.0.0` hard-requires `nvidia-dali-cuda110` (GPU-only;
-Improv is CPU) and `torch*`, and its pinned `pydftracer==1.0.2` bundles a `gotcha` CMake project
-modern CMake rejects. The working recipe (see `workloads/dlio/README.md`): an isolated **Python 3.11**
-venv, `--no-deps` DLIO + `tensorflow-cpu` (torch/DALI stay lazy, avoided via the `tensorflow` data
-loader), and `CMAKE_POLICY_VERSION_MINIMUM=3.5` to build pydftracer.
-
-**Why no INGEST row yet.** Four 2-node smokes (15–30 min walltime) were all killed at walltime before
-the drain/reconstruct/INGEST step: DLIO's TF-based startup + dataset generation is slow (observed
-I/O-event rate ~5/s, generation is CPU-bound), and the connector's finalize flush times out (30 s) on
-DLIO's end-of-run event pattern. It needs a **≥1 h walltime** (and/or a smaller dataset) to complete;
-a 512-rank DLIO scale run is impractical because every rank pays the TensorFlow import. The
-**512-producer scale is already demonstrated** by C/python-ml/MPI above, so DLIO adds "a real DL I/O
-benchmark integrated and streaming under the connector," not a new scale point. Being Python-based,
-DLIO is expected to show the same init-window gap as python-ml (VERDICT MISMATCH), not byte-exact.
-The venv recipe + harness wiring are committed so a longer DLIO run can be launched directly later.
 
 ## Reproduce
 
