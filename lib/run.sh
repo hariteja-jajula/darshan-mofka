@@ -146,6 +146,7 @@ workload_env() {
     case "$WL_TYPE" in
         c)         WORKLOAD_ENV=(EPOCHS="$WL_EVENTS" CHECKPOINT_EVERY="$every") ;;
         python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS") ;;
+        dlio)      WORKLOAD_ENV=() ;;  # DLIO takes hydra CLI overrides (see job.sh run_workload_once) scaled by WL_EVENTS
         *)         WORKLOAD_ENV=() ;;
     esac
 }
