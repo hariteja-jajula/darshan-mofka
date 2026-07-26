@@ -20,16 +20,26 @@ the python venv, and builds diaspora + darshan + the workload:
 bash install/setup.sh
 ```
 
-Then run the demo end to end on a compute node:
+Then run the demo end to end. `submit.sh` sizes and submits the PBS job for you;
+pick the workload with `WORKLOAD=` or in `workloads/workload.config`:
 
 ```bash
-qsub -I -q debug -A <proj> -l select=1 -l walltime=01:00:00 -l filesystems=home:eagle
-cd <repo>
-bash job.sh
+PBS_ACCOUNT=<acct> bash submit.sh
 ```
 
 `setup.sh` reuses whatever already exists (spack env, `mongod`, venv, diaspora
 install), so re-running it is cheap.
+
+## LCRC build notes
+
+Two small things are needed to build the stack from scratch on an LCRC login node,
+and `setup.sh` already handles both:
+
+- Mercury is built without its shared-memory plugin (`~sm`), because the login
+  node's ptrace setting blocks the shared-memory self-test.
+- Spack fetches sources with `curl`, because the login node's Python cannot verify
+  the TLS certificate of some GNU mirrors. Source integrity is still checked by
+  SHA-256.
 
 ## config.yaml
 
@@ -50,4 +60,4 @@ version, edit `config.yaml`; `setup.sh` reads it via `install/_lib.sh`.
 - Reuses `server/spack/spack.yaml` (+ `spack.lock`) as the spack spec — no duplication.
 - Reuses `server/requirements.txt` for the python deps.
 - `mongod` resolution: `env/polaris.sh` auto-detects `server/_mongo_env`.
-- After building, `bash job.sh` runs the full pipeline end to end.
+- After building, `PBS_ACCOUNT=<acct> bash submit.sh` runs the full pipeline end to end.

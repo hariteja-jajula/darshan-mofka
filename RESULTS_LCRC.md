@@ -159,31 +159,8 @@ checkpoint_every=4    # an STDIO checkpoint file every N epochs
 Override per-run with env `EPOCHS` / `CHECKPOINT_EVERY` (both set means an exact
 count, no file read).
 
-## Reproduce
-
-The standalone `study/*.pbs` drivers have been folded into the one config-driven
-runner (`workloads/job.sh`) + `submit.sh`; each result reproduces by passing the
-topology/scale as env overrides (each is one PBS job):
-
-```bash
-cd /home/hjajula/repro-fromscratch/darshan-mofka
-PBS_ACCOUNT=radix-io NODES=2 BROKERS=per-node bash submit.sh                              # §2 multi-node broker
-PBS_ACCOUNT=radix-io NODES=2 PLACEMENT=separate bash submit.sh                            # §3 server/workload split
-PBS_ACCOUNT=radix-io NODES=3 TASKS=2 PLACEMENT=separate EVENTS=20000 bash submit.sh       # §4 multi-node scaling
-PBS_ACCOUNT=radix-io NODES=9 TASKS=2 PLACEMENT=separate PARTITIONS=8 EVENTS=50000 bash submit.sh  # §6 sharded drain
-```
-
-Each run lands in `results/C_<N>NODE_<P>PROC_<B>Broker-<placement>/RUN*/` with the
-native and reconstructed `.darshan`, the streamed `events.jsonl`, the ingest verdict,
-and the reconstruct diff.
-
-Render native-vs-reconstructed HTML summaries (from a neutral dir so the repo
-`darshan/` source doesn't shadow the pip package):
-
-```bash
-M=/home/hjajula/repro-fromscratch/darshan-mofka; U=$M/darshan/darshan-util/install
-export PATH="$U/bin:$PATH" LD_LIBRARY_PATH="$U/lib:$LD_LIBRARY_PATH"
-cd /tmp && $M/install/_venv/bin/python -m darshan summary <run>/native.darshan  --output <run>/native.html
-cd /tmp && $M/install/_venv/bin/python -m darshan summary <run>/partial.darshan --output <run>/reconstructed.html
-```
+Each of the topologies above reproduces from the one config-driven runner by
+passing the topology/scale as env overrides to `submit.sh` (the standalone
+`study/*.pbs` drivers have been folded into it); see the top-level
+[README](README.md) and [workloads/README.md](workloads/README.md).
 </content>
