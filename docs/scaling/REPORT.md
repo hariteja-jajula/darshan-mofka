@@ -8,29 +8,47 @@ sharded drain of 8 partitions / 8 FlowCept consumers sharing one mongod (upsert 
 Account `radix-io`, `debug` queue. All runs are smokes (small event counts); the point is the
 pipeline at scale, not a long workload.
 
-## Results
+## Results — scale & fidelity
 
-| Workload   | Producers | Attach errors | Produced | Drained | INGEST | VERDICT   | push p50 | init p50 | finalize p50 | walltime | node-hrs |
-|------------|-----------|---------------|----------|---------|--------|-----------|----------|----------|--------------|----------|----------|
-| **C**      | 512       | 0             | 109,056  | 109,568 | PASS   | **PASS**  | 27.7 µs  | 218 ms   | 131 ms       | 17:14    | 1.44     |
-| python-ml  | 512       | 0             | 1,803    | 1,810   | PASS   | MISMATCH¹ | 32.7 µs  | 224 ms   | 71 ms        | 16:40    | 1.39     |
-| MPI-IO     | 512       | 0             | 138,674  | 139,267 | PASS   | MISMATCH² | 23.4 µs  | 234 ms   | 39 ms        | 17:50    | 1.49     |
+512 producers = 128 ranks/node × 4 workload nodes, verbs, 8 partitions / 8 consumers.
 
-Jobs: C `7674801`, python-ml `7674839`, MPI `7674863`. Per-op / init / finalize are medians of the
-per-rank `darshan-mofka[timing]` lines. "Produced" = per-op `send` calls across all 512 ranks;
-"Drained" = darshan docs landed in MongoDB (`tasks total`).
+| Workload  | Attach errors | I/O events | Drained (docs) | INGEST | VERDICT              |
+|-----------|:-------------:|-----------:|---------------:|:------:|----------------------|
+| **C**     | 0             |    109,056 |        109,568 | PASS   | **PASS** (byte-exact) |
+| python-ml | 0             |      1,804 |          1,810 | PASS   | MISMATCH — init-window gap |
+| MPI-IO    | 0             |    138,755 |        139,267 | PASS   | MISMATCH — multi-rank scope |
+
+*Drained = I/O events + one metadata doc per active producer (host/pid/job/exe+mounts, emitted on a
+rank's first send). C/MPI: +512 (all ranks streamed). python-ml: +6 — only 6 of 512 ranks streamed
+at all; the rest did their entire I/O in the interpreter-init window (the gap).*
+
+## Overhead — connector cost (streaming on)
+
+Absolute per-op + lifecycle cost the connector adds, from the per-rank `darshan-mofka[timing]` lines.
+(No baseline-relative % this campaign — the no-Darshan / runtime-only A/B arms were not run at 512
+ranks; see "Reproduce" for the 3-arm study.)
+
+| Workload  | push p50 | push p95 | push mean | init (attach) | finalize |
+|-----------|---------:|---------:|----------:|--------------:|---------:|
+| **C**     | 27.7 µs  | 76.8 µs  | 48.1 µs   | 218 ms        | 131 ms   |
+| python-ml | 32.7 µs  | 70.8 µs  | —¹        | 224 ms        | 71 ms    |
+| MPI-IO    | 23.4 µs  | 58.2 µs  | 39.6 µs   | 234 ms        | 39 ms    |
+
+Per streamed I/O op the connector adds **~25 µs (p50), ~60–80 µs tail (p95)** — flat from 1 to 512
+producers (matches the single-node ~25 µs), so streaming does not degrade with rank count. One-time
+producer attach at init is ~0.22 s; final flush ~0.04–0.13 s. ¹python-ml's mean is skewed by a few
+backpressured ranks; p50/p95 are representative.
+
+Jobs: C `7674801`, python-ml `7674839`, MPI `7674863` (each ~1.4–1.5 node-hrs).
 
 ## Headline findings
 
 - **Attach scales cleanly to 512 producers.** Zero `fi_senddata` / `No provider` /
   `domain "(null)"` errors on any run — 128 producers/node × 4 nodes all attach over verbs. This is
   the verbs + `MOFKA_NA_DOMAIN` + `MOFKA_CLIENT_MODE` fix holding at full node scale across nodes.
-- **End-to-end drain works at scale.** Every run is `INGEST: PASS` with **full drain, no shortfall** —
-  the 8-shard consumer/one-mongod path keeps up with 512 producers. (Drained slightly exceeds the
-  per-op "streamed" count because each producer also emits **one metadata doc** — host/pid/job/
-  exe+mounts — on its first send, which isn't a per-op event. C: 109,056 ops + 512 metadata =
-  109,568; MPI: 138,755 + 512 = 139,267; python-ml: 1,804 + **6** metadata = 1,810 — only 6 of 512
-  ranks streamed anything at all, the rest did their entire I/O in the interpreter-init window.)
+- **End-to-end drain works at scale.** Every run is `INGEST: PASS` with full drain (no shortfall) —
+  the 8-shard consumer / one-mongod path keeps up with 512 producers (drained = I/O events + one
+  metadata doc per producer; see the table note).
 - **Per-op streaming cost stays flat at scale:** push p50 ≈ **23–33 µs** at 512 producers, matching
   the ~25 µs single-node figure — the connector's per-I/O overhead does not degrade with node/rank
   count. Producer init (attach) is ~218–234 ms, finalize ~39–131 ms.
@@ -79,4 +97,8 @@ PBS_ACCOUNT=radix-io QUEUE=debug WALLTIME=00:30:00 SKIP_BUILD=1 \
 # pydarshan HTML (auto-generated per run; or by hand from a run dir):
 install/_venv/bin/python -m darshan summary native.darshan   # -> native_report.html
 install/_venv/bin/python -m darshan summary partial.darshan  # -> partial_report.html
+
+# baseline-relative overhead % (3-arm: no-Darshan | Darshan runtime-only | streaming), one allocation:
+RUN_SCRIPT=workloads/overhead_study.sh STUDY_WORKLOADS=c STUDY_EVENTS=5000 STUDY_REPS=3 \
+  PBS_ACCOUNT=radix-io QUEUE=compute NODES=5 TASKS=128 bash submit.sh   # -> summary.csv + report.txt
 ```
