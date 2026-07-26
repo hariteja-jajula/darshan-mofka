@@ -1,0 +1,2 @@
+    tasks total=139267  darshan=139267  modules={'POSIX': 899, 'STDIO': 137856}
+    INGEST: PASS
