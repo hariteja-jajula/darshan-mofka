@@ -146,9 +146,15 @@ for rep in $(seq 1 "$WL_REPS"); do
     # reconstruct + 1:1 compare to native
     PARTIAL="$RES/partial.darshan"
     "$B/darshan-mofka-reconstruct" "$EVJSONL" "$PARTIAL" || die "reconstruct failed"
-    NATIVE="$(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -name 'partial.darshan' -newermt '-20 min' 2>/dev/null | sort | tail -1)"
+    # Native reference = AGGREGATE of ALL per-rank native logs (each process writes its own). The
+    # reconstruction is the aggregate of all ranks, and the compare SUMS op-totals, so the native
+    # side must sum all ranks too -- comparing one rank's log only matches a single-process run.
+    mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -name 'partial.darshan' ! -name 'native.darshan' -newermt '-20 min' 2>/dev/null | sort)
     "$B/darshan-parser" --show-incomplete "$PARTIAL" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$RES/r.txt" || true
-    [[ -n "$NATIVE" ]] && { cp "$NATIVE" "$RES/native.darshan"; "$B/darshan-parser" --show-incomplete "$NATIVE" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$RES/n.txt" || true; }
+    if [[ ${#NATIVE_LOGS[@]} -gt 0 ]]; then
+        cp "${NATIVE_LOGS[-1]}" "$RES/native.darshan"   # keep one for the pydarshan HTML
+        for nl in "${NATIVE_LOGS[@]}"; do "$B/darshan-parser" --show-incomplete "$nl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done | sort > "$RES/n.txt" || true
+    fi
     "$PY" - "$RES/r.txt" "$RES/n.txt" <<'PY' | tee "$RES/compare.txt"
 import sys, os
 from collections import Counter
