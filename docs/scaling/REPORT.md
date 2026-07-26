@@ -66,14 +66,28 @@ not a clean multi-rank fidelity metric — the trustworthy multi-rank signals he
 Per workload: `native_report.html` + `partial_report.html` (pydarshan `python -m darshan summary`),
 `compare.txt` (verdict), `ingest.txt` (drain counts), under `docs/scaling/<workload>/`.
 
-## DLIO
+## DLIO (fourth workload) — integrated + streaming; end-to-end run needs generous walltime
 
-DLIO was requested as a fourth workload but is **not yet runnable on this cluster**: `dlio_benchmark
-2.0.0` hard-requires `nvidia-dali-cuda110` (GPU/CUDA — Improv is CPU-only) and `torchvision`, and its
-pinned `pydftracer==1.0.2` fails to build on the stack's Python 3.14 (newer pydftracer has an
-incompatible API, so DLIO won't import). A CPU build is being attempted in an isolated Python 3.11
-venv (`--no-deps` + non-DALI data loader); this section will be updated if it succeeds. DLIO is
-Python-based, so it is expected to show the same init-window gap as python-ml.
+DLIO is now **wired into the harness** (`WORKLOAD=dlio`; `dlio)` cases in `job.sh`/`lib/run.sh`,
+allowed value in `workload.config`) and **runs + streams under the connector**: across 2-node/4-rank
+smokes DLIO generated its dataset and streamed **~8,600 POSIX I/O events over verbs at ~23–150 µs/push,
+zero attach errors, no backpressure**. So the connector captures and streams a real DL I/O benchmark.
+
+**Dependency wall (solved).** `dlio_benchmark 2.0.0` hard-requires `nvidia-dali-cuda110` (GPU-only;
+Improv is CPU) and `torch*`, and its pinned `pydftracer==1.0.2` bundles a `gotcha` CMake project
+modern CMake rejects. The working recipe (see `workloads/dlio/README.md`): an isolated **Python 3.11**
+venv, `--no-deps` DLIO + `tensorflow-cpu` (torch/DALI stay lazy, avoided via the `tensorflow` data
+loader), and `CMAKE_POLICY_VERSION_MINIMUM=3.5` to build pydftracer.
+
+**Why no INGEST row yet.** Four 2-node smokes (15–30 min walltime) were all killed at walltime before
+the drain/reconstruct/INGEST step: DLIO's TF-based startup + dataset generation is slow (observed
+I/O-event rate ~5/s, generation is CPU-bound), and the connector's finalize flush times out (30 s) on
+DLIO's end-of-run event pattern. It needs a **≥1 h walltime** (and/or a smaller dataset) to complete;
+a 512-rank DLIO scale run is impractical because every rank pays the TensorFlow import. The
+**512-producer scale is already demonstrated** by C/python-ml/MPI above, so DLIO adds "a real DL I/O
+benchmark integrated and streaming under the connector," not a new scale point. Being Python-based,
+DLIO is expected to show the same init-window gap as python-ml (VERDICT MISMATCH), not byte-exact.
+The venv recipe + harness wiring are committed so a longer DLIO run can be launched directly later.
 
 ## Reproduce
 
