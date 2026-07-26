@@ -6,7 +6,7 @@ automate. For the fast path see the top-level [README](../README.md); for the
 pinned build from source see [install/README.md](../install/README.md).
 
 The steps below are validated on ALCF Polaris and LCRC/Improv; the headline
-multi-node results are on LCRC/Improv (see [../RESULTS_LCRC.md](../RESULTS_LCRC.md)).
+multi-node results are on LCRC/Improv (see [scaling/REPORT.md](scaling/REPORT.md)).
 Inline notes call out the Polaris Cray/eagle-specific workarounds; substitute
 `--lcrc` for `--polaris` and skip those notes on LCRC.
 

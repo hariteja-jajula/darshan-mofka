@@ -105,8 +105,8 @@ Verified on LCRC/Improv, 2026-07-25.
 - **Steady-state cost is ~25 µs per I/O event** (p50, flat to 128 producers/node);
   init and finalize are one-time.
 
-See [RESULTS_LCRC.md](RESULTS_LCRC.md) for the topology, root cause, and overhead
-numbers, and [docs/scaling/REPORT.md](docs/scaling/REPORT.md) for the scaling study.
+See [docs/scaling/REPORT.md](docs/scaling/REPORT.md) for the full-scale results:
+topology, attach/transport root cause, and overhead numbers.
 
 ## What's in here
 
@@ -139,7 +139,7 @@ reads:
 | `DARSHAN_MOFKA_BATCH` | Producer batch size; `0` means adaptive | `0` |
 | `DARSHAN_MOFKA_MAX_BATCHES` | Max pending batches; `0` means library default | `0` |
 | `DARSHAN_MOFKA_FLUSH_MS` | How long to wait for a final flush, in ms | `5000` |
-| `DARSHAN_MOFKA_FINAL_SWEEP` | Re-stream every record's final struct at shutdown. Off by default — enabling it hangs python-ml at finalize (see RESULTS_LCRC.md) | off |
+| `DARSHAN_MOFKA_FINAL_SWEEP` | Re-stream every record's final struct at shutdown. Off by default — enabling it hangs python-ml at finalize (see the KNOWN ISSUE note in `darshan-mofka.c`) | off |
 | `DARSHAN_MOFKA_TIMING` | Print per-call timing | off |
 | `DARSHAN_MOFKA_VERBOSE` | Extra diagnostics | off |
 
@@ -156,7 +156,7 @@ this exists and Darshan behaves exactly as it does upstream.
 
 ## More docs
 
-- [RESULTS_LCRC.md](RESULTS_LCRC.md) — multi-node topology, root cause, and overhead numbers (incl. the limitations: python-ml fidelity, transport/attach, drain throughput).
+- [docs/scaling/REPORT.md](docs/scaling/REPORT.md) — full-scale results: topology, attach/transport root cause, overhead, and the python-ml/MPI fidelity limitations.
 - [docs/scaling/REPORT.md](docs/scaling/REPORT.md) — the scaling study.
 - [docs/SCHEMA.md](docs/SCHEMA.md) — what one streamed event contains.
 - [docs/MOFKA_NOTES.md](docs/MOFKA_NOTES.md) — how the Mofka pieces are configured, from the official docs.
