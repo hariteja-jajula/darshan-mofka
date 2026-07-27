@@ -103,7 +103,7 @@ fi
 say "5. broker"
 pkill -f 'bedrock ' 2>/dev/null || true; sleep 1
 start_broker "$ROOT/server/_broker" "$NRANKS_BROKER" || die "broker failed"
-trap 'kill "$BROKER_PID" 2>/dev/null; kill "${CONSUMER_PID:-}" 2>/dev/null; pkill -f "bedrock " 2>/dev/null || true' EXIT
+trap 'kill "${BROKER_PID:-}" 2>/dev/null; for _cp in "${CONSUMER_PIDS[@]:-}"; do kill "$_cp" 2>/dev/null; done; pkill -f "bedrock " 2>/dev/null || true' EXIT
 echo "broker up | group $GROUP"
 
 compile_workload() {  # $1 = workload type
@@ -267,7 +267,11 @@ for w in $STUDY_WORKLOADS; do
     done
 done
 
-kill "$CONSUMER_PID" 2>/dev/null; wait "$CONSUMER_PID" 2>/dev/null || true
+# start_consumer (lib/run.sh) fills the CONSUMER_PIDS array, never a singular
+# CONSUMER_PID -- referencing the singular here crashed under `set -u` before the
+# report table below was written. Tear down every consumer pid (guarded for the
+# case start_consumer never ran).
+for _cp in "${CONSUMER_PIDS[@]:-}"; do kill "$_cp" 2>/dev/null; wait "$_cp" 2>/dev/null || true; done
 
 # --- report: study parameters + per-arm metrics table ---
 say "report"
