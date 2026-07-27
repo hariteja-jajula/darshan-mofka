@@ -141,7 +141,14 @@ connector_env() {
 darshan_env() {
     load_run_config
     DARSHAN_ENV=()
-    [ "$D_NONMPI" = 1 ]        && DARSHAN_ENV+=(DARSHAN_ENABLE_NONMPI=1)
+    # DARSHAN_ENABLE_NONMPI fires darshan's load-time constructor
+    # (darshan/darshan-runtime/lib/darshan-core-init-finalize.c:101 serial_init), which
+    # calls darshan_core_initialize BEFORE the app's MPI_Init. For a real MPI job that
+    # latches using_mpi=0 (darshan-core.c:218 PMPI_Initialized reads false pre-init; the
+    # first-init-wins guard at :206 means the MPI_Init wrapper's later re-init is a no-op),
+    # so the rank reduction never runs and each rank writes its own nprocs=1 log instead of
+    # one rank=-1 shared log. MUST be unset for mpi. (BX 2026-07-27, 2-subagent cross-check)
+    [ "$D_NONMPI" = 1 ] && [ "$WL_TYPE" != mpi ] && DARSHAN_ENV+=(DARSHAN_ENABLE_NONMPI=1)
     [ -n "$D_MODMEM" ]         && DARSHAN_ENV+=(DARSHAN_MODMEM="$D_MODMEM")
     [ -n "$D_MOD_ENABLE" ]     && DARSHAN_ENV+=(DARSHAN_MOD_ENABLE="$D_MOD_ENABLE")
     [ -n "$D_MOD_DISABLE" ]    && DARSHAN_ENV+=(DARSHAN_MOD_DISABLE="$D_MOD_DISABLE")
