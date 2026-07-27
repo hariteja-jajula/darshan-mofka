@@ -44,6 +44,14 @@ int main(int argc, char** argv)
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
+    /* Scale knob for the overhead study: repeat the collective write+read STEPS times
+     * within a single open/close, so MPIIO READS/WRITES/BYTES (and the per-op ->Mofka
+     * sends) grow linearly with STEPS while OPENS/CLOSES stay fixed. STEPS unset or <1
+     * means 1 -- identical to the original single-shot smoke, so this is inert by default.
+     * The harness maps EVENTS onto STEPS via lib/run.sh workload_env (mpi case). */
+    long steps = 1;
+    { const char* s = getenv("STEPS"); if (s && *s) { long v = strtol(s, NULL, 10); if (v > 0) steps = v; } }
+
     /* rank 0 makes the output directory; everyone waits for it */
     if (rank == 0) {
         if (mkdir(dir, 0755) != 0 && errno != EEXIST)
@@ -65,24 +73,30 @@ int main(int argc, char** argv)
 
     MPI_Offset offset = (MPI_Offset)rank * (MPI_Offset)sizeof(wbuf);
 
-    if (MPI_File_write_at_all(fh, offset, wbuf, sizeof(wbuf), MPI_CHAR, &st) != MPI_SUCCESS)
-        die("MPI_File_write_at_all");
+    /* Repeat the collective write+read STEPS times inside the single open/close. Each
+     * rank keeps its own disjoint offset band so writes never collide across ranks. */
+    for (long step = 0; step < steps; step++) {
+        MPI_Offset off = offset + (MPI_Offset)step * (MPI_Offset)nprocs * (MPI_Offset)sizeof(wbuf);
 
-    if (MPI_File_sync(fh) != MPI_SUCCESS)
-        die("MPI_File_sync");
+        if (MPI_File_write_at_all(fh, off, wbuf, sizeof(wbuf), MPI_CHAR, &st) != MPI_SUCCESS)
+            die("MPI_File_write_at_all");
 
-    MPI_Barrier(MPI_COMM_WORLD);
+        if (MPI_File_sync(fh) != MPI_SUCCESS)
+            die("MPI_File_sync");
 
-    if (MPI_File_read_at_all(fh, offset, rbuf, sizeof(rbuf), MPI_CHAR, &st) != MPI_SUCCESS)
-        die("MPI_File_read_at_all");
+        MPI_Barrier(MPI_COMM_WORLD);
+
+        if (MPI_File_read_at_all(fh, off, rbuf, sizeof(rbuf), MPI_CHAR, &st) != MPI_SUCCESS)
+            die("MPI_File_read_at_all");
+    }
 
     if (MPI_File_close(&fh) != MPI_SUCCESS)
         die("MPI_File_close");
 
     if (rank == 0) {
         MPI_File_delete(path, MPI_INFO_NULL);
-        printf("mofka_forward_mpiio complete: %d ranks wrote/read shared MPI-IO file in %s\n",
-               nprocs, dir);
+        printf("mofka_forward_mpiio complete: %d ranks x %ld steps wrote/read shared MPI-IO file in %s\n",
+               nprocs, steps, dir);
     }
 
     MPI_Finalize();

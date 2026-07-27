@@ -86,6 +86,19 @@ SRV_NODE="${NODELIST[0]}"; WL_NODE="$SRV_NODE"
 [[ "$WL_PLACEMENT" == separate ]] && WL_NODE="${NODELIST[1]:-${NODELIST[0]}}"
 say "topology: ${#NODELIST[@]} node(s) | broker on ${SRV_NODE} | workload on ${WL_NODE}"
 
+# Workload hostfile restricting placement to WL_NODE (mirrors job.sh:88-100). PALS
+# (polaris) wants a PLAIN hostfile -- it parses "HOST slots=N" as one hostname -- so
+# under polaris write bare hostnames; OpenMPI (lcrc) keeps the "HOST slots=N" form.
+# The launcher itself is chosen by mpi_launch() (env/common.sh), never hardcoded here.
+WL_SLOTS="$(awk -v n="$WL_NODE" '$1==n{c++} END{print c+0}' "${PBS_NODEFILE:-/dev/null}" 2>/dev/null)"
+[[ "$WL_SLOTS" -ge 1 ]] 2>/dev/null || WL_SLOTS="$WL_TASKS"
+WL_HOSTFILE="$ROOT/server/_study_wl_hostfile"
+if [[ "$ENV_PROFILE" == polaris ]]; then
+    printf '%s\n' "$WL_NODE" > "$WL_HOSTFILE"
+else
+    printf '%s slots=%s\n' "$WL_NODE" "$WL_SLOTS" > "$WL_HOSTFILE"
+fi
+
 # --- 5. broker (once) ---
 say "5. broker"
 pkill -f 'bedrock ' 2>/dev/null || true; sleep 1
@@ -114,6 +127,16 @@ run_workload_once() {
         c)         cmd=(./workloads/c/mofka_forward_smoke "$scratch") ;;
         python-ml) cmd=("$PY" workloads/python-ml/train.py "$scratch") ;;
         mpi)       cmd=(./workloads/mpi/mofka_forward_mpiio "$scratch") ;;
+        dlio)      # DLIO from its isolated venv; generate_data only (real POSIX writes, no slow
+                   # TF train loop). num_files scales with WL_EVENTS. Mirrors job.sh dlio case.
+                   cmd=("$ROOT/install/_dlio_venv/bin/dlio_benchmark"
+                        "++workload.workflow.generate_data=True" "++workload.workflow.train=False"
+                        "++workload.framework=tensorflow" "++workload.reader.data_loader=tensorflow"
+                        "++workload.dataset.format=npz" "++workload.dataset.data_folder=$scratch"
+                        "++workload.dataset.num_files_train=${WL_EVENTS}"
+                        "++workload.dataset.num_samples_per_file=4"
+                        "++workload.dataset.record_length=4096"
+                        "++hydra.run.dir=$scratch/hydra" "++hydra.output_subdir=null") ;;
         *)         die "unknown workload '$WL_TYPE'" ;;
     esac
     local pre=()
@@ -123,14 +146,18 @@ run_workload_once() {
         pre=(DARSHAN_LOGPATH="$RES" LD_PRELOAD="$dlib" "${CONNECTOR_ENV[@]}" "${DARSHAN_ENV[@]}" "${WORKLOAD_ENV[@]}")
     fi
     set +e
+    # Launcher is profile-guarded via mpi_launch (env/common.sh): PALS mpiexec on polaris,
+    # OpenMPI mpirun on lcrc. The old hardcoded mpirun/mpiexec+--mca flags ERROR under PALS.
+    # A single local rank on the head node (non-mpi) needs no launcher (fast path).
     if [[ "$WL_PLACEMENT" == separate && "$WL_NODE" != "$SRV_NODE" ]]; then
         local estr="${pre[*]}"
-        mpirun -n "$WL_TASKS" --host "$WL_NODE" bash -lc \
+        mpi_launch "$WL_TASKS" "$WL_TASKS" "$WL_HOSTFILE"
+        "${MPI_LAUNCH[@]}" bash -lc \
           "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && env $estr ${cmd[*]}" \
           > "$RES/workload.out" 2> "$RES/workload.err"
     elif [[ "$WL_TASKS" -gt 1 || "$WL_TYPE" == mpi ]]; then
-        mpiexec --oversubscribe -n "$WL_TASKS" --mca pml ob1 --mca btl tcp,self \
-          env "${pre[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
+        mpi_launch "$WL_TASKS" "$WL_TASKS" "$WL_HOSTFILE"
+        "${MPI_LAUNCH[@]}" env "${pre[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     else
         env "${pre[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     fi
@@ -218,35 +245,21 @@ for w in $STUDY_WORKLOADS; do
                 [ "$n" -ge "$vsends" ] && break; sleep 3
             done
             echo "exported $n events (sends=$vsends)"
-            # Reconstruct one .darshan per process into streamed/; compare aggregate op-totals
-            # (summed over all reconstructed logs) vs all native per-process logs.
-            STREAMED_DIR="$RES/streamed"
+            # Reconstruct one .darshan per process into streamed/, collect the native per-process
+            # logs into native/ (EXCLUDING streamed/ + native/ so the reconstruct output can't leak
+            # back in as native -> duplicate-pid ERROR), then run the SAME strict validator job.sh
+            # uses: per-process/per-record EXACT integer-counter compare (perproc; mpi mode aggregates
+            # per-rank the way Darshan's reduction does). No weak op-total rubber stamp. (BX 2026-07-27)
+            STREAMED_DIR="$RES/streamed"; NATIVE_DIR="$RES/native"
+            rm -rf "$STREAMED_DIR" "$NATIVE_DIR"; mkdir -p "$STREAMED_DIR" "$NATIVE_DIR"
             if "$B/darshan-mofka-reconstruct" "$EVJSONL" "$STREAMED_DIR" 2>/dev/null \
                && ls "$STREAMED_DIR"/*.darshan >/dev/null 2>&1; then
-                for rl in "$STREAMED_DIR"/*.darshan; do "$B/darshan-parser" --show-incomplete "$rl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done | sort > "$RES/r.txt" || true
-                for nl in $(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -path "*/streamed/*" -newermt '-30 min' 2>/dev/null | sort); do "$B/darshan-parser" --show-incomplete "$nl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done | sort > "$RES/n.txt" || true
-                "$PY" - "$RES/r.txt" "$RES/n.txt" <<'PY' | tee "$RES/compare.txt"
-import sys, os
-from collections import Counter
-def mods_ops(p):
-    m=set(); v=Counter()
-    if os.path.exists(p):
-        for ln in open(p):
-            f=ln.split()
-            if len(f)<5: continue
-            m.add(f[0]); c=f[3]
-            for op in ("OPENS","READS","WRITES","CLOSES"):
-                if c.endswith("_%s"%op):
-                    try: v[op]+=int(f[4])
-                    except ValueError: pass
-    return m,v
-rm,ro=mods_ops(sys.argv[1]); nm,no=mods_ops(sys.argv[2])
-print("reconstructed:", sorted(rm), dict(ro))
-print("native       :", sorted(nm), dict(no))
-if not (os.path.exists(sys.argv[2]) and nm): print("VERDICT: PARTIAL (no native)"); sys.exit(0)
-ok = rm==nm and all(ro.get(k)==no.get(k) for k in ("OPENS","READS","WRITES","CLOSES"))
-print("VERDICT:", "PASS" if ok else "MISMATCH")
-PY
+                mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' \
+                    ! -path "$STREAMED_DIR/*" ! -path "$NATIVE_DIR/*" -newermt '-30 min' 2>/dev/null | sort)
+                for nl in "${NATIVE_LOGS[@]}"; do cp "$nl" "$NATIVE_DIR/"; done
+                cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" ]] && cmp_mode="mpi"
+                ( cd "$RES" && "$PY" "$ROOT/workloads/strict_compare.py" streamed native "$cmp_mode" ) \
+                    | tee "$RES/compare.txt" || true
                 ONE_REC="$(ls "$STREAMED_DIR"/*.darshan 2>/dev/null | head -1)"
                 [[ -n "$ONE_REC" ]] && "$B/darshan-parser" "$ONE_REC" 2>/dev/null | grep -iE '^# exe|^# mount entry' | head
             fi

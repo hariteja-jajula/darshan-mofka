@@ -1,0 +1,15 @@
+--- a/packages/mercury/package.py
++++ b/packages/mercury/package.py
+@@ -46,6 +46,12 @@
+     depends_on('ucx', when='+ucx')
+     depends_on('opa-psm2', when='+psm2')
+     depends_on('opa-psm2', when='+psm')
++    # +hwloc passes -DNA_OFI_USE_HWLOC (see cmake_args); FindHWLOC.cmake uses
++    # pkg_check_modules(hwloc), so hwloc's pkgconfig must be on the build-time
++    # PKG_CONFIG_PATH. Upstream mochi omits this edge; on Polaris (no system hwloc
++    # dev headers / no hwloc module) the build fails "Could NOT find HWLOC". Declare
++    # the edge so spack wires the in-repo hwloc deterministically. (BX 2026-07-27)
++    depends_on('hwloc', when='+hwloc')
+ 
+     #with when("+quic"):
+     #    depends_on('lsquic+shared')

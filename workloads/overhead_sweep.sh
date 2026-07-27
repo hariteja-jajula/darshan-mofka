@@ -90,14 +90,25 @@ run_workload_once() {  # $1=RES ; uses ARM_MODE + WL_* globals
     if [[ "$ARM_MODE" == none ]]; then pre=("${WORKLOAD_ENV[@]}")
     else pre=(DARSHAN_LOGPATH="$RES" LD_PRELOAD="$dlib" "${CONNECTOR_ENV[@]}" "${DARSHAN_ENV[@]}" "${WORKLOAD_ENV[@]}"); fi
     set +e
+    # Profile-guarded launcher (env/common.sh mpi_launch): PALS mpiexec on polaris, OpenMPI
+    # on lcrc. WL_NODE changes per swept config, so (re)write the workload hostfile here --
+    # bare hostname for PALS (it parses "HOST slots=N" as one hostname), "HOST slots=N" for
+    # OpenMPI. The old hardcoded mpirun/mpiexec --mca flags ERROR under PALS.
+    local WL_HOSTFILE="$ROOT/server/_sweep_wl_hostfile"
+    if [[ "$ENV_PROFILE" == polaris ]]; then
+        printf '%s\n' "$WL_NODE" > "$WL_HOSTFILE"
+    else
+        printf '%s slots=%s\n' "$WL_NODE" "$WL_TASKS" > "$WL_HOSTFILE"
+    fi
     if [[ "$WL_PLACEMENT" == separate && "$WL_NODE" != "$SRV_NODE" ]]; then
         local estr="${pre[*]}"
-        mpirun -n "$WL_TASKS" --host "$WL_NODE" bash -lc \
+        mpi_launch "$WL_TASKS" "$WL_TASKS" "$WL_HOSTFILE"
+        "${MPI_LAUNCH[@]}" bash -lc \
           "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && env $estr ${cmd[*]}" \
           > "$RES/workload.out" 2> "$RES/workload.err"
     elif [[ "$WL_TASKS" -gt 1 || "$WL_TYPE" == mpi ]]; then
-        mpiexec --oversubscribe -n "$WL_TASKS" --mca pml ob1 --mca btl tcp,self \
-          env "${pre[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
+        mpi_launch "$WL_TASKS" "$WL_TASKS" "$WL_HOSTFILE"
+        "${MPI_LAUNCH[@]}" env "${pre[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     else
         env "${pre[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     fi
@@ -183,13 +194,19 @@ for cfg in "${CONFIGS[@]}"; do
                 "$PY" "$ROOT/Client/export_jsonl.py" 127.0.0.1 "$SRV_MONGO_DB" --mongo-port "$SRV_MONGO_PORT" > "$EVJSONL" 2>/dev/null || true
                 nn=$(wc -l < "$EVJSONL" 2>/dev/null || echo 0); [ "$nn" -ge "$vs" ] && break; sleep 3
             done
-            # Reconstruct one .darshan per process into streamed/; fidelity = aggregate
-            # op-totals of all reconstructed logs vs all native per-process logs.
+            # Reconstruct per-process logs into streamed/, collect native into native/ (excluding
+            # streamed/ + native/ so reconstruct output can't leak in as native), then run the SAME
+            # strict validator job.sh/overhead_study.sh use: EXACT per-record integer-counter compare
+            # (perproc; mpi mode aggregates per-rank). No weak diff/op-total rubber stamp. (BX 2026-07-27)
             if "$B/darshan-mofka-reconstruct" "$EVJSONL" "$RES/streamed" 2>/dev/null \
                && ls "$RES"/streamed/*.darshan >/dev/null 2>&1; then
-                for rl in "$RES"/streamed/*.darshan; do "$B/darshan-parser" --show-incomplete "$rl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done | sort > "$RES/r.txt" || true
-                for nl in $(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -path "*/streamed/*" -newermt '-30 min' 2>/dev/null | sort); do "$B/darshan-parser" --show-incomplete "$nl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done | sort > "$RES/n.txt" || true
-                if diff -q "$RES/r.txt" "$RES/n.txt" >/dev/null 2>&1; then echo "  fidelity VERDICT: PASS"; else echo "  fidelity VERDICT: check $RES"; fi
+                mkdir -p "$RES/native"
+                mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' \
+                    ! -path "$RES/streamed/*" ! -path "$RES/native/*" -newermt '-30 min' 2>/dev/null | sort)
+                for nl in "${NATIVE_LOGS[@]}"; do cp "$nl" "$RES/native/"; done
+                cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" ]] && cmp_mode="mpi"
+                ( cd "$RES" && "$PY" "$ROOT/workloads/strict_compare.py" streamed native "$cmp_mode" ) \
+                    | tee "$RES/compare.txt" || true
             fi
         fi
     done

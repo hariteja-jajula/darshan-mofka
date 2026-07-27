@@ -91,7 +91,14 @@ WL_NODE="${WL_NODES_ARR[0]}"   # kept for messages / single-node paths
 WL_SLOTS="$(awk -v n="${WL_NODES_ARR[0]}" '$1==n{c++} END{print c+0}' "${PBS_NODEFILE:-/dev/null}" 2>/dev/null)"
 [ "${WL_SLOTS:-0}" -ge 1 ] 2>/dev/null || WL_SLOTS="$(nproc 2>/dev/null || echo 128)"
 WL_HOSTFILE="$ROOT/server/_wl_hostfile"
-: > "$WL_HOSTFILE"; for h in "${WL_NODES_ARR[@]}"; do echo "$h slots=$WL_SLOTS" >> "$WL_HOSTFILE"; done
+# PALS (polaris) wants a PLAIN hostfile -- it treats "HOST slots=N" as one hostname and
+# errors ("Couldn't connect to tcp://HOST slots=N"). It gets per-node density from --ppn +
+# the PBS reservation, not the file. OpenMPI (lcrc) needs the "slots=" declaration.
+if [[ "$ENV_PROFILE" == polaris ]]; then
+    printf '%s\n' "${WL_NODES_ARR[@]}" > "$WL_HOSTFILE"
+else
+    : > "$WL_HOSTFILE"; for h in "${WL_NODES_ARR[@]}"; do echo "$h slots=$WL_SLOTS" >> "$WL_HOSTFILE"; done
+fi
 say "topology: ${#NODELIST[@]} node(s) | broker ranks=$NRANKS_BROKER on ${SRV_NODE} | workload ${WL_TASKS} task/node x ${WL_NNODES} node = ${WL_TOTAL_RANKS} rank(s) on: ${WL_NODES_ARR[*]}"
 
 # --- 5. broker (single or one-per-node via tm), created once ---
@@ -120,18 +127,31 @@ run_workload_once() {
         c)         cmd=(./workloads/c/mofka_forward_smoke "$scratch") ;;
         python-ml) cmd=("$PY" workloads/python-ml/train.py "$scratch") ;;
         mpi)       cmd=(./workloads/mpi/mofka_forward_mpiio "$scratch") ;;
+        dlio)      # DLIO benchmark from its own isolated venv (install/_dlio_venv); tensorflow
+                   # data loader avoids the torch/DALI(GPU) deps. generate_data only: distributed
+                   # dataset writes = real POSIX I/O captured by the LD_PRELOAD connector, fast, and
+                   # no slow CPU TF train loop (train=True dominates wall time and floods finalize).
+                   # num_files scales with WL_EVENTS. See workloads/dlio/README.md.
+                   cmd=("$ROOT/install/_dlio_venv/bin/dlio_benchmark"
+                        "++workload.workflow.generate_data=True" "++workload.workflow.train=False"
+                        "++workload.framework=tensorflow" "++workload.reader.data_loader=tensorflow"
+                        "++workload.dataset.format=npz" "++workload.dataset.data_folder=$scratch"
+                        "++workload.dataset.num_files_train=${WL_EVENTS}"
+                        "++workload.dataset.num_samples_per_file=4"
+                        "++workload.dataset.record_length=4096"
+                        "++hydra.run.dir=$scratch/hydra" "++hydra.output_subdir=null") ;;
         *)         die "unknown workload '$WL_TYPE'" ;;
     esac
     local base=(DARSHAN_LOGPATH="$RES" LD_PRELOAD="$dlib" "${CONNECTOR_ENV[@]}" "${DARSHAN_ENV[@]}" "${WORKLOAD_ENV[@]}")
     # Fast path: a single local rank on the head node needs no launcher. Otherwise place
     # WL_TASKS ranks per workload node (multi-proc and/or multi-node) with ppr mapping --
     # NO oversubscription (WL_TASKS must be <= ncpus/node or PRRTE errors, which is correct).
-    if [[ "$WL_TOTAL_RANKS" -le 1 && "$WL_NNODES" -le 1 && "$WL_NODE" == "$SRV_NODE" && "$WL_TYPE" != mpi ]]; then
+    if [[ "$WL_TOTAL_RANKS" -le 1 && "$WL_NNODES" -le 1 && "$WL_NODE" == "$SRV_NODE" && "$WL_TYPE" != mpi && "$WL_TYPE" != dlio ]]; then
         env "${base[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     else
         local estr="${CONNECTOR_ENV[*]} ${DARSHAN_ENV[*]} ${WORKLOAD_ENV[*]}"
-        mpirun -n "$WL_TOTAL_RANKS" --map-by ppr:"$WL_TASKS":node --hostfile "$WL_HOSTFILE" \
-            --mca pml ob1 --mca btl tcp,self bash -lc \
+        mpi_launch "$WL_TOTAL_RANKS" "$WL_TASKS" "$WL_HOSTFILE"
+        "${MPI_LAUNCH[@]}" bash -lc \
           "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && env $estr DARSHAN_LOGPATH='$RES' LD_PRELOAD='$dlib' ${cmd[*]}" \
           > "$RES/workload.out" 2> "$RES/workload.err"
     fi
@@ -158,39 +178,26 @@ for rep in $(seq 1 "$WL_REPS"); do
     rm -rf "$STREAMED_DIR" "$NATIVE_DIR"; mkdir -p "$STREAMED_DIR" "$NATIVE_DIR"
     "$B/darshan-mofka-reconstruct" "$EVJSONL" "$STREAMED_DIR" || die "reconstruct failed"
     # Native per-process logs from this run (each process writes its own nprocs=1 log).
-    mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' -newermt '-20 min' 2>/dev/null | sort)
+    # EXCLUDE the reconstructed logs we just wrote under $RES/streamed (and anything already
+    # copied into $RES/native): find scans $RES recursively and would otherwise sweep the
+    # reconstructed .darshan back in as if it were native -> duplicate-pid ERROR in
+    # strict_compare (VERDICT: ERROR rc=2). Mirrors overhead_study.sh's ! -path guard. (BX 2026-07-27)
+    mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' \
+        ! -path "$STREAMED_DIR/*" ! -path "$NATIVE_DIR/*" -newermt '-20 min' 2>/dev/null | sort)
     for nl in "${NATIVE_LOGS[@]}"; do cp "$nl" "$NATIVE_DIR/"; done
-    # Aggregate op-total compare (sums across all per-process logs on each side) + file-count parity.
-    for nl in "$NATIVE_DIR"/*.darshan;   do "$B/darshan-parser" --show-incomplete "$nl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done 2>/dev/null | sort > "$RES/n.txt" || true
-    for rl in "$STREAMED_DIR"/*.darshan; do "$B/darshan-parser" --show-incomplete "$rl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done 2>/dev/null | sort > "$RES/r.txt" || true
-    NCOUNT=$(ls "$NATIVE_DIR"/*.darshan 2>/dev/null | wc -l); RCOUNT=$(ls "$STREAMED_DIR"/*.darshan 2>/dev/null | wc -l)
-    "$PY" - "$RES/r.txt" "$RES/n.txt" "$RCOUNT" "$NCOUNT" <<'PY' | tee "$RES/compare.txt"
-import sys, os
-from collections import Counter
-def mods_ops(path):
-    mods=set(); v=Counter()
-    if os.path.exists(path):
-        for ln in open(path):
-            f=ln.split()
-            if len(f)<5: continue
-            mods.add(f[0]); cn=f[3]
-            for op in ("OPENS","READS","WRITES","CLOSES"):
-                if cn.endswith("_%s"%op):
-                    try: v[op]+=int(f[4])
-                    except ValueError: pass
-    return mods, v
-rm,ro=mods_ops(sys.argv[1]); nm,no=mods_ops(sys.argv[2])
-rcount=int(sys.argv[3]); ncount=int(sys.argv[4])
-print("reconstructed files:", rcount, " modules:", sorted(rm), " op-totals:", dict(ro))
-print("native        files:", ncount, " modules:", sorted(nm), " op-totals:", dict(no))
-if not (os.path.exists(sys.argv[2]) and nm):
-    print("VERDICT: PARTIAL (no native log to compare)"); sys.exit(0)
-ok = rm==nm and rcount==ncount and all(ro.get(k)==no.get(k) for k in ("OPENS","READS","WRITES","CLOSES"))
-print("VERDICT:", "PASS" if ok else "MISMATCH",
-      "(match: file count %d/%d; known-OK diffs: mount label, timestamps, logmod, job/exe meta)"%(rcount,ncount))
-sys.exit(0 if ok else 3)
-PY
-    [[ "${PIPESTATUS[0]}" == 3 ]] && FINAL_RC=3
+    # STRICT compare: reconstructed vs native, EXACT integer counters per record.
+    # (Replaces the old summed-4-op-total rubber stamp -- that hid real capture gaps.)
+    # Mode by workload class: non-MPI workloads (c/python-ml/dlio) write one log per
+    # process -> per-process/per-record/per-counter exact compare. MPI writes ONE shared
+    # log reduced to rank=-1 -> aggregate the N reconstructed per-rank logs the way
+    # Darshan's reduction does, then compare. See workloads/strict_compare.py.
+    # Run from $RES so the repo's darshan/ source tree doesn't shadow the pydarshan pkg.
+    cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" ]] && cmp_mode="mpi"   # NOT `local`: this block runs in the main-body for-loop, not a function
+    ( cd "$RES" && "$PY" "$ROOT/workloads/strict_compare.py" streamed native "$cmp_mode" ) \
+        | tee "$RES/compare.txt"
+    # exit 3 = MISMATCH (real capture bug), 2 = ERROR (harness/config failure, e.g. no
+    # native logs). BOTH must fail the run -- a config failure must not score as a pass.
+    CMP_RC="${PIPESTATUS[0]}"; [[ "$CMP_RC" == 3 || "$CMP_RC" == 2 ]] && FINAL_RC="$CMP_RC"
     # pydarshan HTML for ONE example process, native AND reconstructed, for a side-by-side
     # visual. pydarshan renders a single per-process log (a merged multi-process log has mixed
     # heatmap nbins and pydarshan rejects it -- native has the same limit, so we stay per-file).

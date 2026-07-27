@@ -20,6 +20,17 @@ export DARSHAN_LOGPATH="${DARSHAN_LOGPATH:-$ENV_ROOT/darshan-logs}"
 # pin the module compiler's libstdc++ ahead of the view's older gcc-runtime
 cxx_runtime_pin
 
+# DLIO (install/_dlio_venv) uses a pip mpi4py built against the MPICH ABI, which needs
+# libmpi.so.12. cray-mpich ships that ABI soname only under its lib-abi-mpich subdir (the
+# cray-mpich-abi module's dir); the normal lib/ has libmpi_gnu_123.so.12 instead, so a plain
+# `import mpi4py.MPI` fails "libmpi.so.12: cannot open shared object file". Add the ABI dir
+# (module-derived from MPICH_DIR, never hardcoded) so DLIO's mpi4py binds cray-mpich at
+# runtime. Only affects the dlio venv; other workloads link cray-mpich via the cc wrapper.
+# (BX 2026-07-27)
+if [[ "$ENV_PROFILE" == polaris && -n "${MPICH_DIR:-}" && -d "$MPICH_DIR/lib-abi-mpich" ]]; then
+    env_prepend LD_LIBRARY_PATH "$MPICH_DIR/lib-abi-mpich"
+fi
+
 # Pick the libdarshan.so to LD_PRELOAD. An MPI workload MUST use the MPI-aware build
 # (darshan/install-mpi, built by `DARSHAN_MPI=1 ./build.sh`): with the non-MPI build,
 # Darshan never instruments MPI-IO (the MPIIO module never fires) and, on a real MPI
