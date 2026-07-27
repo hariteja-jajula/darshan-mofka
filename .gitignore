@@ -35,6 +35,12 @@
 /server/_mongo_env/
 /Database/_mongo_env/
 
+# archived old run artifacts + PBS .OU logs moved out of results/ to declutter
+/results_archive/
+
+# local upstream Mofka reference clone (github.com/mochi-hpc/mofka) for dev only
+/_dev/
+
 # per-run result folders (runtime output; job.sh mkdir -p's them)
 /results/*/
 # ...except the curated per-workload artifact folders (native/streamed .darshan + pydarshan HTML)

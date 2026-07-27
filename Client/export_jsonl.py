@@ -10,7 +10,10 @@
 #
 #     Client/export_jsonl.py <mongo_host> <mongo_db> [--workflow-id wf-<jobid>] \
 #         > events.jsonl
-#     ./darshan/install/bin/darshan-mofka-reconstruct events.jsonl job_partial.darshan
+#     ./darshan/install/bin/darshan-mofka-reconstruct events.jsonl <output_dir>
+#
+# The reconstructor writes one native-style .darshan log per process (pid) found in
+# the stream, mirroring native Darshan's per-process output, into <output_dir>.
 #
 # Only darshan task docs are exported (schema in {darshan_runtime,
 # darshan_runtime_agg}); FlowCept's own workflow/bookkeeping docs are skipped.

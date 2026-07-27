@@ -37,7 +37,7 @@ events.jsonl
 darshan-mofka-reconstruct
   |
   v
-partial.darshan
+streamed/  (one native-style .darshan log per process)
 ```
 
 The connector lives in:
