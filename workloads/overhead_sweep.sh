@@ -73,7 +73,13 @@ say "nodes=$NNODES broker-home=$SRV_NODE"
 case "$WL_TYPE" in
     c)   "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke || die "compile failed" ;;
     mpi) DARSHAN_MPI=1 ./build.sh >/dev/null 2>&1 || true
-         MPICC="$(command -v mpicc || echo "$CC")"
+         # On Polaris the MPI+GCC compiler is the craype `cc` wrapper (links cray-mpich);
+         # bare `mpicc` is the PrgEnv-nvidia wrapper (wrong). Mirror overhead_study.sh:111-121.
+         if [[ "${ENV_PROFILE:-}" == polaris ]]; then
+             MPICC="${MPI_WL_CC:-cc}"
+         else
+             MPICC="${MPI_WL_CC:-$(command -v mpicc || echo "$CC")}"
+         fi
          "$MPICC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile failed" ;;
 esac
 
@@ -227,6 +233,8 @@ def num(x):
     except: return None
 def agg(rs,k):
     v=[num(r[k]) for r in rs if num(r[k]) is not None]; return st.mean(v) if v else None
+def sd(rs,k):  # sample stdev (deliverable needs mean+/-sd); 0.0 for n=1
+    v=[num(r[k]) for r in rs if num(r[k]) is not None]; return st.stdev(v) if len(v)>1 else (0.0 if v else None)
 def fmt(x,d=3): return "NA" if x is None else f"{x:.{d}f}"
 cfgs=[]
 for r in rows:
@@ -234,12 +242,12 @@ for r in rows:
 base=None
 for c in cfgs:
     if "nodarshan" in c: base=agg([r for r in rows if r["config"]==c],"wall_s")
-hdr=f'{"config":<48}{"reps":>5}{"wall_s":>9}{"init_us":>11}{"final_us":>11}{"pushes":>8}{"push_mean":>11}{"push_med":>10}{"vs_base":>9}'
+hdr=f'{"config":<48}{"reps":>5}{"wall_s":>9}{"wall_sd":>9}{"init_us":>11}{"final_us":>11}{"pushes":>8}{"push_mean":>11}{"push_med":>10}{"vs_base":>9}'
 print(hdr); print("-"*len(hdr))
 for c in cfgs:
     rs=[r for r in rows if r["config"]==c]
     wall=agg(rs,"wall_s"); ov=(f"{(wall-base)/base*100:+.1f}%" if (base and wall) else "NA")
-    print(f'{c:<48}{len(rs):>5}{fmt(wall):>9}{fmt(agg(rs,"init_us"),1):>11}{fmt(agg(rs,"finalize_us"),1):>11}'
+    print(f'{c:<48}{len(rs):>5}{fmt(wall):>9}{fmt(sd(rs,"wall_s")):>9}{fmt(agg(rs,"init_us"),1):>11}{fmt(agg(rs,"finalize_us"),1):>11}'
           f'{("NA" if agg(rs,"pushes") is None else str(int(agg(rs,"pushes")))):>8}{fmt(agg(rs,"push_mean_us")):>11}{fmt(agg(rs,"push_median_us")):>10}{ov:>9}')
 print(f"\nfull CSV: {sys.argv[1]}")
 PY
