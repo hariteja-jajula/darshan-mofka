@@ -210,7 +210,9 @@ for cfg in "${CONFIGS[@]}"; do
             fi
         fi
     done
-    kill "$CONSUMER_PID" 2>/dev/null; wait "$CONSUMER_PID" 2>/dev/null || true
+    # CONSUMER_PIDS (array) is what start_consumer fills; singular CONSUMER_PID was
+    # never set and tripped `set -u`. Kill every consumer pid (guarded).
+    for _cp in "${CONSUMER_PIDS[@]:-}"; do kill "$_cp" 2>/dev/null; wait "$_cp" 2>/dev/null || true; done
     kill "$BROKER_PID" 2>/dev/null; wait "$BROKER_PID" 2>/dev/null || true
     pkill -f 'bedrock ' 2>/dev/null || true
 done
