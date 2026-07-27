@@ -106,6 +106,14 @@ connector_env() {
         DARSHAN_MOFKA_TIMING="$C_TIMING"
         DARSHAN_MOFKA_FLUSH_MS="$C_FLUSH_MS"
     )
+    # Async off-the-hot-path knobs: the connector defaults async ON, so these only need to be
+    # forwarded when explicitly set. On the separate-node path the workload env is rebuilt from
+    # this array (not inherited), so pass through any that are set rather than relying on MPI
+    # env-forwarding. (The A/B DARSHAN_MOFKA_ASYNC=0 arm in particular depends on this.)
+    for _k in DARSHAN_MOFKA_ASYNC DARSHAN_MOFKA_QUEUE_DEPTH DARSHAN_MOFKA_DROP_POLICY \
+              DARSHAN_MOFKA_DRAIN_THREADS DARSHAN_MOFKA_JOIN_MS; do
+        [ -n "${!_k:-}" ] && CONNECTOR_ENV+=( "$_k=${!_k}" )
+    done
     # Producer-only: make the connector's Mofka engine non-listening (patched mofka reads
     # MOFKA_CLIENT_MODE) so many producers/node stop exhausting the NIC's fabric queues. Only
     # added to the PRODUCER env here; the FlowCept consumer never sees it, so it keeps SERVER_MODE.
