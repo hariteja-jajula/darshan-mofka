@@ -20,6 +20,22 @@ say()  { printf '\n########## %s ##########\n' "$*"; }
 die()  { printf '\nFATAL: %s\n' "$*" >&2; exit 1; }
 now()  { date +%s.%N; }
 
+# assert_run_ok $rc $RES $label -- fail LOUDLY when a MEASURED run did not
+# actually succeed, instead of tabulating a crashed run (non-zero rc or a fatal
+# stderr marker like the dlio "after finalizing MPICH" abort) as valid overhead.
+# Reference arms use this directly. The warm-up stays best-effort. (BX 2026-07-27)
+assert_run_ok() { # $1=rc $2=RES $3=label
+    local rc="$1" RES="$2" label="$3" err="$2/workload.err"
+    if [[ "$rc" -ne 0 ]]; then
+        [[ -f "$err" ]] && { echo "---- last 25 lines of $err ----" >&2; tail -25 "$err" >&2; }
+        die "workload run FAILED (rc=$rc) for '$label' [$RES] -- refusing to tabulate a crashed run as overhead"
+    fi
+    if [[ -f "$err" ]] && grep -Eq 'after finalizing MPICH|Assertion .* failed|Fatal error in|core dumped|Segmentation fault' "$err"; then
+        echo "---- fatal marker in $err ----" >&2; grep -En 'after finalizing MPICH|Assertion .* failed|Fatal error in|core dumped|Segmentation fault' "$err" | tail -10 >&2
+        die "workload run hit a FATAL marker (rc was 0 but stderr shows a crash) for '$label' [$RES]"
+    fi
+}
+
 say "1. environment"
 export TERM="${TERM:-xterm}"
 # shellcheck disable=SC1091
@@ -157,13 +173,17 @@ say "reference: Baseline_nodarshan_nomofka x$STUDY_REPS"
 ARM_MODE=none; unset DARSHAN_MOFKA_ENABLE
 for rep in $(seq 1 "$STUDY_REPS"); do
     RES="$RESBASE/Baseline_nodarshan_nomofka_RUN$rep"; mkdir -p "$RES"
-    t0=$(now); run_workload_once "$RES"; t1=$(now); record "Baseline_nodarshan_nomofka" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
+    t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
+    assert_run_ok "$rc" "$RES" "Baseline_nodarshan_nomofka rep$rep"
+    record "Baseline_nodarshan_nomofka" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
 done
 say "reference: Enable_darshan_runtimeonly x$STUDY_REPS"
 ARM_MODE=runtime; export DARSHAN_MOFKA_ENABLE=0
 for rep in $(seq 1 "$STUDY_REPS"); do
     RES="$RESBASE/Enable_darshan_runtimeonly_RUN$rep"; mkdir -p "$RES"
-    t0=$(now); run_workload_once "$RES"; t1=$(now); record "Enable_darshan_runtimeonly" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
+    t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
+    assert_run_ok "$rc" "$RES" "Enable_darshan_runtimeonly rep$rep"
+    record "Enable_darshan_runtimeonly" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
 done
 
 # ---- streaming config sweep ----
@@ -204,7 +224,16 @@ for cfg in "${CONFIGS[@]}"; do
 
     for rep in $(seq 1 "$STUDY_REPS"); do
         RES="$RESBASE/${NAME}_RUN$rep"; mkdir -p "$RES"
-        t0=$(now); run_workload_once "$RES"; t1=$(now); record "$NAME" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
+        t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
+        # per-config streaming: a crashed run must NOT be tabulated as valid overhead.
+        # Unlike the reference arms we skip the offending config (break its rep loop)
+        # rather than kill the whole sweep, so the other configs' data survives.
+        if [[ "$rc" -ne 0 ]] || { [[ -f "$RES/workload.err" ]] && grep -Eq 'after finalizing MPICH|Assertion .* failed|Fatal error in|core dumped|Segmentation fault' "$RES/workload.err"; }; then
+            echo "  WARN: run FAILED (rc=$rc) for '$NAME' rep$rep -- skipping this config, NOT recording" >&2
+            [[ -f "$RES/workload.err" ]] && tail -15 "$RES/workload.err" >&2
+            break
+        fi
+        record "$NAME" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
         if [[ "$FIDELITY_DONE" == 0 ]]; then
             FIDELITY_DONE=1; EVJSONL="$RES/events.jsonl"
             vs=$(grep -c 'darshan-mofka\[timing\] send' "$RES/workload.err" 2>/dev/null || echo 0)
