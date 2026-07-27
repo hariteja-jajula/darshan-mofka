@@ -72,14 +72,36 @@ MAX_COUNTERS = {"POSIX_MAX_BYTE_READ", "POSIX_MAX_BYTE_WRITTEN",
                 "STDIO_MAX_BYTE_READ", "STDIO_MAX_BYTE_WRITTEN"}
 # Assigned constants: identical on every rank, so the reduction just copies them. In mpi
 # mode they must agree across ranks and match native; compared once.
-CONST_COUNTERS = {"POSIX_MODE", "POSIX_MEM_ALIGNMENT", "POSIX_FILE_ALIGNMENT",
-                  "POSIX_RENAMED_FROM"}
-# Non-reproducible by aggregation in mpi mode (timing-dependent winner / top-4 merge).
-# Excluded in mpi mode only (in perproc mode they're byte-exact and stay strict).
-MPI_UNAGGREGATABLE = {"POSIX_MAX_READ_TIME_SIZE", "POSIX_MAX_WRITE_TIME_SIZE"}
+#   - MPIIO_MODE: copy-one from infile, darshan-mpiio.c:1461 (the amode, e.g. 9 =
+#     MPI_MODE_CREATE|RDWR, identical on all ranks opening the shared file). NOT summed.
+#   - POSIX_MMAPS: technically sum-then-clamp-to-(-1) (darshan-posix.c:2211 sum, :2214-2215
+#     clamp), but with mmap wrapping OFF (this build, #ifndef DARSHAN_WRAP_MMAP at :2128)
+#     every rank carries the -1 sentinel, so the reduced value is a per-rank constant -1.
+#     CONST yields exactly -1 and matches native. (If ever built with DARSHAN_WRAP_MMAP,
+#     MMAPS becomes a real additive count and would need a dedicated sum+clamp handler.)
+#   - POSIX_MODE is NOT here: with ROMIO collective buffering only the aggregator rank(s)
+#     open the backing file, so non-aggregators legitimately carry POSIX_MODE=0 while the
+#     aggregator carries the real mode. The reduction copies infile's value in a
+#     non-deterministic pairwise order (darshan-posix.c:2219), so it is neither additive
+#     nor a cross-rank constant -> MPI_UNAGGREGATABLE. (BX 2026-07-27, 2-subagent cross-check)
+CONST_COUNTERS = {"POSIX_MEM_ALIGNMENT", "POSIX_FILE_ALIGNMENT",
+                  "POSIX_RENAMED_FROM", "POSIX_MMAPS", "MPIIO_MODE"}
+# Non-reproducible by aggregation in mpi mode (timing-dependent winner / top-4 merge /
+# order-dependent copy). Excluded in mpi mode only (in perproc mode they're byte-exact
+# and stay strict). MPIIO analogues mirror the already-excluded POSIX ones:
+#   - MPIIO_MAX_READ/WRITE_TIME_SIZE: max-time-winner, darshan-mpiio.c:1534-1564.
+#   - MPIIO_ACCESS%d_ACCESS/_COUNT: top-4 common-value histogram merge (not a sum),
+#     darshan-mpiio.c:1477-1506 via DARSHAN_UPDATE_COMMON_VAL_COUNTERS.
+#   - POSIX_MODE: order-dependent copy-one under ROMIO deferred/aggregator open (see above).
+MPI_UNAGGREGATABLE = {"POSIX_MAX_READ_TIME_SIZE", "POSIX_MAX_WRITE_TIME_SIZE",
+                      "POSIX_MODE",
+                      "MPIIO_MAX_READ_TIME_SIZE", "MPIIO_MAX_WRITE_TIME_SIZE"}
 for _i in (1, 2, 3, 4):
     for _base in ("STRIDE%d_STRIDE", "STRIDE%d_COUNT", "ACCESS%d_ACCESS", "ACCESS%d_COUNT"):
         MPI_UNAGGREGATABLE.add("POSIX_" + (_base % _i))
+    # MPIIO has no STRIDE counters; only the ACCESS top-4 histogram is common-value-merged.
+    for _base in ("ACCESS%d_ACCESS", "ACCESS%d_COUNT"):
+        MPI_UNAGGREGATABLE.add("MPIIO_" + (_base % _i))
 
 PID_RE = re.compile(r"id-?\d+-(\d+)_")
 
