@@ -26,6 +26,25 @@ say()  { printf '\n########## %s ##########\n' "$*"; }
 die()  { printf '\nFATAL: %s\n' "$*" >&2; exit 1; }
 now()  { date +%s.%N; }
 
+# assert_run_ok $rc $RES $label -- fail LOUDLY when a MEASURED arm run did not
+# actually succeed. Before this guard a crashed workload (e.g. the dlio
+# NONMPI "internal_Reduce_c after finalizing MPICH" abort, job 7297242) still
+# returned a wall time and got tabulated as valid overhead -- a vacuous result.
+# We treat non-zero rc OR an unambiguous fatal marker in workload.err as a hard
+# stop: a study that silently records garbage is worse than one that dies. The
+# warm-up run stays best-effort (|| true) and does NOT call this. (BX 2026-07-27)
+assert_run_ok() { # $1=rc $2=RES $3=label
+    local rc="$1" RES="$2" label="$3" err="$2/workload.err"
+    if [[ "$rc" -ne 0 ]]; then
+        [[ -f "$err" ]] && { echo "---- last 25 lines of $err ----" >&2; tail -25 "$err" >&2; }
+        die "workload run FAILED (rc=$rc) for arm '$label' [$RES] -- refusing to tabulate a crashed run as overhead"
+    fi
+    if [[ -f "$err" ]] && grep -Eq 'after finalizing MPICH|Assertion .* failed|Fatal error in|core dumped|Segmentation fault' "$err"; then
+        echo "---- fatal marker in $err ----" >&2; grep -En 'after finalizing MPICH|Assertion .* failed|Fatal error in|core dumped|Segmentation fault' "$err" | tail -10 >&2
+        die "workload run hit a FATAL marker (rc was 0 but stderr shows a crash) for arm '$label' [$RES]"
+    fi
+}
+
 # --- 1. environment + resolved run ---
 say "1. environment"
 export TERM="${TERM:-xterm}"
@@ -246,7 +265,8 @@ for w in $STUDY_WORKLOADS; do
     ARM_MODE=none; unset DARSHAN_MOFKA_ENABLE
     for rep in $(seq 1 "$STUDY_REPS"); do
         RES="$WDIR/Baseline_nodarshan_nomofka_RUN$rep"; mkdir -p "$RES"
-        t0=$(now); run_workload_once "$RES"; t1=$(now)
+        t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
+        assert_run_ok "$rc" "$RES" "Baseline_nodarshan_nomofka rep$rep ($w)"
         record "$w" "Baseline_nodarshan_nomofka" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
     done
 
@@ -254,7 +274,8 @@ for w in $STUDY_WORKLOADS; do
     ARM_MODE=runtime; export DARSHAN_MOFKA_ENABLE=0
     for rep in $(seq 1 "$STUDY_REPS"); do
         RES="$WDIR/Enable_darshan_runtimeonly_RUN$rep"; mkdir -p "$RES"
-        t0=$(now); run_workload_once "$RES"; t1=$(now)
+        t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
+        assert_run_ok "$rc" "$RES" "Enable_darshan_runtimeonly rep$rep ($w)"
         record "$w" "Enable_darshan_runtimeonly" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
     done
 
@@ -262,7 +283,8 @@ for w in $STUDY_WORKLOADS; do
     ARM_MODE=stream; export DARSHAN_MOFKA_ENABLE=1
     for rep in $(seq 1 "$STUDY_REPS"); do
         RES="$WDIR/${ARM_STREAM_NAME}_RUN$rep"; mkdir -p "$RES"
-        t0=$(now); run_workload_once "$RES"; t1=$(now)
+        t0=$(now); run_workload_once "$RES"; rc=$?; t1=$(now)
+        assert_run_ok "$rc" "$RES" "$ARM_STREAM_NAME rep$rep ($w)"
         record "$w" "$ARM_STREAM_NAME" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
 
         # fidelity: reconstruct+compare the first streaming rep once (db is clean then)
