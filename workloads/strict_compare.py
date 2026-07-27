@@ -121,13 +121,38 @@ def norm_mod(name):
     return MODULE_ALIASES.get(name, name)
 
 
-def is_empty_std_stream(mod, name, counters):
-    """Match native's stdio pruning (darshan-stdio.c): an unused <STD*> stream with no
-    read/write activity. Applied to BOTH sides so a name-record that never reached the
-    stream (reconstructor keeps the empty stream) doesn't cause a false 'only-reconstructed'."""
-    if mod != "STDIO" or name not in ("<STDIN>", "<STDOUT>", "<STDERR>"):
+def is_inherited_stream(mod, name, counters):
+    """Inherited console fds (STDIN/STDOUT/STDERR) carrying ZERO data I/O.
+
+    Two reasons these cannot be captured by the live per-op connector, so they appear
+    only in the native log (which Darshan materializes from its in-memory table at its
+    own finalize) and never in the streamed/reconstructed log:
+      - the process INHERITS fd 0/1/2 -> no open() syscall fires -> the connector send
+        at darshan-posix.c:259 never runs;
+      - Python buffers stdout/stderr through stdio FILE* -> no raw POSIX read()/write()
+        fires on the fd -> sends at darshan-posix.c:352/:422 never run.
+    The FINAL_SWEEP fallback that would recover them is disabled by a Mofka progress-pool
+    hang at atexit (darshan-mofka.c:319-327), so this is a true architectural
+    non-capturable, in the same class as the HEATMAP exclusion -- NOT a fixable capture
+    bug being swept under the rug.
+
+    GATED on zero data I/O (READS/WRITES/BYTES all 0): any record with real console
+    read/write activity FAILS this gate and is still compared, so a genuine capture
+    regression on stdout/stderr data cannot false-PASS. Applied to BOTH sides. For STDIO
+    this matches native's own stdio pruning (darshan-stdio.c); for POSIX it removes the
+    inherited-fd metadata-op records (OPENS/FILENOS/DUPS only) that slip past the STDIO
+    prune. python-ml's real train.py init-window gap has nonzero opens on a DATA file
+    (not a console stream) and is unaffected -> still reported as MISMATCH. (BX 2026-07-27,
+    root-caused + 2-subagent cross-check.)"""
+    if name not in ("<STDIN>", "<STDOUT>", "<STDERR>"):
         return False
-    return counters.get("STDIO_READS", 0) == 0 and counters.get("STDIO_WRITES", 0) == 0
+    if mod == "STDIO":
+        return counters.get("STDIO_READS", 0) == 0 and counters.get("STDIO_WRITES", 0) == 0
+    if mod == "POSIX":
+        return (counters.get("POSIX_READS", 0) == 0 and counters.get("POSIX_WRITES", 0) == 0
+                and counters.get("POSIX_BYTES_READ", 0) == 0
+                and counters.get("POSIX_BYTES_WRITTEN", 0) == 0)
+    return False
 
 
 def load_log(path):
@@ -169,11 +194,18 @@ def load_log(path):
             for i in range(len(cdf)):
                 rid = int(id_col[i])
                 recs[rid] = {c: int(col_arrays[c][i]) for c in value_cols}
-    # prune empty std streams on this side
-    stdio = out.get("STDIO", {})
-    for rid in list(stdio.keys()):
-        if is_empty_std_stream("STDIO", names.get(rid, ""), stdio[rid]):
-            del stdio[rid]
+    # prune inherited console streams (STDIO + POSIX, zero-data-I/O only) on this side
+    pruned = 0
+    for mod_name in ("STDIO", "POSIX"):
+        recs = out.get(mod_name, {})
+        for rid in list(recs.keys()):
+            if is_inherited_stream(mod_name, names.get(rid, ""), recs[rid]):
+                del recs[rid]
+                pruned += 1
+    if pruned:
+        sys.stderr.write("[strict_compare] pruned %d inherited-stream record(s) "
+                         "(zero-data STDIN/STDOUT/STDERR) from %s\n"
+                         % (pruned, os.path.basename(path)))
     return out
 
 
