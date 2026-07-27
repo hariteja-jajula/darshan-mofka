@@ -110,7 +110,14 @@ compile_workload() {  # $1 = workload type
     case "$1" in
         c)   "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke || die "compile c failed" ;;
         mpi) DARSHAN_MPI=1 ./build.sh >/dev/null 2>&1 || true
-             local MPICC; MPICC="$(command -v mpicc || echo "$CC")"
+             # On Polaris the MPI+GCC compiler is the craype `cc` wrapper (links cray-mpich);
+             # bare `mpicc` is the PrgEnv-nvidia wrapper (wrong). Mirror workloads/job.sh:122-125.
+             local MPICC
+             if [[ "${ENV_PROFILE:-}" == polaris ]]; then
+                 MPICC="${MPI_WL_CC:-cc}"
+             else
+                 MPICC="${MPI_WL_CC:-$(command -v mpicc || echo "$CC")}"
+             fi
              "$MPICC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile mpi failed" ;;
         python-ml) : ;;  # no compile step
         *) die "unknown workload '$1'" ;;
