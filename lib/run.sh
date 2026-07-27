@@ -111,7 +111,7 @@ connector_env() {
     # this array (not inherited), so pass through any that are set rather than relying on MPI
     # env-forwarding. (The A/B DARSHAN_MOFKA_ASYNC=0 arm in particular depends on this.)
     for _k in DARSHAN_MOFKA_ASYNC DARSHAN_MOFKA_QUEUE_DEPTH DARSHAN_MOFKA_DROP_POLICY \
-              DARSHAN_MOFKA_DRAIN_THREADS DARSHAN_MOFKA_JOIN_MS; do
+              DARSHAN_MOFKA_DRAIN_THREADS DARSHAN_MOFKA_JOIN_MS DARSHAN_MOFKA_VERBOSE; do
         [ -n "${!_k:-}" ] && CONNECTOR_ENV+=( "$_k=${!_k}" )
     done
     # Producer-only: make the connector's Mofka engine non-listening (patched mofka reads
