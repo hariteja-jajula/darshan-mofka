@@ -183,10 +183,12 @@ for cfg in "${CONFIGS[@]}"; do
                 "$PY" "$ROOT/Client/export_jsonl.py" 127.0.0.1 "$SRV_MONGO_DB" --mongo-port "$SRV_MONGO_PORT" > "$EVJSONL" 2>/dev/null || true
                 nn=$(wc -l < "$EVJSONL" 2>/dev/null || echo 0); [ "$nn" -ge "$vs" ] && break; sleep 3
             done
-            if "$B/darshan-mofka-reconstruct" "$EVJSONL" "$RES/partial.darshan" 2>/dev/null; then
-                NATIVE="$(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -name 'partial.darshan' -newermt '-30 min' 2>/dev/null | sort | tail -1)"
-                "$B/darshan-parser" --show-incomplete "$RES/partial.darshan" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$RES/r.txt" || true
-                [[ -n "$NATIVE" ]] && "$B/darshan-parser" --show-incomplete "$NATIVE" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$RES/n.txt" || true
+            # Reconstruct one .darshan per process into streamed/; fidelity = aggregate
+            # op-totals of all reconstructed logs vs all native per-process logs.
+            if "$B/darshan-mofka-reconstruct" "$EVJSONL" "$RES/streamed" 2>/dev/null \
+               && ls "$RES"/streamed/*.darshan >/dev/null 2>&1; then
+                for rl in "$RES"/streamed/*.darshan; do "$B/darshan-parser" --show-incomplete "$rl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done | sort > "$RES/r.txt" || true
+                for nl in $(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -path "*/streamed/*" -newermt '-30 min' 2>/dev/null | sort); do "$B/darshan-parser" --show-incomplete "$nl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done | sort > "$RES/n.txt" || true
                 if diff -q "$RES/r.txt" "$RES/n.txt" >/dev/null 2>&1; then echo "  fidelity VERDICT: PASS"; else echo "  fidelity VERDICT: check $RES"; fi
             fi
         fi

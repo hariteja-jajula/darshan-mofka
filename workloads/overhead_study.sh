@@ -218,11 +218,13 @@ for w in $STUDY_WORKLOADS; do
                 [ "$n" -ge "$vsends" ] && break; sleep 3
             done
             echo "exported $n events (sends=$vsends)"
-            PARTIAL="$RES/partial.darshan"
-            if "$B/darshan-mofka-reconstruct" "$EVJSONL" "$PARTIAL" 2>/dev/null; then
-                NATIVE="$(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -name 'partial.darshan' -newermt '-30 min' 2>/dev/null | sort | tail -1)"
-                "$B/darshan-parser" --show-incomplete "$PARTIAL" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$RES/r.txt" || true
-                [[ -n "$NATIVE" ]] && { cp "$NATIVE" "$RES/native.darshan"; "$B/darshan-parser" --show-incomplete "$NATIVE" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$RES/n.txt" || true; }
+            # Reconstruct one .darshan per process into streamed/; compare aggregate op-totals
+            # (summed over all reconstructed logs) vs all native per-process logs.
+            STREAMED_DIR="$RES/streamed"
+            if "$B/darshan-mofka-reconstruct" "$EVJSONL" "$STREAMED_DIR" 2>/dev/null \
+               && ls "$STREAMED_DIR"/*.darshan >/dev/null 2>&1; then
+                for rl in "$STREAMED_DIR"/*.darshan; do "$B/darshan-parser" --show-incomplete "$rl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done | sort > "$RES/r.txt" || true
+                for nl in $(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -path "*/streamed/*" -newermt '-30 min' 2>/dev/null | sort); do "$B/darshan-parser" --show-incomplete "$nl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done | sort > "$RES/n.txt" || true
                 "$PY" - "$RES/r.txt" "$RES/n.txt" <<'PY' | tee "$RES/compare.txt"
 import sys, os
 from collections import Counter
@@ -245,7 +247,8 @@ if not (os.path.exists(sys.argv[2]) and nm): print("VERDICT: PARTIAL (no native)
 ok = rm==nm and all(ro.get(k)==no.get(k) for k in ("OPENS","READS","WRITES","CLOSES"))
 print("VERDICT:", "PASS" if ok else "MISMATCH")
 PY
-                "$B/darshan-parser" "$PARTIAL" 2>/dev/null | grep -iE '^# exe|^# mount entry' | head
+                ONE_REC="$(ls "$STREAMED_DIR"/*.darshan 2>/dev/null | head -1)"
+                [[ -n "$ONE_REC" ]] && "$B/darshan-parser" "$ONE_REC" 2>/dev/null | grep -iE '^# exe|^# mount entry' | head
             fi
         fi
     done

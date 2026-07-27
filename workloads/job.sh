@@ -45,7 +45,13 @@ else
           && cmake --build _build -j && cmake --install _build ) || die "diaspora build failed"
     fi
     say "2b. build darshan runtime + util"
-    ./build.sh || die "darshan build failed"
+    # MPI workloads need the MPI-aware build (install-mpi) so Darshan instruments MPI-IO
+    # and finalizes correctly on every rank; non-MPI workloads use the plain build.
+    if [[ "$WL_TYPE" == "mpi" ]]; then
+        DARSHAN_MPI=1 ./build.sh || die "darshan MPI build failed"
+    else
+        ./build.sh || die "darshan build failed"
+    fi
     [[ -e "$(darshan_lib)" ]] || die "libdarshan.so missing after build"
     ( cd darshan/darshan-util
       if [[ ! -f _build_util/Makefile ]]; then
@@ -98,7 +104,9 @@ echo "broker up: $(grep -oE '[a-z0-9+;_]+://[0-9.]+:[0-9]+' "$GROUP" | head -1) 
 # --- 6. compile the workload binary (c/mpi) once ---
 case "$WL_TYPE" in
     c)   "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke || die "compile failed" ;;
-    mpi) DARSHAN_MPI=1 ./build.sh >/dev/null 2>&1 || true
+    mpi) # Ensure the MPI-aware darshan lib exists (needed even under SKIP_BUILD, since the
+         # plain build section may have been skipped); build it once if absent.
+         [[ -e "$ENV_ROOT/darshan/install-mpi/lib/libdarshan.so" ]] || DARSHAN_MPI=1 ./build.sh >/dev/null 2>&1 || die "darshan MPI build failed"
          MPICC="$(command -v mpicc || echo "$CC")"
          "$MPICC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile failed" ;;
 esac
@@ -143,19 +151,20 @@ for rep in $(seq 1 "$WL_REPS"); do
     EVJSONL="$RES/events.jsonl"
     stop_consumer_verdict "$RUN_DIR" "$RES/ingest.txt" "$EVJSONL"   # exports before killing mongod
     echo "exported lines: $(wc -l < "$EVJSONL")"
-    # reconstruct + 1:1 compare to native
-    PARTIAL="$RES/partial.darshan"
-    "$B/darshan-mofka-reconstruct" "$EVJSONL" "$PARTIAL" || die "reconstruct failed"
-    # Native reference = AGGREGATE of ALL per-rank native logs (each process writes its own). The
-    # reconstruction is the aggregate of all ranks, and the compare SUMS op-totals, so the native
-    # side must sum all ranks too -- comparing one rank's log only matches a single-process run.
-    mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' ! -name 'partial.darshan' ! -name 'native.darshan' -newermt '-20 min' 2>/dev/null | sort)
-    "$B/darshan-parser" --show-incomplete "$PARTIAL" | grep -E "^(POSIX|STDIO|MPIIO)" | sort > "$RES/r.txt" || true
-    if [[ ${#NATIVE_LOGS[@]} -gt 0 ]]; then
-        cp "${NATIVE_LOGS[-1]}" "$RES/native.darshan"   # keep one for the pydarshan HTML
-        for nl in "${NATIVE_LOGS[@]}"; do "$B/darshan-parser" --show-incomplete "$nl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done | sort > "$RES/n.txt" || true
-    fi
-    "$PY" - "$RES/r.txt" "$RES/n.txt" <<'PY' | tee "$RES/compare.txt"
+    # Reconstruct ONE .darshan per process (pid) into streamed/ -- mirroring native's
+    # per-process output. Then collect the native per-process logs into native/ so the
+    # two directories hold the SAME set of files (one per process) for a 1:1 comparison.
+    STREAMED_DIR="$RES/streamed"; NATIVE_DIR="$RES/native"
+    rm -rf "$STREAMED_DIR" "$NATIVE_DIR"; mkdir -p "$STREAMED_DIR" "$NATIVE_DIR"
+    "$B/darshan-mofka-reconstruct" "$EVJSONL" "$STREAMED_DIR" || die "reconstruct failed"
+    # Native per-process logs from this run (each process writes its own nprocs=1 log).
+    mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' -newermt '-20 min' 2>/dev/null | sort)
+    for nl in "${NATIVE_LOGS[@]}"; do cp "$nl" "$NATIVE_DIR/"; done
+    # Aggregate op-total compare (sums across all per-process logs on each side) + file-count parity.
+    for nl in "$NATIVE_DIR"/*.darshan;   do "$B/darshan-parser" --show-incomplete "$nl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done 2>/dev/null | sort > "$RES/n.txt" || true
+    for rl in "$STREAMED_DIR"/*.darshan; do "$B/darshan-parser" --show-incomplete "$rl" 2>/dev/null | grep -E "^(POSIX|STDIO|MPIIO)"; done 2>/dev/null | sort > "$RES/r.txt" || true
+    NCOUNT=$(ls "$NATIVE_DIR"/*.darshan 2>/dev/null | wc -l); RCOUNT=$(ls "$STREAMED_DIR"/*.darshan 2>/dev/null | wc -l)
+    "$PY" - "$RES/r.txt" "$RES/n.txt" "$RCOUNT" "$NCOUNT" <<'PY' | tee "$RES/compare.txt"
 import sys, os
 from collections import Counter
 def mods_ops(path):
@@ -171,21 +180,27 @@ def mods_ops(path):
                     except ValueError: pass
     return mods, v
 rm,ro=mods_ops(sys.argv[1]); nm,no=mods_ops(sys.argv[2])
-print("reconstructed modules:", sorted(rm), " op-totals:", dict(ro))
-print("native        modules:", sorted(nm), " op-totals:", dict(no))
+rcount=int(sys.argv[3]); ncount=int(sys.argv[4])
+print("reconstructed files:", rcount, " modules:", sorted(rm), " op-totals:", dict(ro))
+print("native        files:", ncount, " modules:", sorted(nm), " op-totals:", dict(no))
 if not (os.path.exists(sys.argv[2]) and nm):
     print("VERDICT: PARTIAL (no native log to compare)"); sys.exit(0)
-ok = rm==nm and all(ro.get(k)==no.get(k) for k in ("OPENS","READS","WRITES","CLOSES"))
-print("VERDICT:", "PASS" if ok else "MISMATCH", "(known-OK diffs: mount label, timestamps, pid, job/exe meta)")
+ok = rm==nm and rcount==ncount and all(ro.get(k)==no.get(k) for k in ("OPENS","READS","WRITES","CLOSES"))
+print("VERDICT:", "PASS" if ok else "MISMATCH",
+      "(match: file count %d/%d; known-OK diffs: mount label, timestamps, logmod, job/exe meta)"%(rcount,ncount))
 sys.exit(0 if ok else 3)
 PY
     [[ "${PIPESTATUS[0]}" == 3 ]] && FINAL_RC=3
-    # pydarshan HTML, native AND reconstructed, for side-by-side comparison. Run from the
-    # results dir so the repo's darshan/ source tree doesn't shadow the installed package.
+    # pydarshan HTML for ONE example process, native AND reconstructed, for a side-by-side
+    # visual. pydarshan renders a single per-process log (a merged multi-process log has mixed
+    # heatmap nbins and pydarshan rejects it -- native has the same limit, so we stay per-file).
+    # Run from the results dir so the repo's darshan/ source tree doesn't shadow the package.
     ( cd "$RES"
-      [[ -f native.darshan  ]] && "$PY" -m darshan summary native.darshan  >/dev/null 2>&1 || true
-      [[ -f partial.darshan ]] && "$PY" -m darshan summary partial.darshan >/dev/null 2>&1 || true
-      echo "  HTML: $(ls native_report.html partial_report.html 2>/dev/null | tr '\n' ' ')" ) || true
+      ONE_NAT="$(ls native/*.darshan 2>/dev/null | head -1)"
+      ONE_REC="$(ls streamed/*.darshan 2>/dev/null | head -1)"
+      [[ -n "$ONE_NAT" ]] && cp "$ONE_NAT" example_native.darshan  && "$PY" -m darshan summary example_native.darshan  >/dev/null 2>&1 || true
+      [[ -n "$ONE_REC" ]] && cp "$ONE_REC" example_streamed.darshan && "$PY" -m darshan summary example_streamed.darshan >/dev/null 2>&1 || true
+      echo "  example HTML: $(ls example_native_report.html example_streamed_report.html 2>/dev/null | tr '\n' ' ')" ) || true
 done
 
 say "DONE ($WL_TYPE, $WL_REPS rep(s))"
