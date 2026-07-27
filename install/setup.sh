@@ -48,6 +48,39 @@ if command -v module >/dev/null 2>&1 && ! command -v cc >/dev/null 2>&1; then
 fi
 command -v cc >/dev/null 2>&1 || die "cc compiler wrapper not found; load a compiler/MPI PrgEnv first"
 
+# Seed the GNU bash 5.3 patch files into spack's source cache from ftp.gnu.org (the
+# canonical, valid-cert host). ftpmirror.gnu.org redirects to mirrors that 404/502 or
+# serve expired certs for these tiny patch files, which fails the bash build. Reads the
+# (patch#, sha256) pairs straight from the concretized bash package.py so it tracks the
+# pinned version; spack sha256-verifies each on use, so a corrupt download can't slip in.
+# Idempotent: skips any patch already cached with the right sha. Never fatal (best effort).
+_seed_gnu_bash_patches() {
+    local bpkg cache py
+    bpkg="$(find "$SPACK_DIR" -path "*spack_repo/builtin/packages/bash/package.py" 2>/dev/null | head -1)"
+    [[ -f "$bpkg" ]] || return 0
+    cache="$SPACK_DIR/var/spack/cache/_source-cache/archive"
+    py="$(command -v python3 || echo python3)"
+    "$py" - "$bpkg" <<'PYEOF' | while read -r num sha; do
+import re,sys
+txt=open(sys.argv[1]).read()
+for m in re.finditer(r'\(\s*"5\.3"\s*,\s*"(\d+)"\s*,\s*"([0-9a-f]{64})"\s*\)', txt):
+    print(m.group(1), m.group(2))
+PYEOF
+        [[ -z "$num" || -z "$sha" ]] && continue
+        local sub="${sha:0:2}" dest
+        dest="$cache/$sub/$sha"
+        if [[ -f "$dest" ]] && [[ "$(sha256sum "$dest" | cut -d' ' -f1)" == "$sha" ]]; then continue; fi
+        mkdir -p "$cache/$sub"
+        if curl -sSfL --connect-timeout 15 -o "$dest.tmp" "https://ftp.gnu.org/gnu/bash/bash-5.3-patches/bash53-$num" 2>/dev/null \
+           && [[ "$(sha256sum "$dest.tmp" | cut -d' ' -f1)" == "$sha" ]]; then
+            mv "$dest.tmp" "$dest"; say "seeded bash53-$num"
+        else
+            rm -f "$dest.tmp"; say "WARN: could not seed bash53-$num (build may retry mirrors)"
+        fi
+    done
+    return 0
+}
+
 if [[ "$PROFILE" == polaris ]]; then
     missing=()
     while IFS= read -r path; do
@@ -84,6 +117,15 @@ if [[ "$PROFILE" == polaris ]]; then
     say "spack at $(git -C "$SPACK_DIR" rev-parse --short HEAD)"
     # shellcheck disable=SC1091
     source "$SPACK_DIR/share/spack/setup-env.sh"
+    # fetch via system curl (this login node's python-urllib fails cert verify to
+    # some GNU mirrors; curl trusts them; spack still sha256-checks every source).
+    # (LCRC branch already does this; Polaris needs it too.)
+    spack config add "config:url_fetch_method:curl" 2>/dev/null || true
+    # Pre-seed the flaky GNU bash 5.3 patches from the canonical ftp.gnu.org into the
+    # source cache. ftpmirror.gnu.org redirects to mirrors that 404/502 or serve
+    # expired certs for these small patch files; ftp.gnu.org is reliable. spack
+    # sha256-verifies each, so a bad download can't slip through. Idempotent.
+    _seed_gnu_bash_patches
 
     MOFKA_DIR="$REPO_ROOT/$(cfg mofka.dir)"; MOFKA_URL="$(cfg mofka.git_url)"; MOFKA_REF="$(cfg mofka.git_ref)"
     [[ -d "$MOFKA_DIR/.git" ]] || { say "clone mofka ($MOFKA_REF)"; git clone --branch "$MOFKA_REF" "$MOFKA_URL" "$MOFKA_DIR" || die "mofka clone failed"; }
@@ -96,6 +138,47 @@ if [[ "$PROFILE" == polaris ]]; then
         spack env create "$ENV_NAME" "$ENV_SPEC" || die "spack env create failed"
     fi
     spack -e "$ENV_NAME" develop -p "$MOFKA_DIR" "mofka@$MOFKA_REF" 2>/dev/null || true
+
+    # Apply the Mofka connector patch to the develop checkout. spack.yaml's develop block
+    # says "the connector patch is included", but the upstream checkout is vanilla -- nothing
+    # applied it, so both features were silently missing from every built libmofka:
+    #   (1) MOFKA_CLIENT_MODE=1 -> producer engines use THALLIUM_CLIENT_MODE (non-listening,
+    #       shallow queues) so many Darshan producers per node can attach without exhausting
+    #       the NIC fabric queues (the connect-storm fix, REQUIRED for the 4+1/partition runs).
+    #   (2) MOFKA_NA_DOMAIN -> qualifies a domain-less protocol (verbs needs it on connect).
+    # Both are inert unless their env var is set, so an unpatched build "works" for a single
+    # producer on tcp -- which is why this gap went unnoticed. Apply idempotently to the
+    # checkout src before concretize/install. (BX 2026-07-27)
+    MOFKA_CONN_PATCH="$REPO_ROOT/server/spack/patches/mofka-producer-client-mode-and-na-domain.patch"
+    if [[ -f "$MOFKA_CONN_PATCH" && -f "$MOFKA_DIR/src/MofkaDriver.cpp" ]]; then
+        if grep -q "MOFKA_CLIENT_MODE" "$MOFKA_DIR/src/MofkaDriver.cpp"; then
+            say "mofka connector patch already present -> skip"
+        elif patch -p1 -d "$MOFKA_DIR" --dry-run < "$MOFKA_CONN_PATCH" >/dev/null 2>&1; then
+            say "apply mofka connector patch (client-mode + na_domain)"
+            patch -p1 -d "$MOFKA_DIR" < "$MOFKA_CONN_PATCH" || die "mofka connector patch failed"
+        else
+            say "WARN: mofka connector patch does not apply cleanly (upstream may have changed) -> continuing"
+        fi
+    fi
+
+    # Polaris fix: the upstream mochi mercury package declares variant +hwloc (which we require)
+    # but omits `depends_on('hwloc', when='+hwloc')`, so hwloc.pc never lands on mercury's build
+    # PKG_CONFIG_PATH and its FindHWLOC.cmake (pkg_check_modules) fails "Could NOT find HWLOC" on
+    # Polaris (no system hwloc dev headers / module). Patch the fetched mochi repo idempotently.
+    # The mochi repo path is machine-specific (spack global package cache), so resolve it live.
+    MOCHI_REPO="$(spack -e "$ENV_NAME" repo list 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="mochi"){print $NF; break}}')"
+    MERC_PKG="$MOCHI_REPO/packages/mercury/package.py"
+    HWLOC_PATCH="$REPO_ROOT/server/spack/patches/mercury-add-hwloc-depends.patch"
+    if [[ -f "$MERC_PKG" && -f "$HWLOC_PATCH" ]]; then
+        if grep -q "depends_on('hwloc', when='+hwloc')" "$MERC_PKG"; then
+            say "mercury hwloc dep-edge patch already present -> skip"
+        elif patch -p1 -d "$MOCHI_REPO" --dry-run < "$HWLOC_PATCH" >/dev/null 2>&1; then
+            say "apply mercury hwloc dep-edge patch"
+            patch -p1 -d "$MOCHI_REPO" < "$HWLOC_PATCH" || die "mercury hwloc patch failed"
+        else
+            say "WARN: mercury hwloc patch does not apply cleanly (upstream may have changed) -> continuing"
+        fi
+    fi
 
     say "spack concretize"
     spack -e "$ENV_NAME" concretize -f || die "spack concretize failed"

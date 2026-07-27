@@ -21,6 +21,13 @@ env_prepend PATH "$MOFKA_SPACK_VIEW/bin"
 env_prepend LD_LIBRARY_PATH "$MOFKA_SPACK_VIEW/lib64"
 env_prepend LD_LIBRARY_PATH "$MOFKA_SPACK_VIEW/lib"
 
+# pydarshan (strict validator, job.sh) loads libdarshan-util via cffi off
+# LD_LIBRARY_PATH. Polaris auto-loads a `darshan/3.4.4` module whose libdarshan-util
+# would be found first and rejected by pydarshan 3.5.0 ("requires 3.5.0, found 3.4.4").
+# Prepend the in-repo darshan-util/install/lib so the matching 3.5.0 lib wins. Path is
+# repo-local, never hardcoded to a system prefix. (BX 2026-07-27)
+env_prepend LD_LIBRARY_PATH "$ENV_ROOT/darshan/darshan-util/install/lib"
+
 # mongod (FlowCept sink): explicit $MONGOD, else repo-local (Database/, then the
 # legacy server/_mongo_env), else PATH. Database/get_mongod.sh populates Database/.
 if [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]]; then

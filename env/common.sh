@@ -12,7 +12,7 @@ fi
 
 # compiler + MPI via MODULES only (never absolute lib paths). ENV_MODULES may be
 # set by the caller from config; else per-profile defaults.
-: "${ENV_MODULES:=$([[ $ENV_PROFILE == polaris ]] && echo 'PrgEnv-gnu gcc-native/13.2' || echo 'gcc/13.2.0 openmpi/4.1.8')}"
+: "${ENV_MODULES:=$([[ $ENV_PROFILE == polaris ]] && echo 'PrgEnv-gnu gcc-native/12.3' || echo 'gcc/13.2.0 openmpi/4.1.8')}"
 # shellcheck disable=SC2086
 command -v module >/dev/null 2>&1 && module load $ENV_MODULES 2>/dev/null || true
 
@@ -35,4 +35,25 @@ cxx_runtime_pin() {
     [[ -e "$lib" ]] || return 0
     env_prepend LD_LIBRARY_PATH "$(dirname "$lib")"
     case ":${LD_PRELOAD:-}:" in *:"$lib":*) ;; *) export LD_PRELOAD="$lib${LD_PRELOAD:+:$LD_PRELOAD}" ;; esac
+}
+
+# mpi_launch -- build MPI_LAUNCH=(...) for the current profile.
+#   mpi_launch <total_ranks> <ranks_per_node> [hostfile]
+# Polaris uses the cray-mpich PALS launcher (mpiexec --ppn/--cpu-bind); LCRC uses
+# OpenMPI (mpirun --map-by ppr:N:node + TCP --mca to dodge the verbs connect-storm).
+# On Polaris `mpirun` is a symlink to PALS mpiexec, so the OpenMPI flags would ERROR
+# there -- the profile split is mandatory, not cosmetic. PALS rejects --map-by/--mca and
+# chokes on "slots=" hostfiles (parses the whole line as a hostname), so the hostfile
+# passed here must be bare hostnames under polaris (see the writer in workloads/job.sh).
+# --cpu-bind none is deliberate: this is an I/O benchmark whose ranks each run a
+# Mercury/Margo progress thread for the connector; pinning rank+progress to one core
+# serializes the very sends the overhead study measures.
+mpi_launch() {
+    local n="$1" ppn="$2" hf="${3:-}"
+    if [[ "$ENV_PROFILE" == polaris ]]; then
+        MPI_LAUNCH=(mpiexec -n "$n" --ppn "$ppn" --cpu-bind none)
+    else
+        MPI_LAUNCH=(mpirun -n "$n" --map-by ppr:"$ppn":node --mca pml ob1 --mca btl tcp,self)
+    fi
+    [[ -n "$hf" ]] && MPI_LAUNCH+=(--hostfile "$hf")
 }

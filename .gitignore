@@ -31,6 +31,7 @@
 # automated setup build outputs (rebuilt by install/setup.sh from install/config.yaml)
 /install/_spack/
 /install/_venv/
+/install/_dlio_venv/
 /install/_mofka/
 /server/_mongo_env/
 /Database/_mongo_env/
@@ -81,3 +82,6 @@ __pycache__/
 /server/_wl_hostfile
 # results run-id marker (dotfile not caught by /results/*/ or *.OU)
 /results/.g8_base_jobid
+
+# autonomous campaign run log (not for git)
+/.campaign/

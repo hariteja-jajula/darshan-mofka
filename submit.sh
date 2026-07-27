@@ -18,6 +18,16 @@ queue="${QUEUE:-$(cfg_get "$WC" pbs.queue debug)}"   # QUEUE=compute for >1h / b
 account="${PBS_ACCOUNT:-$(cfg_get "$WC" pbs.account "")}"
 [ -n "$account" ] || { echo "set an allocation: PBS_ACCOUNT=<project> bash submit.sh (or pbs.account in workload.config)"; exit 1; }
 
+# Resolve the machine profile (lcrc|polaris) the same way env/_profile.sh does, so PBS
+# gets machine-specific resource flags. Polaris requires -l filesystems=<mounts>: /home and
+# /eagle are distinct Lustre mounts and a job that doesn't request a mount can't see it.
+# shellcheck disable=SC1091
+source "$ROOT/env/_profile.sh" >/dev/null 2>&1 || true
+PBS_EXTRA=()
+if [[ "${ENV_PROFILE:-}" == polaris ]]; then
+    PBS_EXTRA+=(-l "filesystems=${PBS_FILESYSTEMS:-home:eagle}")
+fi
+
 # forward only operational overrides; workload + knobs come from the config files
 FWD=""
 [ -n "${SKIP_BUILD:-}" ]            && FWD="${FWD:+$FWD,}SKIP_BUILD=$SKIP_BUILD"
@@ -38,7 +48,7 @@ RUN_SCRIPT="${RUN_SCRIPT:-workloads/job.sh}"
 # place multiple ranks/node without oversubscription.
 echo "submitting: select=${nodes}:ncpus=${ncpus}:mpiprocs=${ncpus} walltime=$walltime queue=$queue account=$account run=$RUN_SCRIPT"
 qsub -A "$account" -q "$queue" -l select="${nodes}:ncpus=${ncpus}:mpiprocs=${ncpus}" -l walltime="$walltime" \
-     -N dm_run -j oe -o "$ROOT/results/" ${FWD:+-v "$FWD"} <<PBS
+     "${PBS_EXTRA[@]}" -N dm_run -j oe -o "$ROOT/results/" ${FWD:+-v "$FWD"} <<PBS
 cd "$ROOT"
 bash "$RUN_SCRIPT"
 PBS

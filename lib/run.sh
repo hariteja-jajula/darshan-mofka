@@ -117,7 +117,17 @@ connector_env() {
     [ -n "${NA_OFI_RX_SIZE:-}" ] && CONNECTOR_ENV+=( NA_OFI_RX_SIZE="$NA_OFI_RX_SIZE" )
     # Name the local na_ofi domain for the producer (verbs can't default it on connect). Patched
     # mofka reads MOFKA_NA_DOMAIN and qualifies the engine protocol (ofi+verbs;ofi_rxm://mlx5_0).
-    [ -n "$C_NA_DOMAIN" ] && CONNECTOR_ENV+=( MOFKA_NA_DOMAIN="$C_NA_DOMAIN" )
+    # ONLY pass it for a verbs transport: it names a *verbs HCA* (e.g. mlx5_0). On an ofi+tcp
+    # fabric (Polaris/Slingshot has no mlx5_0) mofka would form `ofi+tcp://mlx5_0`, which na_ofi
+    # rejects with "No provider found for tcp on domain mlx5_0" -> margo_init fails -> the producer
+    # never attaches and 0 events stream. Gating on the resolved protocol keeps LCRC (verbs) working
+    # with na_domain:mlx5_0 in workload.config while Polaris (ofi+tcp) omits it. (BX 2026-07-27)
+    if [ -n "$C_NA_DOMAIN" ]; then
+        case "$SRV_PROTOCOL" in
+            *verbs*) CONNECTOR_ENV+=( MOFKA_NA_DOMAIN="$C_NA_DOMAIN" ) ;;
+            *) : "not verbs ($SRV_PROTOCOL) -> MOFKA_NA_DOMAIN dropped (would break ofi+tcp)" ;;
+        esac
+    fi
     # Finalize records-sweep: would re-stream every module record's final struct at shutdown to
     # close the python-ml init-window counter gap. DISABLED by default: enabling it hangs python-ml
     # at finalize (the extra records are new async sends from the atexit context, and mofka's
@@ -146,6 +156,8 @@ workload_env() {
     case "$WL_TYPE" in
         c)         WORKLOAD_ENV=(EPOCHS="$WL_EVENTS" CHECKPOINT_EVERY="$every") ;;
         python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS") ;;
+        mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS") ;;  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
+        dlio)      WORKLOAD_ENV=() ;;  # DLIO takes hydra CLI overrides (see job.sh run_workload_once) scaled by WL_EVENTS
         *)         WORKLOAD_ENV=() ;;
     esac
 }
@@ -177,7 +189,10 @@ start_broker() {
     local multi=0; { [ "$WL_BROKERS" = per-node ] || [ "$nranks" -gt 1 ]; } && multi=1
     if [ "$multi" = 1 ]; then
         render_bedrock_config "$REPO_ROOT/server/bedrock-config-mpi.json" "$srv/bedrock-config-mpi.json"
-        mpirun --map-by ppr:1:node -n "$nranks" \
+        # one bedrock per node. PALS (polaris) places by --ppn 1 over the full PBS
+        # reservation (no hostfile needed); OpenMPI (lcrc) via --map-by ppr:1:node.
+        mpi_launch "$nranks" 1
+        "${MPI_LAUNCH[@]}" \
             bedrock "$SRV_PROTOCOL" -c "$srv/bedrock-config-mpi.json" -v info > "$srv/bedrock.log" 2>&1 &
     else
         render_bedrock_config "$REPO_ROOT/server/bedrock-config.json" "$srv/bedrock-config.json"
