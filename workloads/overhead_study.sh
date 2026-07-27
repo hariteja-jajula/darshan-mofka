@@ -189,7 +189,16 @@ nevents_of() { # $1=workload.out -> integer or NA
     echo "${v:-NA}"
 }
 
-RESBASE="$ROOT/results/OVERHEAD_STUDY_$(results_dir_name)"
+# RESBASE name must reflect the ACTUAL study workload(s). results_dir_name()'s workload_tag
+# reads $WORKLOAD, but submit.sh forwards only STUDY_WORKLOADS for a study run (not WORKLOAD),
+# so $WORKLOAD was unset here and _cfg_env fell back to the config default 'c' -- an mpi-only
+# study got dir-named ...C..., and since RESBASE is rm -rf'd just below, a later real c run at
+# the same topology would clobber it. Build the workload tag from STUDY_WORKLOADS instead
+# (joined with + for a multi-workload study). BX 2026-07-27
+export WORKLOAD="${STUDY_WORKLOADS%% *}"        # first study wl -> valid WL_* for topology tag
+_study_wl_tag=$(printf '%s' "$STUDY_WORKLOADS" | tr ' ' '+' | tr -d '-' | tr '[:lower:]' '[:upper:]')
+_topo_tag=$(results_dir_name); _topo_tag="${_topo_tag#*_}"   # drop the (config-default) workload_tag
+RESBASE="$ROOT/results/OVERHEAD_STUDY_${_study_wl_tag}_${_topo_tag}"
 rm -rf "$RESBASE"; mkdir -p "$RESBASE"
 CSV="$RESBASE/summary.csv"
 echo "workload,arm,rep,wall_s,init_us,finalize_us,pushes,events,push_mean_us,push_median_us" > "$CSV"
