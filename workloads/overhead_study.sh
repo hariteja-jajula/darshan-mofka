@@ -297,15 +297,22 @@ rows=list(csv.DictReader(open(sys.argv[1])))
 def num(x):
     try: return float(x)
     except: return None
+def vals_of(rs, key):
+    return [num(r[key]) for r in rs if num(r[key]) is not None]
 def agg(rs, key):
-    vals=[num(r[key]) for r in rs if num(r[key]) is not None]
+    vals=vals_of(rs, key)
     return st.mean(vals) if vals else None
+def sd(rs, key):
+    # sample stdev over reps; 0.000 for n<2 so a single rep prints cleanly (not NA)
+    vals=vals_of(rs, key)
+    return st.stdev(vals) if len(vals)>1 else (0.0 if vals else None)
 def fmt(x, d=3):
     return "NA" if x is None else f"{x:.{d}f}"
 wls=[]
 for r in rows:
     if r["workload"] not in wls: wls.append(r["workload"])
-hdr=f'{"arm":<52}{"reps":>5}{"wall_s":>10}{"init_us":>12}{"final_us":>12}{"pushes":>9}{"events":>9}{"push_mean":>11}{"push_med":>10}'
+# wall_s reported as mean +/- sample-stdev over reps (deliverable Table 1).
+hdr=f'{"arm":<52}{"reps":>5}{"wall_s":>10}{"wall_sd":>9}{"init_us":>12}{"final_us":>12}{"pushes":>9}{"events":>9}{"push_mean":>11}{"push_med":>10}'
 for w in wls:
     print(f"\n=== workload: {w} ===")
     print(hdr); print("-"*len(hdr))
@@ -315,19 +322,23 @@ for w in wls:
     base=None
     for a in arms:
         rs=[r for r in rows if r["workload"]==w and r["arm"]==a]
-        wall=agg(rs,"wall_s"); ini=agg(rs,"init_us"); fin=agg(rs,"finalize_us")
+        wall=agg(rs,"wall_s"); wsd=sd(rs,"wall_s"); ini=agg(rs,"init_us"); fin=agg(rs,"finalize_us")
         pu=agg(rs,"pushes"); ev=agg(rs,"events"); pm=agg(rs,"push_mean_us"); pmed=agg(rs,"push_median_us")
         if base is None: base=wall
-        print(f'{a:<52}{len(rs):>5}{fmt(wall):>10}{fmt(ini,1):>12}{fmt(fin,1):>12}'
+        print(f'{a:<52}{len(rs):>5}{fmt(wall):>10}{fmt(wsd):>9}{fmt(ini,1):>12}{fmt(fin,1):>12}'
               f'{("NA" if pu is None else str(int(pu))):>9}{("NA" if ev is None else str(int(ev))):>9}'
               f'{fmt(pm):>11}{fmt(pmed):>10}')
-    # derived overhead vs the no-Darshan baseline
-    def wl_of(sub):
+    # derived overhead vs the no-Darshan baseline (mean +/- stdev of wall)
+    def wl_stats(sub):
         for a in arms:
             if sub in a:
-                rs=[r for r in rows if r["workload"]==w and r["arm"]==a]; return agg(rs,"wall_s")
-        return None
-    b=wl_of("nodarshan"); d=wl_of("runtimeonly"); s=wl_of("Streaming")
+                rs=[r for r in rows if r["workload"]==w and r["arm"]==a]
+                return agg(rs,"wall_s"), sd(rs,"wall_s")
+        return None, None
+    b,bsd=wl_stats("nodarshan"); d,dsd=wl_stats("runtimeonly"); s,ssd=wl_stats("Streaming")
+    if b is not None: print(f"  wall mean+/-sd: baseline={fmt(b)}+/-{fmt(bsd)}s"
+                            f"{'' if d is None else f'  runtimeonly={fmt(d)}+/-{fmt(dsd)}s'}"
+                            f"{'' if s is None else f'  streaming={fmt(s)}+/-{fmt(ssd)}s'}")
     print("  derived overhead (mean wall):")
     if b and d: print(f"    Darshan runtime    : {(d-b)/b*100:+.1f}%  ({d-b:+.3f}s vs no-Darshan)")
     if d and s: print(f"    streaming (vs Darshan): {(s-d)/d*100:+.1f}%  ({s-d:+.3f}s)")
