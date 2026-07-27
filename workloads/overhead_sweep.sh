@@ -112,7 +112,7 @@ run_workload_once() {  # $1=RES ; uses ARM_MODE + WL_* globals
         "${MPI_LAUNCH[@]}" bash -lc \
           "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && env $estr ${cmd[*]}" \
           > "$RES/workload.out" 2> "$RES/workload.err"
-    elif [[ "$WL_TASKS" -gt 1 || "$WL_TYPE" == mpi ]]; then
+    elif [[ "$WL_TASKS" -gt 1 || "$WL_TYPE" == mpi || "$WL_TYPE" == dlio ]]; then  # dlio=MPI app, needs launcher even at 1 rank (BX 2026-07-27)
         mpi_launch "$WL_TASKS" "$WL_TASKS" "$WL_HOSTFILE"
         "${MPI_LAUNCH[@]}" env "${pre[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     else
@@ -222,7 +222,7 @@ for cfg in "${CONFIGS[@]}"; do
                 mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' \
                     ! -path "$RES/streamed/*" ! -path "$RES/native/*" -newermt '-30 min' 2>/dev/null | sort)
                 for nl in "${NATIVE_LOGS[@]}"; do cp "$nl" "$RES/native/"; done
-                cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" ]] && cmp_mode="mpi"
+                cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" || "$WL_TYPE" == "dlio" ]] && cmp_mode="mpi"  # dlio = MPI mode (BX 2026-07-27)
                 ( cd "$RES" && "$PY" "$ROOT/workloads/strict_compare.py" streamed native "$cmp_mode" ) \
                     | tee "$RES/compare.txt" || true
             fi

@@ -163,7 +163,10 @@ run_workload_once() {
         "${MPI_LAUNCH[@]}" bash -lc \
           "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && env $estr ${cmd[*]}" \
           > "$RES/workload.out" 2> "$RES/workload.err"
-    elif [[ "$WL_TASKS" -gt 1 || "$WL_TYPE" == mpi ]]; then
+    elif [[ "$WL_TASKS" -gt 1 || "$WL_TYPE" == mpi || "$WL_TYPE" == dlio ]]; then
+        # dlio is a real MPI app (mpi4py MPI.Init); on Polaris cray-mpich a singleton launched
+        # bare (no PALS/PMI) mis-inits -> must go through mpi_launch even at 1 rank / single node,
+        # mirroring job.sh:158's dlio carve-out from the bare fast-path. (BX 2026-07-27)
         mpi_launch "$WL_TASKS" "$WL_TASKS" "$WL_HOSTFILE"
         "${MPI_LAUNCH[@]}" env "${pre[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     else
@@ -287,7 +290,10 @@ for w in $STUDY_WORKLOADS; do
                 mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' \
                     ! -path "$STREAMED_DIR/*" ! -path "$NATIVE_DIR/*" -newermt '-30 min' 2>/dev/null | sort)
                 for nl in "${NATIVE_LOGS[@]}"; do cp "$nl" "$NATIVE_DIR/"; done
-                cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" ]] && cmp_mode="mpi"
+                # dlio runs Darshan in MPI mode (see lib/run.sh NONMPI carve-out) -> ONE shared
+                # rank=-1 log; perproc would false-MISMATCH on non-reproducible reduction counters
+                # (POSIX_MODE, MAX_*_TIME_SIZE, ACCESS histos) that only mpi mode excludes. (BX 2026-07-27)
+                cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" || "$WL_TYPE" == "dlio" ]] && cmp_mode="mpi"
                 ( cd "$RES" && "$PY" "$ROOT/workloads/strict_compare.py" streamed native "$cmp_mode" ) \
                     | tee "$RES/compare.txt" || true
                 ONE_REC="$(ls "$STREAMED_DIR"/*.darshan 2>/dev/null | head -1)"

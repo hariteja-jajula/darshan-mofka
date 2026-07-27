@@ -201,7 +201,7 @@ for rep in $(seq 1 "$WL_REPS"); do
     # log reduced to rank=-1 -> aggregate the N reconstructed per-rank logs the way
     # Darshan's reduction does, then compare. See workloads/strict_compare.py.
     # Run from $RES so the repo's darshan/ source tree doesn't shadow the pydarshan pkg.
-    cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" ]] && cmp_mode="mpi"   # NOT `local`: this block runs in the main-body for-loop, not a function
+    cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" || "$WL_TYPE" == "dlio" ]] && cmp_mode="mpi"   # dlio = MPI mode (BX 2026-07-27). NOT `local`: this block runs in the main-body for-loop, not a function
     ( cd "$RES" && "$PY" "$ROOT/workloads/strict_compare.py" streamed native "$cmp_mode" ) \
         | tee "$RES/compare.txt"
     # exit 3 = MISMATCH (real capture bug), 2 = ERROR (harness/config failure, e.g. no

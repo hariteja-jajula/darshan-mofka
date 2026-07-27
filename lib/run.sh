@@ -148,7 +148,17 @@ darshan_env() {
     # first-init-wins guard at :206 means the MPI_Init wrapper's later re-init is a no-op),
     # so the rank reduction never runs and each rank writes its own nprocs=1 log instead of
     # one rank=-1 shared log. MUST be unset for mpi. (BX 2026-07-27, 2-subagent cross-check)
-    [ "$D_NONMPI" = 1 ] && [ "$WL_TYPE" != mpi ] && DARSHAN_ENV+=(DARSHAN_ENABLE_NONMPI=1)
+    # dlio is ALSO a real MPI app: dlio_benchmark unconditionally calls MPI.Init()
+    # (install/_dlio_venv/.../dlio_benchmark/utils/utility.py:130-131, main.py:394) and
+    # MPI.Finalize() (utility.py:199). With DARSHAN_ENABLE_NONMPI=1 Darshan inits serial at
+    # LD_PRELOAD load-time and defers shutdown to its atexit handler, which then runs its rank
+    # reduction AFTER dlio already called MPI.Finalize() -> "MPI routine (internal_Reduce_c)
+    # after finalizing MPICH" abort (all 6 Darshan-enabled dlio runs in job 7297242 crashed;
+    # only the no-preload baseline survived). Excluding dlio here lets Darshan finalize inside
+    # the PMPI_Finalize wrapper (before MPICH teardown) and emit ONE shared rank=-1 log, exactly
+    # like the mpi workload -> dlio must ALSO use strict_compare cmp_mode=mpi (see overhead_study.sh,
+    # overhead_sweep.sh, job.sh). (BX 2026-07-27, 2 independent subagent cross-checks: A a48901b7, B a7a14392.)
+    [ "$D_NONMPI" = 1 ] && [ "$WL_TYPE" != mpi ] && [ "$WL_TYPE" != dlio ] && DARSHAN_ENV+=(DARSHAN_ENABLE_NONMPI=1)
     # DLIO: `import tensorflow` (>1024 .pyc files) + generate_data (num_files_train npz)
     # blow past Darshan's default 1024-record/module cap (darshan.h:232), silently dropping
     # every later record from BOTH the native log AND the Mofka stream (same POSIX_PRE_RECORD
