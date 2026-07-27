@@ -120,6 +120,7 @@ compile_workload() {  # $1 = workload type
              fi
              "$MPICC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile mpi failed" ;;
         python-ml) : ;;  # no compile step
+        dlio) : ;;       # no compile step; runs from install/_dlio_venv (see run_workload_once dlio case)
         *) die "unknown workload '$1'" ;;
     esac
 }
