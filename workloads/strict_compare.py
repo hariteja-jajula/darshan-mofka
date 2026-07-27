@@ -136,9 +136,17 @@ def load_log(path):
             value_cols = [c for c in cdf.columns
                           if c not in KEY_COLS and c not in REDUCTION_ONLY_COUNTERS]
             recs = out.setdefault(mod, {})
-            for _, row in cdf.iterrows():
-                rid = int(row["id"])
-                recs[rid] = {c: int(row[c]) for c in value_cols}
+            # NOTE: do NOT use iterrows() here. iterrows() coerces each row to a
+            # single float64 Series, so int() rounds any uint64 id/counter above
+            # 2^53 (record ids routinely exceed it; large byte counters can too).
+            # That silently corrupted ids -> broke the id->name join (std-stream
+            # pruning became dead code) and could false-pass/fail big-I/O runs.
+            # Read each column as its native (uint64) numpy array and index by row.
+            id_col = cdf["id"].to_numpy()
+            col_arrays = {c: cdf[c].to_numpy() for c in value_cols}
+            for i in range(len(cdf)):
+                rid = int(id_col[i])
+                recs[rid] = {c: int(col_arrays[c][i]) for c in value_cols}
     # prune empty std streams on this side
     stdio = out.get("STDIO", {})
     for rid in list(stdio.keys()):
