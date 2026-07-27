@@ -149,6 +149,13 @@ darshan_env() {
     # so the rank reduction never runs and each rank writes its own nprocs=1 log instead of
     # one rank=-1 shared log. MUST be unset for mpi. (BX 2026-07-27, 2-subagent cross-check)
     [ "$D_NONMPI" = 1 ] && [ "$WL_TYPE" != mpi ] && DARSHAN_ENV+=(DARSHAN_ENABLE_NONMPI=1)
+    # DLIO: `import tensorflow` (>1024 .pyc files) + generate_data (num_files_train npz)
+    # blow past Darshan's default 1024-record/module cap (darshan.h:232), silently dropping
+    # every later record from BOTH the native log AND the Mofka stream (same POSIX_PRE_RECORD
+    # gate, darshan-posix.c:259,422) -> vacuous strict-compare. The config raises MAX_RECORDS
+    # *and* MODMEM (the 4 MiB pool caps records, darshan-core.c:2571). Gated to dlio so it can
+    # never perturb c/mpi/python-ml. (BX 2026-07-27, root-caused + 2-subagent cross-check.)
+    [ "$WL_TYPE" = dlio ] && DARSHAN_ENV+=(DARSHAN_CONFIG_PATH="$REPO_ROOT/config/darshan_dlio.conf")
     [ -n "$D_MODMEM" ]         && DARSHAN_ENV+=(DARSHAN_MODMEM="$D_MODMEM")
     [ -n "$D_MOD_ENABLE" ]     && DARSHAN_ENV+=(DARSHAN_MOD_ENABLE="$D_MOD_ENABLE")
     [ -n "$D_MOD_DISABLE" ]    && DARSHAN_ENV+=(DARSHAN_MOD_DISABLE="$D_MOD_DISABLE")
@@ -164,7 +171,12 @@ workload_env() {
         c)         WORKLOAD_ENV=(EPOCHS="$WL_EVENTS" CHECKPOINT_EVERY="$every") ;;
         python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS") ;;
         mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS") ;;  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
-        dlio)      WORKLOAD_ENV=() ;;  # DLIO takes hydra CLI overrides (see job.sh run_workload_once) scaled by WL_EVENTS
+        dlio)      # TF spawns ~1 Eigen thread/CPU; on Polaris that exceeds the per-user
+                   # cgroup pids.max=256 -> pthread_create EAGAIN -> SIGABRT (env.cc:84),
+                   # which kills Darshan's atexit finalize -> no native log. Cap TF threads.
+                   # Measurement-neutral: data generation is numpy (pre-TF), and the caps are
+                   # common-mode across A/B/C arms. (BX 2026-07-27, 2-subagent cross-check.)
+                   WORKLOAD_ENV=(OMP_NUM_THREADS=1 TF_NUM_INTRAOP_THREADS=1 TF_NUM_INTEROP_THREADS=1 TF_CPP_MIN_LOG_LEVEL=3) ;;
         *)         WORKLOAD_ENV=() ;;
     esac
 }

@@ -81,6 +81,7 @@ __pycache__/
 /server/_broker/
 /server/_wl_hostfile
 /server/_study_wl_hostfile
+/server/_sweep_wl_hostfile
 # results run-id marker (dotfile not caught by /results/*/ or *.OU)
 /results/.g8_base_jobid
 
