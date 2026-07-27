@@ -114,7 +114,16 @@ case "$WL_TYPE" in
     mpi) # Ensure the MPI-aware darshan lib exists (needed even under SKIP_BUILD, since the
          # plain build section may have been skipped); build it once if absent.
          [[ -e "$ENV_ROOT/darshan/install-mpi/lib/libdarshan.so" ]] || DARSHAN_MPI=1 ./build.sh >/dev/null 2>&1 || die "darshan MPI build failed"
-         MPICC="$(command -v mpicc || echo "$CC")"
+         # Build the MPI workload with the SAME MPI toolchain as the MPI-aware libdarshan
+         # (build.sh forces craype `cc` on polaris -> cray-mpich 9.0.1). Using the craype
+         # `cc` wrapper here too keeps the app and the LD_PRELOAD'd libdarshan on one
+         # cray-mpich version; a bare `mpicc` is a GNU cray-mpich 8.1.28 wrapper -- it only
+         # works by soname luck (both need libmpi_gnu_123.so.12). On LCRC, mpicc (openmpi).
+         if [[ "$ENV_PROFILE" == polaris ]]; then
+             MPICC="${MPI_WL_CC:-cc}"
+         else
+             MPICC="${MPI_WL_CC:-$(command -v mpicc || echo "$CC")}"
+         fi
          "$MPICC" -O2 workloads/mpi/mofka_forward_mpiio.c -o workloads/mpi/mofka_forward_mpiio || die "compile failed" ;;
 esac
 
