@@ -186,7 +186,27 @@ workload_env() {
                    # which kills Darshan's atexit finalize -> no native log. Cap TF threads.
                    # Measurement-neutral: data generation is numpy (pre-TF), and the caps are
                    # common-mode across A/B/C arms. (BX 2026-07-27, 2-subagent cross-check.)
-                   WORKLOAD_ENV=(OMP_NUM_THREADS=1 TF_NUM_INTRAOP_THREADS=1 TF_NUM_INTEROP_THREADS=1 TF_CPP_MIN_LOG_LEVEL=3) ;;
+                   WORKLOAD_ENV=(OMP_NUM_THREADS=1 TF_NUM_INTRAOP_THREADS=1 TF_NUM_INTEROP_THREADS=1 TF_CPP_MIN_LOG_LEVEL=3)
+                   # cray-mpich ABI-skew pin (THE dlio crash fix). dlio's mpi4py binds
+                   # libmpi.so.12 -> cray-mpich 9.0.1 (only present under $MPICH_DIR/lib-abi-mpich,
+                   # prepended at env/workload.sh:30). But the Mofka spack view + darshan
+                   # install-mpi were built against cray-mpich 8.1.28 and inject their
+                   # libmpi_gnu_123.so.12 (8.1.28) onto LD_LIBRARY_PATH (spack env activate,
+                   # env/polaris.sh). Two mpich runtimes in one process -> abort
+                   # "MPI routine (internal_Reduce_c) ... after finalizing MPICH". Prepend
+                   # $MPICH_DIR/lib so libmpi_gnu_123.so.12 ALSO resolves to 9.0.1 -> one mpich,
+                   # skew gone. ($MPICH_DIR/lib has no libmpi.so.12, so mpi4py still binds 9.0.1
+                   # via lib-abi-mpich -- consistent.) Verified login-node repro 2026-07-27
+                   # (Case C): install-mpi darshan + this pin -> real POSIX/LUSTRE .darshan log;
+                   # install-mpi WITHOUT it crashes. Prepend (not override) preserves the
+                   # diaspora/mofka lib paths already on LD_LIBRARY_PATH. Captured here in the
+                   # main shell (post env/workload.sh source) so the full path flows to BOTH the
+                   # local (env "${pre[@]}") and remote (re-sourced) launch paths. Scoped to dlio
+                   # ONLY: the mpi workload links libmpi_gnu_123->8.1.28 and runs all-8.1.28
+                   # consistently (why it passes) -- a global pin would regress it. (BX 2026-07-27)
+                   if [ -n "${MPICH_DIR:-}" ] && [ -e "$MPICH_DIR/lib/libmpi_gnu_123.so.12" ]; then
+                       WORKLOAD_ENV+=(LD_LIBRARY_PATH="$MPICH_DIR/lib:${LD_LIBRARY_PATH:-}")
+                   fi ;;
         *)         WORKLOAD_ENV=() ;;
     esac
 }

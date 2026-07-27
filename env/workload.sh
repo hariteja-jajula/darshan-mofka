@@ -36,13 +36,19 @@ fi
 # Darshan never instruments MPI-IO (the MPIIO module never fires) and, on a real MPI
 # program, only a handful of ranks finalize/write a native log -- which is exactly why
 # the MPI overnight run produced 10 nprocs=1 POSIX/STDIO logs instead of a proper set.
-# For non-MPI workloads (c/python-ml) use the plain build. WL_TYPE drives the choice;
-# an explicit DARSHAN_PREFIX override still wins.
+# dlio is ALSO a real MPI app (mpi4py MPI.Init/Finalize): with the plain build the
+# process is inert (no MPI symbols; dlio sets DARSHAN_DISABLE=1; NONMPI unset) so it
+# produces NO log -> a vacuous overhead study. It must use install-mpi too. (Verified
+# on a login-node repro 2026-07-27: plain build runs but writes no .darshan for dlio;
+# install-mpi + the dlio mpich pin in lib/run.sh:workload_env writes a real POSIX/LUSTRE
+# log. The pin is REQUIRED alongside this -- install-mpi alone crashes dlio on the
+# 8.1.28-vs-9.0.1 cray-mpich skew.) For c/python-ml use the plain build. WL_TYPE drives
+# the choice; an explicit DARSHAN_PREFIX override still wins.
 darshan_lib() {
     local d
     if [[ -n "${DARSHAN_PREFIX_OVERRIDE:-}" ]]; then
         d="$DARSHAN_PREFIX_OVERRIDE/lib"
-    elif [[ "${WL_TYPE:-}" == "mpi" && -e "$ENV_ROOT/darshan/install-mpi/lib/libdarshan.so" ]]; then
+    elif [[ ( "${WL_TYPE:-}" == "mpi" || "${WL_TYPE:-}" == "dlio" ) && -e "$ENV_ROOT/darshan/install-mpi/lib/libdarshan.so" ]]; then
         d="$ENV_ROOT/darshan/install-mpi/lib"
     else
         d="$DARSHAN_PREFIX/lib"
