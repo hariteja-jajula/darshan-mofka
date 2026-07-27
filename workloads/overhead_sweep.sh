@@ -141,6 +141,18 @@ record() { # $1=config $2=rep $3=RES $4=wall
 # wall-time comparison.
 GROUP="${GROUP:-}"
 WL_NODE="${NODELIST[1]:-${NODELIST[0]}}"
+
+# warm-up (discarded): kill cold-start confounds (fresh /tmp, TF/py import cache, FS
+# metadata) before the first TIMED rep. Runtime mode (ENABLE=0) records but does NOT
+# stream (push-free), so it cannot pollute the mongo DB the fidelity check reads; no
+# broker/consumer is up yet for the reference arms, which is fine -- ENABLE=0 never sends.
+# BX 2026-07-27, cross-check a38eb94f.
+ARM_MODE=runtime; export DARSHAN_MOFKA_ENABLE=0
+WRES="$RESBASE/_warmup"; mkdir -p "$WRES"
+say "warm-up (discarded): $WL_TYPE"
+run_workload_once "$WRES" >/dev/null 2>&1 || true
+rm -rf "$WRES"
+
 say "reference: Baseline_nodarshan_nomofka x$STUDY_REPS"
 ARM_MODE=none; unset DARSHAN_MOFKA_ENABLE
 for rep in $(seq 1 "$STUDY_REPS"); do

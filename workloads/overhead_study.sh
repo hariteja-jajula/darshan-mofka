@@ -226,6 +226,19 @@ for w in $STUDY_WORKLOADS; do
     compile_workload "$w"
     WDIR="$RESBASE/$w"; mkdir -p "$WDIR"
 
+    # --- warm-up (discarded): kill cold-start confounds before the first TIMED rep ---
+    # The arm-outer/rep-inner order means arm 1 rep 1 otherwise eats every one-time cost:
+    # fresh /tmp scratch, TF/py import cache, filesystem metadata. That inflated dlio's
+    # baseline rep1 to 87s vs ~20s warm (wall_sd=38.6s, bogus negative Darshan overhead;
+    # BX 2026-07-27, cross-check a38eb94f). Run ONE warm-up in runtime mode (ENABLE=0):
+    # it records but does NOT stream (push-free), so it cannot write the mongo DB the
+    # later fidelity check reads, and the broker/consumer are already up and idle.
+    ARM_MODE=runtime; export DARSHAN_MOFKA_ENABLE=0
+    WRES="$WDIR/_warmup"; mkdir -p "$WRES"
+    say "warm-up (discarded): $w"
+    run_workload_once "$WRES" >/dev/null 2>&1 || true
+    rm -rf "$WRES"
+
     # --- arm 1: no Darshan, no Mofka ---
     ARM_MODE=none; unset DARSHAN_MOFKA_ENABLE
     for rep in $(seq 1 "$STUDY_REPS"); do
