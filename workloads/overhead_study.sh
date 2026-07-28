@@ -62,6 +62,12 @@ load_run_config
 STUDY_EVENTS="${STUDY_EVENTS:-$WL_EVENTS}"
 STUDY_REPS="${STUDY_REPS:-${WL_REPS:-3}}"
 STUDY_WORKLOADS="${STUDY_WORKLOADS:-$WL_TYPE}"   # space-separated: c python-ml mpi
+# STUDY_ARMS selects which arms run (space-separated: none runtime stream). Default all three.
+# The buffer sweep (#22) uses STUDY_ARMS=stream: baseline/runtimeonly walls are BATCH/QUEUE_DEPTH-
+# independent, so they're measured once in a full run and reused -- no point re-running them per
+# sweep cell. (BX 2026-07-27)
+STUDY_ARMS="${STUDY_ARMS:-none runtime stream}"
+_arm_on() { case " $STUDY_ARMS " in *" $1 "*) return 0;; *) return 1;; esac; }
 export EVENTS="$STUDY_EVENTS"          # _cfg_env override so the workload scales
 export DARSHAN_MOFKA_TIMING=1          # connector init/send/finalize timing -> workload.err
 echo "study: workloads=[$STUDY_WORKLOADS] events=$STUDY_EVENTS reps=$STUDY_REPS"
@@ -262,6 +268,7 @@ for w in $STUDY_WORKLOADS; do
     rm -rf "$WRES"
 
     # --- arm 1: no Darshan, no Mofka ---
+    if _arm_on none; then
     ARM_MODE=none; unset DARSHAN_MOFKA_ENABLE
     for rep in $(seq 1 "$STUDY_REPS"); do
         RES="$WDIR/Baseline_nodarshan_nomofka_RUN$rep"; mkdir -p "$RES"
@@ -269,8 +276,10 @@ for w in $STUDY_WORKLOADS; do
         assert_run_ok "$rc" "$RES" "Baseline_nodarshan_nomofka rep$rep ($w)"
         record "$w" "Baseline_nodarshan_nomofka" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
     done
+    fi
 
     # --- arm 2: Darshan runtime only (no streaming) ---
+    if _arm_on runtime; then
     ARM_MODE=runtime; export DARSHAN_MOFKA_ENABLE=0
     for rep in $(seq 1 "$STUDY_REPS"); do
         RES="$WDIR/Enable_darshan_runtimeonly_RUN$rep"; mkdir -p "$RES"
@@ -278,8 +287,10 @@ for w in $STUDY_WORKLOADS; do
         assert_run_ok "$rc" "$RES" "Enable_darshan_runtimeonly rep$rep ($w)"
         record "$w" "Enable_darshan_runtimeonly" "$rep" "$RES" "$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f",b-a}')"
     done
+    fi
 
     # --- arm 3: full streaming (consumer draining) ---
+    if _arm_on stream; then
     ARM_MODE=stream; export DARSHAN_MOFKA_ENABLE=1
     for rep in $(seq 1 "$STUDY_REPS"); do
         RES="$WDIR/${ARM_STREAM_NAME}_RUN$rep"; mkdir -p "$RES"
@@ -323,6 +334,7 @@ for w in $STUDY_WORKLOADS; do
             fi
         fi
     done
+    fi
 done
 
 # start_consumer (lib/run.sh) fills the CONSUMER_PIDS array, never a singular
