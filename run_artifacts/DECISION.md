@@ -7,6 +7,15 @@ resumes from this file alone. Orchestrator writes; subagents report diffs.
 
 ## MORNING SUMMARY (live — updated as phases complete; 2026-07-30 overnight)
 
+**LEGACY RELOCATION (2026-07-30, Hari-requested "everything not on the cxi path", move-to-sibling):**
+Moved 9 tracked files/dirs OUT of the repo to `../legacy-preserved/` (sibling, outside checkout;
+NOT the stale `../run_artifacts/`). List: env/lcrc.sh; workloads/{overhead_study,overhead_sweep,
+overhead_buffer_sweep}.sh; workloads/mpi/; workloads/dlio/; server/{bedrock-config-mpi.json,
+start_server.sh,stop_server.sh}. Shared files (job.sh/run.sh/common.sh) UNTOUCHED per constraint —
+so dormant legacy branches now hold 3 intentional dangling refs (job.sh:150/162 mpi build+run arms;
+run.sh:249 multi-broker render; _profile.sh:7/13 lcrc source) — all unreachable on cxi. Restore
+manifest + exact mv-back commands: ../legacy-preserved/RESTORE.md. cxi path re-verified: see table.
+
 **Single next action:** DONE — validation ladder complete + cleanup complete + behavior-unchanged
 re-verify GREEN. Nothing pending. CLEANUP committed e5a16d3 (resolve-once DARSHAN_LIB_SO, dropped
 4 dead CFG_* knobs, trimmed provenance comment tails across 4 files keeping all mechanism, README
