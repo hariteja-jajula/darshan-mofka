@@ -28,10 +28,21 @@ strict_compare PASS (perproc). Two non-MPI workloads proven cross-node. CXI only
 **SCOPE CHANGE (Hari 2026-07-30, night):** Drop CONSUMERS>1. Validation ends at multi-rep.
 Then CLEANUP is the priority deliverable work: (1) **resolve-once** — `darshan_lib` called 5x
 (job.sh:43,44,61,152; run.sh:402) + runtime `find`/`command -v` hunts (mongod, mpicc, *.darshan);
-resolve each binary/path ONCE at top into a var, pass it everywhere ("find it once, give the
+resolve each binary/path ONCE into a var, pass it everywhere ("find it once, give the
 location directly, less number of operations"). (2) **minimal comments** — strip historical-rationale
 blocks (rationale lives in git + this file). (3) **fewer files**, (4) **straightforward commands**.
 Cleanup must NOT change behavior; re-verify with a C 1+1 after.
+
+**CLEANUP GOTCHAS (agent-cross-checked 2026-07-30, 2 independent subagents — do NOT skip):**
+- `darshan_lib` (defined env/workload.sh:47-58) is **state-dependent**: its answer changes
+  after the build creates `install-mpi/libdarshan.so` for mpi/dlio. So resolve-once must cache
+  **POST-build**, NOT at top of script. Line 43 is an inherently pre-build probe (SKIP_BUILD
+  guard) and must stay a live call; line 44 can reuse it. `run_workload_once`/`run_mpmd_rep`
+  already cache into `$dlib`/`$DLIB` — mirror that pattern. A blanket top-of-file cache BREAKS mpi.
+- `darshan_env` (lib/run.sh:149-181): 23 comment lines / 8 code lines — but comments are
+  **load-bearing** correctness rationale (why DARSHAN_ENABLE_NONMPI must be unset for mpi/dlio;
+  record-cap fix; tied to real crash job 7297242). TRIM only the provenance tails ("BX date,
+  N-subagent cross-check", commit hashes) — KEEP the mechanism explanations. Don't gut the block.
 
 **Overnight rules in force:** (1) commit per green phase, DECISION.md before each submit; (2) same
 error twice → STOP + wait; (3) 5-node → debug-scaling/preemptable, ≤1 job in flight, wall ≤1h;
