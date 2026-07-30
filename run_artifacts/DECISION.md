@@ -17,7 +17,7 @@ resumes from this file alone. Orchestrator writes; subagents report diffs.
 |-------|-------|--------|----------|
 | run_mpmd_rep written + syntax-clean | ✅ done | — | bash -n clean; 3 sections render+`bash -n` OK |
 | run_mpmd_rep review | ✅ done (self) | — | 6-way wf stopped (API-degraded: retry 2-4, 300k+ tok, 0/6 @17m); self-review vs proven probe — see note |
-| 2-node e2e workload C (1+1) | ⬜ pending | — | — |
+| 2-node e2e workload C (1+1) | ⏳ queued | 7301622 | submitted 2026-07-30 ~04:4x; debug q, 2 nodes, wall 30m |
 | io_bench (1+1) | ⬜ pending | — | — |
 | 5-node scale (1+4, TASKS>1) | ⬜ pending | — | — |
 | multi-rep (REPS>1) | ⬜ pending | — | — |
