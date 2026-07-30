@@ -56,6 +56,31 @@ Cleanup must NOT change behavior; re-verify with a C 1+1 after.
 - m1/m2 verdict-label races (ALL_DONE checked before *_FAIL, run.sh:531-533): label-only at CONS_N=1; data loss still caught downstream. m3 env-serial not space-safe (run.sh:401); m4/m5 native-find window vs shared logdir (job.sh:224-225); m6 streamed rank always fallback (defended by pid-in-key).
 - NOTE: 2 bug-hunt lenses (B1 flag-races, B4 collision) stalled out on API retries; B4's question was independently answered by the synthesizer (latent+fail-safe). B1 flag-races NOT independently re-audited — but run_mpmd_rep self-review already covered flag ordering + m1/m2 name the residual label-race.
 
+**CLEANUP PLAN (agent-mapped 2026-07-30, 3 read-only inventory agents; execute post-validation, re-verify with C 1+1 after):**
+Reachability graph (agent A): submit_cxi.sh → job.sh → {env/server.sh, env/workload.sh} → lib/run.sh(run_mpmd_rep) →
+{env/common.sh, env/workload.sh} → Client/capture_flowcept.sh → export_jsonl.py → strict_compare.py → darshan-mofka-reconstruct(bin).
+
+(1) FEWER FILES — remove candidates (all git-tracked → recoverable; NONE referenced by live cxi path):
+  - run_artifacts/*probe*.sh (vni_probe, mpmd_cxi/cxi2/diag/nopmi/3section, gate0_mpi_hello, test_cxi) — all self-labeled THROWAWAY; findings preserved here in DECISION.md.
+  - run_artifacts probe outputs: mpmd2/ mpmddiag/ mpmdnopmi/ mpmd3sec/ gate0mpi/ vniprobe/ mpmdprobe/ probe_pbs_logs/; *_RESULT (7), *.e73*/*.o73* PBS logs, last_submit.txt, last_probe_submit.txt, mpi_hello.c.
+  - Client/capture.py — orphan debug tool (live bridge is export_jsonl.py); zero live refs.
+  - server/bedrock-config.runtime.json — generated output committed by accident (start_server.sh:34 writes it; job/run render per-run into $srv/).
+  - stale workloads/__pycache__/strict_compare.cpython-36.pyc (live interp is py3.14).
+  KEEP always: submit_cxi.sh, DECISION.md, README.md.
+
+(2) RESOLVE-ONCE (agent 2) — the ONE real hoist: darshan_lib re-run per-rep at job.sh:152 + run.sh:402 (+build sites 43,44,61).
+  Fix: cache DLIB="$(darshan_lib)" ONCE after the build block (after job.sh:148, POST-build so mpi/dlio install-mpi path is correct), reuse at 152 & 402. Mirror the existing B="$ROOT/.../bin" pattern (job.sh:69).
+  Pre-build probe job.sh:43 + msg :44 MUST stay live calls (lib may not exist yet). Everything else (MONGOD, CC/CXX, PY, util bin B) already resolve-once; find/ls log lookups (job.sh:224-225,245-246; run.sh:542) are per-rep state-dependent — MUST NOT hoist.
+
+(3) STRAIGHTFORWARD COMMANDS (agent 4) — 4 canonical invocations (validated):
+  C 1+1:      WORKLOAD=c       NODES=2 TASKS=1 REPS=1 bash run_artifacts/submit_cxi.sh
+  io_bench:   WORKLOAD=io_bench NODES=2 TASKS=1 REPS=1 bash run_artifacts/submit_cxi.sh
+  5-node:     WORKLOAD=io_bench NODES=5 TASKS=4 QUEUE=debug-scaling bash run_artifacts/submit_cxi.sh
+  multi-rep:  WORKLOAD=io_bench NODES=2 TASKS=1 REPS=3 bash run_artifacts/submit_cxi.sh
+  (PBS_ACCOUNT defaults to radix-io.) Dead knobs to drop: CFG_QUEUE/WALLTIME/NCPUS/ACCOUNT (run.sh:39-42, assigned never read — qsub uses env directly). Root README documents only LEGACY submit.sh — MISSING a cxi command-reference; add one.
+  DO-NOT-TOUCH (legacy/tcp + shared): submit.sh, server/start_server.sh/stop_server.sh, bedrock-config-mpi.json, workloads/mpi/*, workloads/dlio/*, overhead_*.sh, and run.sh legacy fns (start_broker/start_consumer/stop_consumer_verdict). Vendored: darshan/, diaspora-stream-api/.
+  STILL-PENDING: comment-triage agent (darshan_env-style TRIM-vs-KEEP) hit the classifier outage — re-run before touching comments.
+
 **Overnight rules in force:** (1) commit per green phase, DECISION.md before each submit; (2) same
 error twice → STOP + wait; (3) 5-node → debug-scaling/preemptable, ≤1 job in flight, wall ≤1h;
 (4) API degrades → jobs run without me, record jobid, never resubmit unconfirmed; (5) this block
