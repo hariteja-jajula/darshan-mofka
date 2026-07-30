@@ -22,7 +22,16 @@ strict_compare PASS (perproc). Two non-MPI workloads proven cross-node. CXI only
 | io_bench (1+1) | ✅ GREEN | 7301654 | RUN1: proto=ofi+cxi://0x00005c00, ALL_DONE, events=598, INGEST PASS, strict_compare **PASS (perproc)** |
 | 5-node scale (1+4, TASKS>1) | ⏳ queued | 7301662 | io_bench 4task/node x4 = 16 ranks; debug-scaling, wall 30m |
 | multi-rep (REPS>1) | ⬜ pending | — | — |
-| CONSUMERS>1 | ⬜ pending | — | — |
+| ~~CONSUMERS>1~~ | ❌ DROPPED | — | Hari 2026-07-30: not needed for deliverable; stop ladder after multi-rep |
+| **Cleanup (main remaining work)** | ⬜ pending | — | resolve-once + minimal comments + fewer files + straightforward cmds (task #9) |
+
+**SCOPE CHANGE (Hari 2026-07-30, night):** Drop CONSUMERS>1. Validation ends at multi-rep.
+Then CLEANUP is the priority deliverable work: (1) **resolve-once** — `darshan_lib` called 5x
+(job.sh:43,44,61,152; run.sh:402) + runtime `find`/`command -v` hunts (mongod, mpicc, *.darshan);
+resolve each binary/path ONCE at top into a var, pass it everywhere ("find it once, give the
+location directly, less number of operations"). (2) **minimal comments** — strip historical-rationale
+blocks (rationale lives in git + this file). (3) **fewer files**, (4) **straightforward commands**.
+Cleanup must NOT change behavior; re-verify with a C 1+1 after.
 
 **Overnight rules in force:** (1) commit per green phase, DECISION.md before each submit; (2) same
 error twice → STOP + wait; (3) 5-node → debug-scaling/preemptable, ≤1 job in flight, wall ≤1h;
