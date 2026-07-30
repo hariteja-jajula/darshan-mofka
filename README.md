@@ -71,11 +71,34 @@ If needed, build the fallback stack:
 DARSHAN_MOFKA_PROFILE=lcrc bash install/setup.sh
 ```
 
-Submit the configured workload:
+Submit the configured workload (legacy 3-launch TCP baseline):
 
 ```bash
 PBS_ACCOUNT=<project> bash submit.sh
 ```
+
+### Cross-node (ofi+cxi)
+
+`run_artifacts/submit_cxi.sh` is the one file to edit + submit for a cross-node
+ofi+cxi run: broker + FlowCept consumer + Darshan workload in ONE mpiexec sharing
+one Slingshot job VNI. Non-MPI workloads only (`c | io_bench | python-ml`); MPI-IO
+stays on the legacy baseline (Gate-0). Override knobs on the command line:
+
+```bash
+# 2-node C, 1 broker + 1 workload proc
+WORKLOAD=c NODES=2 TASKS=1 REPS=1 PBS_ACCOUNT=<project> bash run_artifacts/submit_cxi.sh
+
+# 2-node io_bench, 1+1
+WORKLOAD=io_bench NODES=2 TASKS=1 REPS=1 PBS_ACCOUNT=<project> bash run_artifacts/submit_cxi.sh
+
+# 5-node scale: 1 broker + 4 workload nodes, 4 procs/node
+WORKLOAD=io_bench NODES=5 TASKS=4 REPS=1 QUEUE=debug-scaling PBS_ACCOUNT=<project> bash run_artifacts/submit_cxi.sh
+
+# multi-rep (per-rep isolated result dirs)
+WORKLOAD=io_bench NODES=2 TASKS=1 REPS=3 PBS_ACCOUNT=<project> bash run_artifacts/submit_cxi.sh
+```
+
+The proven recipe and validation history live in `run_artifacts/DECISION.md`.
 
 For workload configuration and run details, see:
 
