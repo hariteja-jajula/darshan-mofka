@@ -83,7 +83,7 @@ MAX_COUNTERS = {"POSIX_MAX_BYTE_READ", "POSIX_MAX_BYTE_WRITTEN",
 #     open the backing file, so non-aggregators legitimately carry POSIX_MODE=0 while the
 #     aggregator carries the real mode. The reduction copies infile's value in a
 #     non-deterministic pairwise order (darshan-posix.c:2219), so it is neither additive
-#     nor a cross-rank constant -> MPI_UNAGGREGATABLE. (BX 2026-07-27, 2-subagent cross-check)
+#     nor a cross-rank constant -> MPI_UNAGGREGATABLE.
 CONST_COUNTERS = {"POSIX_MEM_ALIGNMENT", "POSIX_FILE_ALIGNMENT",
                   "POSIX_RENAMED_FROM", "POSIX_MMAPS", "MPIIO_MODE"}
 # Non-reproducible by aggregation in mpi mode (timing-dependent winner / top-4 merge /
@@ -142,8 +142,7 @@ def is_inherited_stream(mod, name, counters):
     this matches native's own stdio pruning (darshan-stdio.c); for POSIX it removes the
     inherited-fd metadata-op records (OPENS/FILENOS/DUPS only) that slip past the STDIO
     prune. python-ml's real train.py init-window gap has nonzero opens on a DATA file
-    (not a console stream) and is unaffected -> still reported as MISMATCH. (BX 2026-07-27,
-    root-caused + 2-subagent cross-check.)"""
+    (not a console stream) and is unaffected -> still reported as MISMATCH."""
     if name not in ("<STDIN>", "<STDOUT>", "<STDERR>"):
         return False
     if mod == "STDIO":

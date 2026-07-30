@@ -26,7 +26,6 @@ cxx_runtime_pin
 # `import mpi4py.MPI` fails "libmpi.so.12: cannot open shared object file". Add the ABI dir
 # (module-derived from MPICH_DIR, never hardcoded) so DLIO's mpi4py binds cray-mpich at
 # runtime. Only affects the dlio venv; other workloads link cray-mpich via the cc wrapper.
-# (BX 2026-07-27)
 if [[ "$ENV_PROFILE" == polaris && -n "${MPICH_DIR:-}" && -d "$MPICH_DIR/lib-abi-mpich" ]]; then
     env_prepend LD_LIBRARY_PATH "$MPICH_DIR/lib-abi-mpich"
 fi
@@ -38,12 +37,10 @@ fi
 # the MPI overnight run produced 10 nprocs=1 POSIX/STDIO logs instead of a proper set.
 # dlio is ALSO a real MPI app (mpi4py MPI.Init/Finalize): with the plain build the
 # process is inert (no MPI symbols; dlio sets DARSHAN_DISABLE=1; NONMPI unset) so it
-# produces NO log -> a vacuous overhead study. It must use install-mpi too. (Verified
-# on a login-node repro 2026-07-27: plain build runs but writes no .darshan for dlio;
-# install-mpi + the dlio mpich pin in lib/run.sh:workload_env writes a real POSIX/LUSTRE
-# log. The pin is REQUIRED alongside this -- install-mpi alone crashes dlio on the
-# 8.1.28-vs-9.0.1 cray-mpich skew.) For c/python-ml use the plain build. WL_TYPE drives
-# the choice; an explicit DARSHAN_PREFIX override still wins.
+# produces NO log -> a vacuous overhead study. It must use install-mpi too. The dlio mpich
+# pin in lib/run.sh:workload_env is REQUIRED alongside install-mpi -- install-mpi alone
+# crashes dlio on the 8.1.28-vs-9.0.1 cray-mpich skew. For c/python-ml use the plain build.
+# WL_TYPE drives the choice; an explicit DARSHAN_PREFIX override still wins.
 darshan_lib() {
     local d
     if [[ -n "${DARSHAN_PREFIX_OVERRIDE:-}" ]]; then

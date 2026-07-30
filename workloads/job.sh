@@ -29,7 +29,7 @@ darshan_ensure_logdir >/dev/null
 source lib/run.sh || die "could not source lib/run.sh"
 load_run_config; WORKLOAD="$WL_TYPE"
 # RUN_MODE: mpmd = single-MPMD ofi+cxi path (broker+consumer+workload in ONE launch, shared
-# job VNI); legacy = old 3-launch TCP baseline (amendment #4, still selectable). cxi -> mpmd.
+# job VNI); legacy = old 3-launch TCP baseline (still selectable). cxi -> mpmd.
 RUN_MODE="${RUN_MODE:-$([[ "$SRV_PROTOCOL" == *cxi* ]] && echo mpmd || echo legacy)}"
 # Gate-0: MPI_Init hangs beside a stripped MPMD section -> MPI-IO can't stream over cxi/mpmd.
 # It stays on the legacy/TCP baseline. (run_artifacts/DECISION.md, fork resolved non-MPI only.)
@@ -68,6 +68,9 @@ else
 fi
 B="$ROOT/darshan/darshan-util/install/bin"
 [[ -x "$B/darshan-parser" && -x "$B/darshan-mofka-reconstruct" ]] || die "darshan-util tools missing (run without SKIP_BUILD)"
+# Resolve libdarshan.so ONCE here (post-build, so the mpi/dlio install-mpi path is correct);
+# run_mpmd_rep reuses this instead of re-running darshan_lib every rep.
+DARSHAN_LIB_SO="$(darshan_lib)"; export DARSHAN_LIB_SO
 
 # --- 3. mongod ---
 MONGOD="${MONGOD:-$(command -v mongod || true)}"
@@ -220,7 +223,7 @@ for rep in $(seq 1 "$WL_REPS"); do
     # EXCLUDE the reconstructed logs we just wrote under $RES/streamed (and anything already
     # copied into $RES/native): find scans $RES recursively and would otherwise sweep the
     # reconstructed .darshan back in as if it were native -> duplicate-pid ERROR in
-    # strict_compare (VERDICT: ERROR rc=2). Mirrors overhead_study.sh's ! -path guard. (BX 2026-07-27)
+    # strict_compare (VERDICT: ERROR rc=2). Mirrors overhead_study.sh's ! -path guard.
     mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' \
         ! -path "$STREAMED_DIR/*" ! -path "$NATIVE_DIR/*" -newermt '-20 min' 2>/dev/null | sort)
     for nl in "${NATIVE_LOGS[@]}"; do cp "$nl" "$NATIVE_DIR/"; done
@@ -231,7 +234,7 @@ for rep in $(seq 1 "$WL_REPS"); do
     # log reduced to rank=-1 -> aggregate the N reconstructed per-rank logs the way
     # Darshan's reduction does, then compare. See workloads/strict_compare.py.
     # Run from $RES so the repo's darshan/ source tree doesn't shadow the pydarshan pkg.
-    cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" || "$WL_TYPE" == "dlio" ]] && cmp_mode="mpi"   # dlio = MPI mode (BX 2026-07-27). NOT `local`: this block runs in the main-body for-loop, not a function
+    cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" || "$WL_TYPE" == "dlio" ]] && cmp_mode="mpi"   # dlio = MPI mode. NOT `local`: this block runs in the main-body for-loop, not a function
     ( cd "$RES" && "$PY" "$ROOT/workloads/strict_compare.py" streamed native "$cmp_mode" ) \
         | tee "$RES/compare.txt"
     # exit 3 = MISMATCH (real capture bug), 2 = ERROR (harness/config failure, e.g. no

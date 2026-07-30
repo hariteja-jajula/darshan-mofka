@@ -36,10 +36,6 @@ load_run_config() {
     WL_TASKS=$(_cfg_env TASKS "$WORKLOAD_CONFIG" topology.tasks 1)
     WL_PLACEMENT=$(_cfg_env PLACEMENT "$WORKLOAD_CONFIG" topology.placement colocated)
     WL_BROKERS=$(_cfg_env BROKERS "$WORKLOAD_CONFIG" topology.brokers 1)
-    CFG_ACCOUNT=$(_cfg_env PBS_ACCOUNT "$WORKLOAD_CONFIG" pbs.account "")
-    CFG_QUEUE=$(_cfg_env QUEUE "$WORKLOAD_CONFIG" pbs.queue debug)
-    CFG_WALLTIME=$(_cfg_env WALLTIME "$WORKLOAD_CONFIG" pbs.walltime 00:30:00)
-    CFG_NCPUS=$(_cfg_env NCPUS "$WORKLOAD_CONFIG" pbs.ncpus 32)
     # --- server.config: broker + connector + darshan env + sink ---
     SRV_TOPIC=$(_cfg_env MOFKA_TOPIC "$SERVER_CONFIG" topic darshan)
     SRV_PARTITIONS=$(_cfg_env PARTITIONS "$SERVER_CONFIG" partitions 1)
@@ -129,7 +125,7 @@ connector_env() {
     # fabric (Polaris/Slingshot has no mlx5_0) mofka would form `ofi+tcp://mlx5_0`, which na_ofi
     # rejects with "No provider found for tcp on domain mlx5_0" -> margo_init fails -> the producer
     # never attaches and 0 events stream. Gating on the resolved protocol keeps LCRC (verbs) working
-    # with na_domain:mlx5_0 in workload.config while Polaris (ofi+tcp) omits it. (BX 2026-07-27)
+    # with na_domain:mlx5_0 in workload.config while Polaris (ofi+tcp) omits it.
     if [ -n "$C_NA_DOMAIN" ]; then
         case "$SRV_PROTOCOL" in
             *verbs*) CONNECTOR_ENV+=( MOFKA_NA_DOMAIN="$C_NA_DOMAIN" ) ;;
@@ -155,24 +151,22 @@ darshan_env() {
     # latches using_mpi=0 (darshan-core.c:218 PMPI_Initialized reads false pre-init; the
     # first-init-wins guard at :206 means the MPI_Init wrapper's later re-init is a no-op),
     # so the rank reduction never runs and each rank writes its own nprocs=1 log instead of
-    # one rank=-1 shared log. MUST be unset for mpi. (BX 2026-07-27, 2-subagent cross-check)
+    # one rank=-1 shared log. MUST be unset for mpi.
     # dlio is ALSO a real MPI app: dlio_benchmark unconditionally calls MPI.Init()
     # (install/_dlio_venv/.../dlio_benchmark/utils/utility.py:130-131, main.py:394) and
     # MPI.Finalize() (utility.py:199). With DARSHAN_ENABLE_NONMPI=1 Darshan inits serial at
     # LD_PRELOAD load-time and defers shutdown to its atexit handler, which then runs its rank
     # reduction AFTER dlio already called MPI.Finalize() -> "MPI routine (internal_Reduce_c)
-    # after finalizing MPICH" abort (all 6 Darshan-enabled dlio runs in job 7297242 crashed;
-    # only the no-preload baseline survived). Excluding dlio here lets Darshan finalize inside
+    # after finalizing MPICH" abort. Excluding dlio here lets Darshan finalize inside
     # the PMPI_Finalize wrapper (before MPICH teardown) and emit ONE shared rank=-1 log, exactly
-    # like the mpi workload -> dlio must ALSO use strict_compare cmp_mode=mpi (see overhead_study.sh,
-    # overhead_sweep.sh, job.sh). (BX 2026-07-27, 2 independent subagent cross-checks: A a48901b7, B a7a14392.)
+    # like the mpi workload -> dlio must ALSO use strict_compare cmp_mode=mpi.
     [ "$D_NONMPI" = 1 ] && [ "$WL_TYPE" != mpi ] && [ "$WL_TYPE" != dlio ] && DARSHAN_ENV+=(DARSHAN_ENABLE_NONMPI=1)
     # DLIO: `import tensorflow` (>1024 .pyc files) + generate_data (num_files_train npz)
     # blow past Darshan's default 1024-record/module cap (darshan.h:232), silently dropping
     # every later record from BOTH the native log AND the Mofka stream (same POSIX_PRE_RECORD
     # gate, darshan-posix.c:259,422) -> vacuous strict-compare. The config raises MAX_RECORDS
     # *and* MODMEM (the 4 MiB pool caps records, darshan-core.c:2571). Gated to dlio so it can
-    # never perturb c/mpi/python-ml. (BX 2026-07-27, root-caused + 2-subagent cross-check.)
+    # never perturb c/mpi/python-ml.
     [ "$WL_TYPE" = dlio ] && DARSHAN_ENV+=(DARSHAN_CONFIG_PATH="$REPO_ROOT/config/darshan_dlio.conf")
     [ -n "$D_MODMEM" ]         && DARSHAN_ENV+=(DARSHAN_MODMEM="$D_MODMEM")
     [ -n "$D_MOD_ENABLE" ]     && DARSHAN_ENV+=(DARSHAN_MOD_ENABLE="$D_MOD_ENABLE")
@@ -195,7 +189,7 @@ workload_env() {
                    # cgroup pids.max=256 -> pthread_create EAGAIN -> SIGABRT (env.cc:84),
                    # which kills Darshan's atexit finalize -> no native log. Cap TF threads.
                    # Measurement-neutral: data generation is numpy (pre-TF), and the caps are
-                   # common-mode across A/B/C arms. (BX 2026-07-27, 2-subagent cross-check.)
+                   # common-mode across A/B/C arms.
                    WORKLOAD_ENV=(OMP_NUM_THREADS=1 TF_NUM_INTRAOP_THREADS=1 TF_NUM_INTEROP_THREADS=1 TF_CPP_MIN_LOG_LEVEL=3)
                    # cray-mpich ABI-skew pin (THE dlio crash fix). dlio's mpi4py binds
                    # libmpi.so.12 -> cray-mpich 9.0.1 (only present under $MPICH_DIR/lib-abi-mpich,
@@ -206,14 +200,12 @@ workload_env() {
                    # "MPI routine (internal_Reduce_c) ... after finalizing MPICH". Prepend
                    # $MPICH_DIR/lib so libmpi_gnu_123.so.12 ALSO resolves to 9.0.1 -> one mpich,
                    # skew gone. ($MPICH_DIR/lib has no libmpi.so.12, so mpi4py still binds 9.0.1
-                   # via lib-abi-mpich -- consistent.) Verified login-node repro 2026-07-27
-                   # (Case C): install-mpi darshan + this pin -> real POSIX/LUSTRE .darshan log;
-                   # install-mpi WITHOUT it crashes. Prepend (not override) preserves the
+                   # via lib-abi-mpich -- consistent.) Prepend (not override) preserves the
                    # diaspora/mofka lib paths already on LD_LIBRARY_PATH. Captured here in the
                    # main shell (post env/workload.sh source) so the full path flows to BOTH the
                    # local (env "${pre[@]}") and remote (re-sourced) launch paths. Scoped to dlio
                    # ONLY: the mpi workload links libmpi_gnu_123->8.1.28 and runs all-8.1.28
-                   # consistently (why it passes) -- a global pin would regress it. (BX 2026-07-27)
+                   # consistently (why it passes) -- a global pin would regress it.
                    if [ -n "${MPICH_DIR:-}" ] && [ -e "$MPICH_DIR/lib/libmpi_gnu_123.so.12" ]; then
                        WORKLOAD_ENV+=(LD_LIBRARY_PATH="$MPICH_DIR/lib:${LD_LIBRARY_PATH:-}")
                    fi ;;
@@ -372,12 +364,12 @@ stop_consumer_verdict() {
 # run_mpmd_rep <RES> -- run ONE rep as a SINGLE MPMD mpiexec: broker + FlowCept consumer(s)
 # + Darshan workload as :-separated sections in ONE launch, so PALS gives the whole launch
 # ONE shared Slingshot job VNI (the ONLY way cross-node ofi+cxi routes -- 3 separate launches
-# get 3 non-routable VNIs). Proven recipe: run_artifacts/DECISION.md (jobs 7301370/7301419):
+# get 3 non-routable VNIs). Proven recipe (run_artifacts/DECISION.md):
 #   Lever 1 = single MPMD mpiexec (mpi_launch_mpmd).  Lever 2 = PMI-strip before exec (PALS
 #   injects a phantom PMI world that hangs non-MPI bedrock).  + cxi_collapse (margo multi-VNI
 #   bug) + exec bedrock DIRECTLY </dev/null.  Sections coordinate via files on the Eagle FS.
 # Leaves $RES/events.jsonl for the reconstruct+strict_compare tail in job.sh (UNCHANGED).
-# Success (amendment #6) = $COORD/ALL_DONE present AND $RES/events.jsonl non-empty; the mpiexec
+# Success = $COORD/ALL_DONE present AND $RES/events.jsonl non-empty; the mpiexec
 # EXIT CODE IS MEANINGLESS (we kill the still-running broker).  Non-MPI workloads only (Gate-0).
 # Relies on job.sh-main globals: ROOT, SRV_NODE, WL_NODES_ARR, WL_TOTAL_RANKS, ENV_PROFILE, PY.
 # Reuses: render_bedrock_config, connector_env, darshan_env, workload_env, darshan_lib,
@@ -399,7 +391,7 @@ run_mpmd_rep() {
     # the legacy separate-node path (run_workload_once): env $ESTR DARSHAN_LOGPATH LD_PRELOAD cmd.
     connector_env "$COORD/mofka.json"; darshan_env; workload_env
     local ESTR="${CONNECTOR_ENV[*]} ${DARSHAN_ENV[*]} ${WORKLOAD_ENV[*]}"
-    local DLIB; DLIB="$(darshan_lib)"
+    local DLIB; DLIB="${DARSHAN_LIB_SO:-$(darshan_lib)}"   # reuse the once-resolved path (job.sh); fall back if called standalone
     local CMD
     case "$WL_TYPE" in
         c)         CMD="./workloads/c/mofka_forward_smoke" ;;
