@@ -20,7 +20,7 @@ strict_compare PASS (perproc). Two non-MPI workloads proven cross-node. CXI only
 | run_mpmd_rep review | ✅ done (self) | — | 6-way wf stopped (API-degraded: retry 2-4, 300k+ tok, 0/6 @17m); self-review vs proven probe — see note |
 | 2-node e2e workload C (1+1) | ✅ GREEN | 7301622 | RUN6: proto=ofi+cxi://0x00003600, ALL_DONE, events=22, INGEST PASS (POSIX10/STDIO11), strict_compare **PASS (perproc)** |
 | io_bench (1+1) | ✅ GREEN | 7301654 | RUN1: proto=ofi+cxi://0x00005c00, ALL_DONE, events=598, INGEST PASS, strict_compare **PASS (perproc)** |
-| 5-node scale (1+4, TASKS>1) | ⬜ pending | — | — |
+| 5-node scale (1+4, TASKS>1) | ⏳ queued | 7301662 | io_bench 4task/node x4 = 16 ranks; debug-scaling, wall 30m |
 | multi-rep (REPS>1) | ⬜ pending | — | — |
 | CONSUMERS>1 | ⬜ pending | — | — |
 
