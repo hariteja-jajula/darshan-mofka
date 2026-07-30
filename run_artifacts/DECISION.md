@@ -7,9 +7,11 @@ resumes from this file alone. Orchestrator writes; subagents report diffs.
 
 ## MORNING SUMMARY (live — updated as phases complete; 2026-07-30 overnight)
 
-**Single next action:** submit multi-rep (REPS>1) — LAST validation phase. ✅ 5-node scale
-(7301662) GREEN: 16 ranks over 4 workload hosts + broker on 5th, all ofi+cxi, strict_compare
-PASS (perproc, 16/16 logs), 9568 docs. C 1+1 + io_bench 1+1 + 5-node all GREEN. CXI only, no TCP.
+**Single next action:** CLEANUP (task #9) — resolve-once + minimal comments + fewer files.
+✅ VALIDATION LADDER COMPLETE over ofi+cxi: C 1+1 (7301622), io_bench 1+1 (7301654),
+5-node 16-rank/4-host (7301662), multi-rep REPS=3 (7301837, RUN2/3/4 all PASS). CONSUMERS>1
+dropped (Hari). CXI only, no TCP. 10-agent independent fidelity audit → CONTINUE, 0 critical
+(all false-green risks LATENT/untriggered; heatmap-read lossy but documented exclusion).
 
 **Mechanism:** cross-node ofi+cxi PROVEN (jobs 7301370/7301419). Implementation = `run_mpmd_rep`.
 **CXI ONLY — no TCP fallback counts as done.** Overnight rules: [[bx-overnight-cxi-rules]] / see foot.
@@ -21,7 +23,8 @@ PASS (perproc, 16/16 logs), 9568 docs. C 1+1 + io_bench 1+1 + 5-node all GREEN. 
 | 2-node e2e workload C (1+1) | ✅ GREEN | 7301622 | RUN6: proto=ofi+cxi://0x00003600, ALL_DONE, events=22, INGEST PASS (POSIX10/STDIO11), strict_compare **PASS (perproc)** |
 | io_bench (1+1) | ✅ GREEN | 7301654 | RUN1: proto=ofi+cxi://0x00005c00, ALL_DONE, events=598, INGEST PASS, strict_compare **PASS (perproc)** |
 | 5-node scale (1+4, TASKS>1) | ✅ GREEN | 7301662 | RUN1: proto=ofi+cxi://0x00031a00, ALL_DONE, 16 WL_DONE, 16/16 native+recon logs, strict_compare **PASS (perproc)**, INGEST PASS 9568 docs, **4 distinct WL hosts** + broker on 5th |
-| multi-rep (REPS>1) | ⏳ queued | 7301837 | io_bench 1+1 REPS=3; verify 3 RUN dirs each ALL_DONE + strict_compare PASS |
+| multi-rep (REPS>1) | ✅ GREEN | 7301837 | RUN2/3/4 each: ofi+cxi, ALL_DONE, 598 docs, INGEST PASS, strict_compare **PASS (perproc)**; per-rep RUN-dir isolation confirmed |
+| 10-agent fidelity+bug audit | ✅ CONTINUE | wf_62d3e7d7 | 0 critical; independent pydarshan re-diffs (io_bench 1118 cells / 5-node 16800 cells, 0 mismatch, bytes exact); B4 pid-collision latent+fail-safe; 5 major all LATENT/untriggered; M5 heatmap-read lossy but documented HEATMAP exclusion (writes bit-exact) |
 | ~~CONSUMERS>1~~ | ❌ DROPPED | — | Hari 2026-07-30: not needed for deliverable; stop ladder after multi-rep |
 | **Cleanup (main remaining work)** | ⬜ pending | — | resolve-once + minimal comments + fewer files + straightforward cmds (task #9) |
 
@@ -43,6 +46,15 @@ Cleanup must NOT change behavior; re-verify with a C 1+1 after.
   **load-bearing** correctness rationale (why DARSHAN_ENABLE_NONMPI must be unset for mpi/dlio;
   record-cap fix; tied to real crash job 7297242). TRIM only the provenance tails ("BX date,
   N-subagent cross-check", commit hashes) — KEEP the mechanism explanations. Don't gut the block.
+
+**AUDIT BACKLOG (from 10-agent audit wf_62d3e7d7, 2026-07-30 — all LATENT, none blocks done; harden only if the trigger condition arises):**
+- M1 vacuous-pass floor: strict_compare PASS when BOTH sides reduce to 0 comparable cells (main :347-360). Fix: require compared-cells>0 else ERROR rc2. (untriggered: real runs compared 95–16800 cells)
+- M2 sorted-pair mispairing: perproc pid-set mismatch w/ equal counts → only a NOTE, not a fail (compare_perproc :230-235, main :354). Relevant to future multi-proc scale. Fix: make pid-set mismatch HARD.
+- M3 stale-mongo: only if MONGO_DBPATH knob is pinned+reused across reps (default is blank→fresh per-PID mongod, SAFE). Fix: workflow_id tag + filter, or drop collection per rep.
+- M4 ingest rubber-stamp: INGEST PASS = count>0, no expected-count reconcile in mpmd path (capture_flowcept.sh:149-153). Real completeness is caught by strict_compare record-set diff. Fix: thread producer send-count into verdict.
+- M5 heatmap-read lossy (ONLY finding triggered on a real run): reconstructed POSIX READ heatmap −6.25%/16MB bin-smear (reconstruct.c:1077-1113); HEATMAP is a wholesale strict_compare exclusion, writes bit-exact, stream carries all read ops. Fix: disclose as approximate OR byte-conserving rounding.
+- m1/m2 verdict-label races (ALL_DONE checked before *_FAIL, run.sh:531-533): label-only at CONS_N=1; data loss still caught downstream. m3 env-serial not space-safe (run.sh:401); m4/m5 native-find window vs shared logdir (job.sh:224-225); m6 streamed rank always fallback (defended by pid-in-key).
+- NOTE: 2 bug-hunt lenses (B1 flag-races, B4 collision) stalled out on API retries; B4's question was independently answered by the synthesizer (latent+fail-safe). B1 flag-races NOT independently re-audited — but run_mpmd_rep self-review already covered flag ordering + m1/m2 name the residual label-race.
 
 **Overnight rules in force:** (1) commit per green phase, DECISION.md before each submit; (2) same
 error twice → STOP + wait; (3) 5-node → debug-scaling/preemptable, ≤1 job in flight, wall ≤1h;
