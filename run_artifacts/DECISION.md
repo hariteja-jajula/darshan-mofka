@@ -5,6 +5,31 @@ resumes from this file alone. Orchestrator writes; subagents report diffs.
 
 ---
 
+## MORNING SUMMARY (live — updated as phases complete; 2026-07-30 overnight)
+
+**Single next action:** submit 2-node e2e workload C (1+1) via `run_artifacts/submit_cxi.sh`
+(`WORKLOAD=c REPS=1 NODES=2 TASKS=1 CONSUMERS=1`). run_mpmd_rep reviewed + committed.
+
+**Mechanism:** cross-node ofi+cxi PROVEN (jobs 7301370/7301419). Implementation = `run_mpmd_rep`.
+**CXI ONLY — no TCP fallback counts as done.** Overnight rules: [[bx-overnight-cxi-rules]] / see foot.
+
+| Phase | State | Job id | Evidence |
+|-------|-------|--------|----------|
+| run_mpmd_rep written + syntax-clean | ✅ done | — | bash -n clean; 3 sections render+`bash -n` OK |
+| run_mpmd_rep review | ✅ done (self) | — | 6-way wf stopped (API-degraded: retry 2-4, 300k+ tok, 0/6 @17m); self-review vs proven probe — see note |
+| 2-node e2e workload C (1+1) | ⬜ pending | — | — |
+| io_bench (1+1) | ⬜ pending | — | — |
+| 5-node scale (1+4, TASKS>1) | ⬜ pending | — | — |
+| multi-rep (REPS>1) | ⬜ pending | — | — |
+| CONSUMERS>1 | ⬜ pending | — | — |
+
+**Overnight rules in force:** (1) commit per green phase, DECISION.md before each submit; (2) same
+error twice → STOP + wait; (3) 5-node → debug-scaling/preemptable, ≤1 job in flight, wall ≤1h;
+(4) API degrades → jobs run without me, record jobid, never resubmit unconfirmed; (5) this block
+stays current; (6) never conclude from mpiexec exit code — flags/files/logs only.
+
+---
+
 ## The winning recipe (VERBATIM — job 7301370, `MPMD_NOPMI_RESULT`)
 
 Cross-node `ofi+cxi` (workload on N1, broker on N0) **works** with two levers,
@@ -36,6 +61,11 @@ export SLINGSHOT_VNIS=${SLINGSHOT_VNIS%%,*} \
        SLINGSHOT_SVC_IDS=${SLINGSHOT_SVC_IDS%%,*} \
        SLINGSHOT_DEVICES=${SLINGSHOT_DEVICES%%,*}
 ```
+**"VNI red herring" — scope clarification.** The red-herring verdict applies ONLY to
+the `--single-node-vni` launch flag / VNI-*strategy* knobs during bring-up: those
+made zero difference; the bring-up hang was PMI, fixed by PMI-strip. It does NOT
+apply to `cxi collapse-to-first` above — collapsing Polaris's 2 VNIs to the first is
+STILL REQUIRED (margo mishandles multi-VNI → "Invalid domain auth_key"). Keep it.
 
 **exec bedrock DIRECTLY** (don't background — grandchild backgrounding gave empty
 logs), with `</dev/null`. Broker writes `mofka.json` to shared Eagle FS; other
@@ -173,16 +203,43 @@ AND `$RES/events.jsonl` non-empty (amendment #6).
   builds `select=$NODES:...` so nodes has ONE source of truth, qsubs job.sh. `bash -n`
   clean. io_bench knob names verified against io_bench.c.
 
-- **`lib/run.sh run_mpmd_rep` — IN PROGRESS (subagent).** Review diff vs the
-  contract above when it lands; then 2-node e2e (task #9).
+- **`lib/run.sh run_mpmd_rep` — DONE (orchestrator, self-written + self-reviewed).**
+  Matches the proven probe (run_artifacts/mpmd3sec) + the contract above. `bash -n`
+  clean; all 3 sections render + `bash -n` OK; ESTR bakes correctly. Two bugs caught
+  and fixed pre-commit: (1) workload copy used `workload.0.out` but PALS_RANKID is
+  GLOBAL so the workload rank is NOT 0 → now `ls workload.*.out | head -1`; (2) pkill
+  `"bedrock ofi+cxi"` — the `+` is a regex metachar → now `pkill -f 'bedrock '`
+  (matches job.sh's EXIT trap). Committed with this note.
 
-### KNOWN GAP (fix AFTER subagent lands — don't edit lib/run.sh concurrently)
-- **`workload_env()` has no `io_bench` case** (lib/run.sh:218 `*) WORKLOAD_ENV=()`).
-  In mpmd mode the workload section only inherits the serialized WORKLOAD_ENV array,
-  so submit_cxi.sh's `IO_SIZE_MB/IO_ITERS/IO_SLEEP_MS/IO_BLOCK_KB` knobs do NOT reach
-  io_bench on the workload node — it runs with its built-in defaults (moderate, fine
-  for first-green). FIX: add `io_bench) WORKLOAD_ENV=(IO_SIZE_MB=... IO_ITERS=...
-  IO_SLEEP_MS=... IO_BLOCK_KB=...)` forwarding the env if set. Also add io_bench to
-  the DARSHAN_ENABLE_NONMPI guard's allow-list (it's non-MPI → nonmpi=1 is correct;
-  the existing guard `[ "$WL_TYPE" != mpi ] && [ "$WL_TYPE" != dlio ]` already lets
-  io_bench through, so nonmpi=1 — verify, no change likely needed).
+### SELF-REVIEW (2026-07-30, orchestrator; 6-way wf abandoned — API-degraded)
+The 6-way adversarial Workflow (wf_6ed48f08) was stopped: in a degraded API window
+all 6 reviewers hit retry 2–4, 300k+ tokens, 0/6 complete at 17m — a retry loop, not
+analysis. Reviewed the 6 lenses myself against the proven probe + the real helpers:
+- **vni/pmi/fabric:** STRIP + COLLAPSE emitted literally into every section (via
+  `printf '%s\n' "$STRIP"`), evaluated inside the launched proc — matches probe. ✅
+- **flag races (C-gate):** subscribe-before-produce holds — lead creates topic
+  (run.sh:450) → capture_flowcept starts consumer, waits 12s+alive → touches
+  CONSUMER_READY (capture_flowcept.sh:115) → only then workload runs. ✅
+- **env forwarding:** all config scalars (CONS_N/SRV_PARTITIONS/CONS_MQ_*/CONS_DB_*/
+  SRV_TOPIC/SRV_MONGO_*/SRV_PROTOCOL) match `load_run_config` names exactly; ESTR/DLIB/
+  CMD baked via `%q` (arrays don't cross mpiexec). ✅
+- **teardown/verdict:** amendment #6 honored — verdict = ALL_DONE + non-empty
+  events.jsonl; mpiexec exit code ignored; broker killed via `pkill -f 'bedrock '`. ✅
+- **contract/reuse:** reuses render_bedrock_config/connector_env/darshan_env/
+  workload_env/broker_topic_partitions/_shard_targets/pmi_strip/cxi_collapse/
+  mpi_launch_mpmd — no duplication; legacy path + reconstruct tail untouched. ✅
+- **reconstruct tail:** leaves native `.darshan` in $RES + events.jsonl; job.sh tail
+  (:216) finds logs via `find $RES ... -name '*.darshan'`, cmp_mode=perproc. ✅
+
+### KNOWN GAP — io_bench env (RESOLVED)
+`workload_env()` NOW has an `io_bench` case (lib/run.sh:190–191) forwarding
+`IO_SIZE_MB/IO_ITERS/IO_SLEEP_MS/IO_BLOCK_KB` when set; it passes the non-MPI guard
+(`!= mpi && != dlio`) so nonmpi=1. No fix needed.
+
+### DEFERRED — CONSUMERS>1 subscribe-before-topic race (fix before that phase)
+At CONS_N>1, followers (shard≥1) wait only for `mofka.json` (broker startup), NOT for
+the topic — but only the LEAD creates the topic (run.sh:450). A follower can start its
+FlowCept consumer before the topic exists. Harmless at CONSUMERS=1 (lead only) and for
+the C/io_bench/5-node gates. FIX before the CONSUMERS>1 phase: have the lead touch a
+`TOPIC_READY` flag after `broker_topic_partitions`, and have followers poll it before
+starting their consumer.
