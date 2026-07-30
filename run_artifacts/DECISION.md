@@ -7,9 +7,9 @@ resumes from this file alone. Orchestrator writes; subagents report diffs.
 
 ## MORNING SUMMARY (live — updated as phases complete; 2026-07-30 overnight)
 
-**Single next action:** submit 5-node multi-proc (1 broker + 4 workload, TASKS>1) on
-debug-scaling. ✅ C 1+1 (7301622) + ✅ io_bench 1+1 (7301654) both GREEN over ofi+cxi,
-strict_compare PASS (perproc). Two non-MPI workloads proven cross-node. CXI only, no TCP.
+**Single next action:** submit multi-rep (REPS>1) — LAST validation phase. ✅ 5-node scale
+(7301662) GREEN: 16 ranks over 4 workload hosts + broker on 5th, all ofi+cxi, strict_compare
+PASS (perproc, 16/16 logs), 9568 docs. C 1+1 + io_bench 1+1 + 5-node all GREEN. CXI only, no TCP.
 
 **Mechanism:** cross-node ofi+cxi PROVEN (jobs 7301370/7301419). Implementation = `run_mpmd_rep`.
 **CXI ONLY — no TCP fallback counts as done.** Overnight rules: [[bx-overnight-cxi-rules]] / see foot.
@@ -20,8 +20,8 @@ strict_compare PASS (perproc). Two non-MPI workloads proven cross-node. CXI only
 | run_mpmd_rep review | ✅ done (self) | — | 6-way wf stopped (API-degraded: retry 2-4, 300k+ tok, 0/6 @17m); self-review vs proven probe — see note |
 | 2-node e2e workload C (1+1) | ✅ GREEN | 7301622 | RUN6: proto=ofi+cxi://0x00003600, ALL_DONE, events=22, INGEST PASS (POSIX10/STDIO11), strict_compare **PASS (perproc)** |
 | io_bench (1+1) | ✅ GREEN | 7301654 | RUN1: proto=ofi+cxi://0x00005c00, ALL_DONE, events=598, INGEST PASS, strict_compare **PASS (perproc)** |
-| 5-node scale (1+4, TASKS>1) | ⏳ queued | 7301662 | io_bench 4task/node x4 = 16 ranks; debug-scaling, wall 30m |
-| multi-rep (REPS>1) | ⬜ pending | — | — |
+| 5-node scale (1+4, TASKS>1) | ✅ GREEN | 7301662 | RUN1: proto=ofi+cxi://0x00031a00, ALL_DONE, 16 WL_DONE, 16/16 native+recon logs, strict_compare **PASS (perproc)**, INGEST PASS 9568 docs, **4 distinct WL hosts** + broker on 5th |
+| multi-rep (REPS>1) | ⏳ next | — | run 3 reps of io_bench 1+1 (cheap); verify per-rep RUN dir isolation + each strict_compare PASS |
 | ~~CONSUMERS>1~~ | ❌ DROPPED | — | Hari 2026-07-30: not needed for deliverable; stop ladder after multi-rep |
 | **Cleanup (main remaining work)** | ⬜ pending | — | resolve-once + minimal comments + fewer files + straightforward cmds (task #9) |
 
