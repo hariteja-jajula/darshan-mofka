@@ -21,7 +21,7 @@ PASS (perproc, 16/16 logs), 9568 docs. C 1+1 + io_bench 1+1 + 5-node all GREEN. 
 | 2-node e2e workload C (1+1) | ✅ GREEN | 7301622 | RUN6: proto=ofi+cxi://0x00003600, ALL_DONE, events=22, INGEST PASS (POSIX10/STDIO11), strict_compare **PASS (perproc)** |
 | io_bench (1+1) | ✅ GREEN | 7301654 | RUN1: proto=ofi+cxi://0x00005c00, ALL_DONE, events=598, INGEST PASS, strict_compare **PASS (perproc)** |
 | 5-node scale (1+4, TASKS>1) | ✅ GREEN | 7301662 | RUN1: proto=ofi+cxi://0x00031a00, ALL_DONE, 16 WL_DONE, 16/16 native+recon logs, strict_compare **PASS (perproc)**, INGEST PASS 9568 docs, **4 distinct WL hosts** + broker on 5th |
-| multi-rep (REPS>1) | ⏳ next | — | run 3 reps of io_bench 1+1 (cheap); verify per-rep RUN dir isolation + each strict_compare PASS |
+| multi-rep (REPS>1) | ⏳ queued | 7301837 | io_bench 1+1 REPS=3; verify 3 RUN dirs each ALL_DONE + strict_compare PASS |
 | ~~CONSUMERS>1~~ | ❌ DROPPED | — | Hari 2026-07-30: not needed for deliverable; stop ladder after multi-rep |
 | **Cleanup (main remaining work)** | ⬜ pending | — | resolve-once + minimal comments + fewer files + straightforward cmds (task #9) |
 
