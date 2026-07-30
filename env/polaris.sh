@@ -4,8 +4,8 @@
 # MOFKA_PROTOCOL_DEFAULT/BEDROCK_PROTOCOL, cmake on PATH, and libfabric via its module.
 
 # Profile default transport, used when server.config says protocol: auto.
-export MOFKA_PROTOCOL_DEFAULT="${MOFKA_PROTOCOL_DEFAULT:-ofi+tcp}"
-export BEDROCK_PROTOCOL="${BEDROCK_PROTOCOL:-ofi+tcp}"
+export MOFKA_PROTOCOL_DEFAULT="${MOFKA_PROTOCOL_DEFAULT:-ofi+cxi}"
+export BEDROCK_PROTOCOL="${BEDROCK_PROTOCOL:-ofi+cxi}"
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 
 # Native stack: repo-local install/_spack first, else legacy transferred view.

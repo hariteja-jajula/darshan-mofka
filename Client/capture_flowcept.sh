@@ -46,7 +46,9 @@ rm -f "$SHUTDOWN_FLAG"
 echo "=== [flowcept-capture] topic=$TOPIC db=$MONGO_DB run_dir=$RUN_DIR ==="
 
 # --- preflight -------------------------------------------------------------
-[[ -s "$MOFKA_GROUP" ]] || { echo "[fc] FAIL: no mofka group file at $MOFKA_GROUP -- run server/start_server.sh first"; exit 1; }
+# MPMD: broker section may write mofka.json concurrently; poll instead of hard-fail.
+for _i in $(seq 1 "${MOFKA_GROUP_WAIT_S:-120}"); do [[ -s "$MOFKA_GROUP" ]] && break; sleep 1; done
+[[ -s "$MOFKA_GROUP" ]] || { echo "[fc] FAIL: no mofka group file at $MOFKA_GROUP after ${MOFKA_GROUP_WAIT_S:-120}s"; exit 1; }
 [[ -n "$MONGOD" && -x "$MONGOD" ]] || { echo "[fc] FAIL: mongod not found on PATH; load MongoDB or set MONGOD=/path/to/mongod"; exit 1; }
 "$PY" -c "import flowcept.cli" 2>/dev/null || { echo "[fc] FAIL: flowcept.cli not importable -- did you 'git submodule update --init --recursive' and pip-install deps/flowcept?"; exit 1; }
 "$PY" -c "import pymongo" 2>/dev/null || { echo "[fc] FAIL: pymongo not importable"; exit 1; }
@@ -110,6 +112,7 @@ CONSUMER_PID=$!
 sleep 12
 kill -0 "$CONSUMER_PID" 2>/dev/null || { echo "[fc] FAIL: consumer died on startup"; sed 's/^/    /' "$CONSUMER_LOG"; exit 1; }
 echo "[fc] consumer alive PID=$CONSUMER_PID"
+[[ -n "${FLAGDIR:-}" ]] && touch "$FLAGDIR/CONSUMER_READY"  # MPMD: signal readiness
 
 # --- ready: idle until the workload has run and SHUTDOWN is signalled -------
 echo "===================================================================="
@@ -154,5 +157,12 @@ echo "[fc] mongod still UP on port $MONGO_PORT (db=$MONGO_DB) for export_jsonl.p
 echo "[fc] Export now, before this script exits and tears mongod down:"
 echo "     $PY $ROOT/Client/export_jsonl.py 127.0.0.1 $MONGO_DB > events.jsonl"
 echo "[fc] Press Ctrl-C (or let the parent kill this) when export is done."
+# MPMD: mongod dies when this section ends, so export here before exit (trap tears down mongod).
+if [ "${EXPORT_ON_STOP:-0}" = 1 ]; then
+    echo "=== [fc] export events -> ${EXPORT_OUT:-events.jsonl} ==="
+    "$PY" "$ROOT/Client/export_jsonl.py" 127.0.0.1 "$MONGO_DB" --mongo-port "$MONGO_PORT" > "${EXPORT_OUT:-$RUN_DIR/events.jsonl}" 2> "${EXPORT_OUT:-$RUN_DIR/events.jsonl}.count" || echo "[fc] export nonzero"
+    [ -n "${ALL_DONE_FLAG:-}" ] && touch "$ALL_DONE_FLAG"
+    exit 0
+fi
 # keep mongod alive for the export step; exit on signal via the trap
 while kill -0 "$MONGOD_PID" 2>/dev/null; do sleep 5; done

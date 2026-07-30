@@ -57,3 +57,30 @@ mpi_launch() {
     fi
     [[ -n "$hf" ]] && MPI_LAUNCH+=(--hostfile "$hf")
 }
+
+# cxi_collapse -- Polaris exposes two Slingshot VNIs; margo 0.24 mishandles multi-VNI over
+# ofi+cxi (garbage rgroup -> "Invalid domain auth_key"). Emit a snippet that keeps only the
+# first entry of each list. Evaluated INSIDE the launched proc (SLINGSHOT_* are compute-only),
+# so it must be fed literally to bedrock/workload's own shell, never expanded at launch time.
+cxi_collapse() {
+    printf '%s' 'export SLINGSHOT_VNIS=${SLINGSHOT_VNIS%%,*} SLINGSHOT_SVC_IDS=${SLINGSHOT_SVC_IDS%%,*} SLINGSHOT_DEVICES=${SLINGSHOT_DEVICES%%,*};'
+}
+
+# pmi_strip -- unset PALS's phantom PMI world (keeps SLINGSHOT_* / the VNI) so non-MPI
+# bedrock doesn't hang on a PMI collective. Emitted literally into the launched section
+# (PMI_* are compute-only), never expanded at launch time -- like cxi_collapse.
+pmi_strip() {
+    printf '%s' 'for v in $(compgen -v | grep -E "^(PMI_|PMIX_|PALS_)"); do unset "$v"; done;'
+}
+
+# mpi_launch_mpmd -- build MPI_MPMD=(...) as ONE mpiexec with colon-joined sections so PALS
+# gives the whole launch one shared job VNI. Each arg: "HOST COUNT SCRIPT". Polaris/PALS-only.
+mpi_launch_mpmd() {
+    MPI_MPMD=(mpiexec --cpu-bind none)
+    local first=1 spec host cnt scr
+    for spec in "$@"; do
+        read -r host cnt scr <<<"$spec"
+        [ "$first" = 1 ] || MPI_MPMD+=(:)
+        MPI_MPMD+=(--hosts "$host" -n "$cnt" "$scr"); first=0
+    done
+}

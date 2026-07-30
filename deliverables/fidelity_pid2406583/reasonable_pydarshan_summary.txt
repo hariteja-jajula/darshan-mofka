@@ -1,0 +1,74 @@
+reasonable_io Darshan/PyDarshan summary
+======================================
+
+Run shape
+---------
+Workload completed with:
+  writes:       599
+  checkpoints:  9
+  bytes:        628097024 (599.0 MiB)
+  elapsed:      300.274 s
+  streamed docs exported: 639
+  reconstructed events used: 638
+  connector finalize: 0.629 s
+
+Native log
+----------
+/eagle/radix-io/hjajula/reasonable_darshan_logs/hjajula_reasonable_io_workload_id2406583-2406583_7-28-70508-6582758539869926833_1.darshan
+
+Streamed/reconstructed log
+--------------------------
+/eagle/radix-io/hjajula/reasonable_streamed/hjajula_reasonable_io_workload_id2406583-2406583_7-28-70508-17650752918988065682_1.darshan
+
+PyDarshan selected counter comparison
+-------------------------------------
+PASS: selected POSIX/STDIO counters match between native and streamed logs.
+
+POSIX /tmp/hjajula_reasonable_io/data.bin
+-----------------------------------------
+POSIX_OPENS              native=1          streamed=1
+POSIX_READS              native=0          streamed=0
+POSIX_WRITES             native=599        streamed=599
+POSIX_BYTES_READ         native=0          streamed=0
+POSIX_BYTES_WRITTEN      native=628097024  streamed=628097024
+POSIX_MAX_BYTE_WRITTEN   native=628097023  streamed=628097023
+POSIX_FSYNCS             native=0          streamed=0
+POSIX_FDSYNCS            native=0          streamed=0
+POSIX_SEQ_WRITES         native=598        streamed=598
+POSIX_CONSEC_WRITES      native=598        streamed=598
+
+STDIO records
+-------------
+Record 15920181672442173440
+  STDIO_OPENS             native=1    streamed=1
+  STDIO_READS             native=0    streamed=0
+  STDIO_WRITES            native=3    streamed=3
+  STDIO_BYTES_READ        native=0    streamed=0
+  STDIO_BYTES_WRITTEN     native=303  streamed=303
+  STDIO_FLUSHES           native=1    streamed=1
+
+Record 10923423641936603136
+  STDIO_OPENS             native=1   streamed=1
+  STDIO_READS             native=0   streamed=0
+  STDIO_WRITES            native=1   streamed=1
+  STDIO_BYTES_READ        native=0   streamed=0
+  STDIO_BYTES_WRITTEN     native=76  streamed=76
+  STDIO_FLUSHES           native=0   streamed=0
+
+Record 6015373227288916992
+  STDIO_OPENS             native=9    streamed=9
+  STDIO_READS             native=0    streamed=0
+  STDIO_WRITES            native=9    streamed=9
+  STDIO_BYTES_READ        native=0    streamed=0
+  STDIO_BYTES_WRITTEN     native=382  streamed=382
+  STDIO_FLUSHES           native=0    streamed=0
+
+Interpretation
+--------------
+This is a more representative moderate-I/O C workload than the tight-loop 64-byte microbenchmark:
+  - about 600 application writes over 5 minutes
+  - 1 MiB per write
+  - 599 MiB useful data written
+  - only 639 streamed Darshan docs
+  - exact selected counter reconstruction
+  - finalize tail was 0.629 s, about 0.21% of the 300 s run

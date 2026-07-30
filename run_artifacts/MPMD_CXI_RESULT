@@ -1,0 +1,12 @@
+nodes: N0=x3205c0s31b1n0.hsn.cm.polaris.alcf.anl.gov  N1=x3205c0s37b0n0.hsn.cm.polaris.alcf.anl.gov
+
+===== MPMD single step: bedrock@N0 : client@N1, ofi+cxi =====
+  mpmd step exit=143
+  broker addr: 
+  -- client.log --
+    client: broker never ready
+  -- mpmd.log tail --
+    rank0 RAW VNIS=[49278,49277] host=x3205c0s31b1n0
+    x3205c0s37b0n0.hsn.cm.polaris.alcf.anl.gov: rank 1 exited with code 3
+    x3205c0s31b1n0.hsn.cm.polaris.alcf.anl.gov: rank 0 died from signal 15
+  MPMD-CXI: FAIL -- single step did not enable cross-node cxi attach

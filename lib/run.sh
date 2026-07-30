@@ -241,19 +241,27 @@ PY
 # start the broker in <server_dir>: single bedrock, or one-per-node via the tm mpirun.
 # Sets BROKER_PID and GROUP; creates the topic + partitions.
 start_broker() {
-    local srv="$1" nranks="${2:-1}"; load_run_config
+    local srv="$1" nranks="${2:-1}" bhf="${3:-}"; load_run_config
     mkdir -p "$srv"; cd "$srv"; rm -f mofka.json bedrock.log
     local multi=0; { [ "$WL_BROKERS" = per-node ] || [ "$nranks" -gt 1 ]; } && multi=1
+    # ofi+cxi must launch under mpiexec so bedrock inherits the job-wide Slingshot VNI, and
+    # each bedrock must collapse Polaris's two VNIs to one (margo mishandles multi-VNI ->
+    # "Invalid domain auth_key"). tcp/others keep the bare launch. lead[] is the argv that
+    # precedes the bedrock CLI args (a collapse-then-exec shim for cxi, plain bedrock otherwise).
+    local lead=(bedrock)
+    [[ "$SRV_PROTOCOL" == *cxi* ]] && lead=(bash -c "$(cxi_collapse) exec bedrock \"\$@\"" bedrock)
+    local cfg
     if [ "$multi" = 1 ]; then
-        render_bedrock_config "$REPO_ROOT/server/bedrock-config-mpi.json" "$srv/bedrock-config-mpi.json"
-        # one bedrock per node. PALS (polaris) places by --ppn 1 over the full PBS
-        # reservation (no hostfile needed); OpenMPI (lcrc) via --map-by ppr:1:node.
-        mpi_launch "$nranks" 1
-        "${MPI_LAUNCH[@]}" \
-            bedrock "$SRV_PROTOCOL" -c "$srv/bedrock-config-mpi.json" -v info > "$srv/bedrock.log" 2>&1 &
+        cfg="$srv/bedrock-config-mpi.json"; render_bedrock_config "$REPO_ROOT/server/bedrock-config-mpi.json" "$cfg"
+        mpi_launch "$nranks" 1                       # one bedrock/node over the PBS reservation
+        "${MPI_LAUNCH[@]}" "${lead[@]}" "$SRV_PROTOCOL" -c "$cfg" -v info > "$srv/bedrock.log" 2>&1 &
+    elif [[ "$SRV_PROTOCOL" == *cxi* ]]; then
+        cfg="$srv/bedrock-config.json"; render_bedrock_config "$REPO_ROOT/server/bedrock-config.json" "$cfg"
+        mpi_launch 1 1 "$bhf"                        # pin the lone broker to its node (bhf)
+        "${MPI_LAUNCH[@]}" "${lead[@]}" "$SRV_PROTOCOL" -c "$cfg" -v info > "$srv/bedrock.log" 2>&1 &
     else
-        render_bedrock_config "$REPO_ROOT/server/bedrock-config.json" "$srv/bedrock-config.json"
-        bedrock "$SRV_PROTOCOL" -c "$srv/bedrock-config.json" -v info > "$srv/bedrock.log" 2>&1 &
+        cfg="$srv/bedrock-config.json"; render_bedrock_config "$REPO_ROOT/server/bedrock-config.json" "$cfg"
+        bedrock "$SRV_PROTOCOL" -c "$cfg" -v info > "$srv/bedrock.log" 2>&1 &
     fi
     BROKER_PID=$!
     local i; for i in $(seq 1 120); do [ -f "$srv/mofka.json" ] && break; sleep 1; done
