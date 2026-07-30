@@ -7,10 +7,12 @@ resumes from this file alone. Orchestrator writes; subagents report diffs.
 
 ## MORNING SUMMARY (live — updated as phases complete; 2026-07-30 overnight)
 
-**Single next action:** CLEANUP re-verify — C 1+1 submitted post-cleanup to confirm behavior unchanged.
-CLEANUP committed e5a16d3 (resolve-once DARSHAN_LIB_SO, dropped 4 dead CFG_* knobs, trimmed
-provenance comment tails across 4 files keeping all mechanism, README cxi command-reference).
-Staged only the 5 edited harness files; submodule/hostfile/io_bench binary left untouched.
+**Single next action:** DONE — validation ladder complete + cleanup complete + behavior-unchanged
+re-verify GREEN. Nothing pending. CLEANUP committed e5a16d3 (resolve-once DARSHAN_LIB_SO, dropped
+4 dead CFG_* knobs, trimmed provenance comment tails across 4 files keeping all mechanism, README
+cxi command-reference); DECISION update 6edce04. Post-cleanup C 1+1 re-verify (job 7301881) GREEN,
+BIT-IDENTICAL to pre-cleanup baseline 7301622: ofi+cxi, verdict=all_done, events.jsonl=22,
+1 pid reconstructed/0 failed, strict_compare PASS (perproc). Cleanup did NOT change behavior.
 ✅ VALIDATION LADDER COMPLETE over ofi+cxi: C 1+1 (7301622), io_bench 1+1 (7301654),
 5-node 16-rank/4-host (7301662), multi-rep REPS=3 (7301837, RUN2/3/4 all PASS). CONSUMERS>1
 dropped (Hari). CXI only, no TCP. 10-agent independent fidelity audit → CONTINUE, 0 critical
@@ -30,7 +32,7 @@ dropped (Hari). CXI only, no TCP. 10-agent independent fidelity audit → CONTIN
 | 10-agent fidelity+bug audit | ✅ CONTINUE | wf_62d3e7d7 | 0 critical; independent pydarshan re-diffs (io_bench 1118 cells / 5-node 16800 cells, 0 mismatch, bytes exact); B4 pid-collision latent+fail-safe; 5 major all LATENT/untriggered; M5 heatmap-read lossy but documented HEATMAP exclusion (writes bit-exact) |
 | ~~CONSUMERS>1~~ | ❌ DROPPED | — | Hari 2026-07-30: not needed for deliverable; stop ladder after multi-rep |
 | **Cleanup** | ✅ done (commit e5a16d3) | — | resolve-once DARSHAN_LIB_SO; -4 dead CFG_* knobs; comment tails trimmed (mechanism kept); README cxi cmd-ref; bash -n + py_compile clean |
-| Cleanup re-verify (C 1+1) | ⬜ queued | 7301881 | behavior-unchanged check per Hari constraint; expect ofi+cxi + ALL_DONE + events>0 + strict_compare PASS(perproc) |
+| Cleanup re-verify (C 1+1) | ✅ GREEN | 7301881 | ofi+cxi://0x00005400, verdict=all_done, events.jsonl=22, 1 pid reconstructed/0 failed, strict_compare **PASS (perproc)** — bit-identical to pre-cleanup baseline 7301622. Behavior unchanged. |
 
 **SCOPE CHANGE (Hari 2026-07-30, night):** Drop CONSUMERS>1. Validation ends at multi-rep.
 Then CLEANUP is the priority deliverable work: (1) **resolve-once** — `darshan_lib` called 5x
