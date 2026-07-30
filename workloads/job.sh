@@ -99,12 +99,20 @@ if [[ "$ENV_PROFILE" == polaris ]]; then
 else
     : > "$WL_HOSTFILE"; for h in "${WL_NODES_ARR[@]}"; do echo "$h slots=$WL_SLOTS" >> "$WL_HOSTFILE"; done
 fi
+# Broker hostfile: pins the single ofi+cxi broker to node 0 (start_broker launches it under
+# mpiexec so it inherits the job VNI). Plain hostname (PALS) / slots= (OpenMPI), same as above.
+BROKER_HOSTFILE="$ROOT/server/_broker_hostfile"
+if [[ "$ENV_PROFILE" == polaris ]]; then
+    printf '%s\n' "$SRV_NODE" > "$BROKER_HOSTFILE"
+else
+    echo "$SRV_NODE slots=$WL_SLOTS" > "$BROKER_HOSTFILE"
+fi
 say "topology: ${#NODELIST[@]} node(s) | broker ranks=$NRANKS_BROKER on ${SRV_NODE} | workload ${WL_TASKS} task/node x ${WL_NNODES} node = ${WL_TOTAL_RANKS} rank(s) on: ${WL_NODES_ARR[*]}"
 
 # --- 5. broker (single or one-per-node via tm), created once ---
 say "5. broker"
 pkill -f 'bedrock ' 2>/dev/null || true; sleep 1
-start_broker "$ROOT/server/_broker" "$NRANKS_BROKER" || die "broker failed"
+start_broker "$ROOT/server/_broker" "$NRANKS_BROKER" "$BROKER_HOSTFILE" || die "broker failed"
 trap 'kill "$BROKER_PID" 2>/dev/null; pkill -f "bedrock " 2>/dev/null || true' EXIT
 echo "broker up: $(grep -oE '[a-z0-9+;_]+://[0-9.]+:[0-9]+' "$GROUP" | head -1) | group $GROUP"
 
@@ -159,9 +167,12 @@ run_workload_once() {
         env "${base[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     else
         local estr="${CONNECTOR_ENV[*]} ${DARSHAN_ENV[*]} ${WORKLOAD_ENV[*]}"
+        # ofi+cxi producer must collapse to the same single VNI the broker used, else it can't
+        # attach across nodes over the shared job VNI. cxi_pfx runs inside the launched shell.
+        local cxi_pfx=""; [[ "$SRV_PROTOCOL" == *cxi* ]] && cxi_pfx="$(cxi_collapse) "
         mpi_launch "$WL_TOTAL_RANKS" "$WL_TASKS" "$WL_HOSTFILE"
         "${MPI_LAUNCH[@]}" bash -lc \
-          "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && env $estr DARSHAN_LOGPATH='$RES' LD_PRELOAD='$dlib' ${cmd[*]}" \
+          "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && ${cxi_pfx}env $estr DARSHAN_LOGPATH='$RES' LD_PRELOAD='$dlib' ${cmd[*]}" \
           > "$RES/workload.out" 2> "$RES/workload.err"
     fi
 }

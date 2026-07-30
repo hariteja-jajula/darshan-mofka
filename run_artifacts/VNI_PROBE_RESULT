@@ -1,0 +1,23 @@
+nodes: N0=x3102c0s37b0n0.hsn.cm.polaris.alcf.anl.gov  N1=x3102c0s37b1n0.hsn.cm.polaris.alcf.anl.gov
+
+===== INV: last VNI shared across separate steps? =====
+  N0 collapsed VNIS=[49228] ; N1 collapsed VNIS=[49228]
+  INV: OK (shared)
+
+===== T-D: cross-node attach, collapse-to-last (job VNI) =====
+  brokerD up: ofi+cxi://0x0041f000  RAW VNIS=[49228]
+  client exit=1; log tail:
+    ╰──────────────────────────────────────────────────────────────────────────────╯
+    Exception: 
+    [/lus/eagle/projects/radix-io/hjajula/darshan-mofka-flowcept/darshan-mofka-workt
+    ree-stricter-overnight/install/_spack/opt/spack/linux-zen3/mochi-thallium-0.17.1
+    -vjheoih75gucsqwetehixg4hupn57fkt/include/thallium/async_response.hpp:122][margo
+    _wait] HG_HOSTUNREACH
+    # [4671579.456312] mercury->op [warning] /tmp/hjajula/spack-stage/spack-stage-mercury-2.4.1-ngz5z7fik7c6wf3qamotivnerwu3g4ns/spack-src/src/na/na_ofi.c:6946 na_ofi_cq_readerr() fi_cq_readerr() got err: 107 (Transport endpoint is not connected), prov_errno: 25 (VNI_NOT_FOUND)
+    x3102c0s37b1n0.hsn.cm.polaris.alcf.anl.gov: rank 0 exited with code 1
+  T-D: FAIL -- client could not attach/operate over CXI
+
+===== SUMMARY =====
+===== INV: last VNI shared across separate steps? =====
+  INV: OK (shared)
+  T-D: FAIL -- client could not attach/operate over CXI

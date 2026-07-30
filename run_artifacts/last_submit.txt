@@ -1,0 +1,2 @@
+submitting: select=2:ncpus=32:mpiprocs=32 walltime=01:00:00 queue=debug account=radix-io run=workloads/job.sh
+7301288.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov

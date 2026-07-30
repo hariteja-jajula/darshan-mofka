@@ -1,0 +1,29 @@
+nodes: N0=x3104c0s1b0n0.hsn.cm.polaris.alcf.anl.gov  N1=x3104c0s25b0n0.hsn.cm.polaris.alcf.anl.gov
+
+===== CFG tcp_nopmi: proto=ofi+tcp collapse=none (PMI stripped) =====
+  mpmd exit=124  broker.log_bytes=91  mofka.json=yes
+  markers:
+    s0 MARK start host=x3104c0s1b0n0 VNIS=[49419,49418] PMI_SIZE=2
+    s0 MARK post-strip PMI_SIZE=unset VNIS=[49419,49418]; launching bedrock (ofi+tcp)
+  broker.log tail:
+    [2026-07-30 00:20:51.741] [info] Bedrock daemon now running at ofi+tcp://10.201.4.27:37503
+  RC topic=0 part=0
+  client.log tail:
+    s1 MARK start host=x3104c0s25b0n0 PMI_SIZE=2
+    client: mofka.json seen -> attaching over ofi+tcp
+  VERDICT tcp_nopmi: PASS -- cross-node ofi+tcp attach works in one MPMD step
+
+===== CFG cxi_nopmi: proto=ofi+cxi collapse=first (PMI stripped) =====
+  mpmd exit=124  broker.log_bytes=84  mofka.json=yes
+  markers:
+    s0 MARK start host=x3104c0s1b0n0 VNIS=[49420,49418] PMI_SIZE=2
+    s0 MARK post-strip PMI_SIZE=unset VNIS=[49420]; launching bedrock (ofi+cxi)
+  broker.log tail:
+    [2026-07-30 00:22:39.796] [info] Bedrock daemon now running at ofi+cxi://0x0043d400
+  RC topic=0 part=0
+  client.log tail:
+    s1 MARK start host=x3104c0s25b0n0 PMI_SIZE=2
+    client: mofka.json seen -> attaching over ofi+cxi
+  VERDICT cxi_nopmi: PASS -- cross-node ofi+cxi attach works in one MPMD step
+
+=== DONE ===
