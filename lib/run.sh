@@ -367,3 +367,192 @@ stop_consumer_verdict() {
     grep -E 'INGEST:|tasks total=' "${CONSUMER_DIRS[0]}/flowcept.out" | tee "$out"
     for ((k = 0; k < n; k++)); do kill "${CONSUMER_PIDS[$k]}" 2>/dev/null; wait "${CONSUMER_PIDS[$k]}" 2>/dev/null || true; done
 }
+
+# =============================== MPMD (ofi+cxi) path ===============================
+# run_mpmd_rep <RES> -- run ONE rep as a SINGLE MPMD mpiexec: broker + FlowCept consumer(s)
+# + Darshan workload as :-separated sections in ONE launch, so PALS gives the whole launch
+# ONE shared Slingshot job VNI (the ONLY way cross-node ofi+cxi routes -- 3 separate launches
+# get 3 non-routable VNIs). Proven recipe: run_artifacts/DECISION.md (jobs 7301370/7301419):
+#   Lever 1 = single MPMD mpiexec (mpi_launch_mpmd).  Lever 2 = PMI-strip before exec (PALS
+#   injects a phantom PMI world that hangs non-MPI bedrock).  + cxi_collapse (margo multi-VNI
+#   bug) + exec bedrock DIRECTLY </dev/null.  Sections coordinate via files on the Eagle FS.
+# Leaves $RES/events.jsonl for the reconstruct+strict_compare tail in job.sh (UNCHANGED).
+# Success (amendment #6) = $COORD/ALL_DONE present AND $RES/events.jsonl non-empty; the mpiexec
+# EXIT CODE IS MEANINGLESS (we kill the still-running broker).  Non-MPI workloads only (Gate-0).
+# Relies on job.sh-main globals: ROOT, SRV_NODE, WL_NODES_ARR, WL_TOTAL_RANKS, ENV_PROFILE, PY.
+# Reuses: render_bedrock_config, connector_env, darshan_env, workload_env, darshan_lib,
+# broker_topic_partitions, _shard_targets, pmi_strip, cxi_collapse, mpi_launch_mpmd.
+run_mpmd_rep() {
+    local RES="$1"; load_run_config
+    case "$WL_TYPE" in
+        mpi|dlio) echo "run_mpmd_rep: WL_TYPE=$WL_TYPE unsupported over cxi/mpmd (Gate-0, DECISION.md) -- MPI runs via RUN_MODE=legacy"; return 2 ;;
+    esac
+    [[ "$SRV_PROTOCOL" == *cxi* ]] || echo "run_mpmd_rep: WARN protocol=$SRV_PROTOCOL is not cxi (this path is for ofi+cxi)"
+    local COORD="$RES/coord" SEC="$RES/sections"
+    rm -rf "$COORD" "$SEC"; mkdir -p "$COORD" "$SEC" "$RES/fc"
+
+    # bedrock config: group_manager "file":"mofka.json" is RELATIVE, so the broker section cd's
+    # into $COORD and writes $COORD/mofka.json there -- the shared-FS flag the others poll for.
+    render_bedrock_config "$REPO_ROOT/server/bedrock-config.json" "$COORD/bedrock-config.json"
+
+    # Producer env, serialized into the workload section (bash arrays don't cross mpiexec). Mirror
+    # the legacy separate-node path (run_workload_once): env $ESTR DARSHAN_LOGPATH LD_PRELOAD cmd.
+    connector_env "$COORD/mofka.json"; darshan_env; workload_env
+    local ESTR="${CONNECTOR_ENV[*]} ${DARSHAN_ENV[*]} ${WORKLOAD_ENV[*]}"
+    local DLIB; DLIB="$(darshan_lib)"
+    local CMD
+    case "$WL_TYPE" in
+        c)         CMD="./workloads/c/mofka_forward_smoke" ;;
+        io_bench)  CMD="./workloads/c/io_bench" ;;
+        python-ml) CMD="$PY workloads/python-ml/train.py" ;;
+        *)         echo "run_mpmd_rep: unknown non-MPI workload '$WL_TYPE'"; return 2 ;;
+    esac
+    local STRIP COLLAPSE; STRIP="$(pmi_strip)"; COLLAPSE="$(cxi_collapse)"
+
+    # ---------------- s_broker.sh  (N0, 1 rank) ----------------
+    {
+        printf '#!/bin/bash\n'
+        printf 'ROOT=%q COORD=%q RES=%q PROFILE=%q SRV_PROTOCOL=%q\n' "$ROOT" "$COORD" "$RES" "$ENV_PROFILE" "$SRV_PROTOCOL"
+        printf '%s\n' 'RANKID="${PALS_RANKID:-0}"'      # (unused by broker; kept for uniformity)
+        printf '%s\n' "$STRIP"                          # drop PALS phantom PMI (keeps SLINGSHOT_*)
+        printf '%s\n' "$COLLAPSE"                        # collapse Polaris' 2 VNIs -> 1 (margo bug)
+        cat <<'BROKER'
+cd "$COORD"; rm -f mofka.json
+source "$ROOT/env/server.sh" --"$PROFILE" >/dev/null 2>&1
+cd "$COORD"
+echo "s_broker host=$(hostname -s) proto=$SRV_PROTOCOL VNIS=[${SLINGSHOT_VNIS:-}]" >&2
+exec bedrock "$SRV_PROTOCOL" -c "$COORD/bedrock-config.json" -v info > "$RES/broker.log" 2>&1 </dev/null
+BROKER
+    } > "$SEC/s_broker.sh"
+
+    # ---------------- s_consumer.sh  (N0, CONS_N ranks) ----------------
+    # Each rank atomically claims a shard id via mkdir; shard 0 = LEAD (creates topic+partitions,
+    # owns the shared mongod + export/ALL_DONE); 1..N-1 = followers that attach. capture_flowcept.sh
+    # already honors every knob below (FC_ROLE, FLAGDIR->CONSUMER_READY, SHUTDOWN_FLAG, EXPORT_ON_STOP/
+    # EXPORT_OUT/ALL_DONE_FLAG, MOFKA_GROUP/MOFKA_TARGETS). Config scalars come from load_run_config
+    # (identical to the head node: submit_cxi.sh forwards CONSUMERS/PARTITIONS/... via qsub -v).
+    {
+        printf '#!/bin/bash\n'
+        printf 'ROOT=%q COORD=%q RES=%q PROFILE=%q\n' "$ROOT" "$COORD" "$RES" "$ENV_PROFILE"
+        printf '%s\n' 'RANKID="${PALS_RANKID:-0}"'
+        printf '%s\n' "$STRIP"
+        printf '%s\n' "$COLLAPSE"
+        cat <<'CONSUMER'
+cd "$ROOT"
+source "$ROOT/env/server.sh" --"$PROFILE" >/dev/null 2>&1
+source "$ROOT/lib/run.sh"; load_run_config          # reuse _shard_targets + broker_topic_partitions
+echo "s_consumer rank=$RANKID host=$(hostname -s) VNIS=[${SLINGSHOT_VNIS:-}]" >&2
+SHARD_ID=0
+for i in $(seq 0 $((CONS_N - 1))); do mkdir "$COORD/claim_$i" 2>/dev/null && { SHARD_ID=$i; break; }; done
+role=follower; [ "$SHARD_ID" = 0 ] && role=lead
+for _ in $(seq 1 "${MOFKA_GROUP_WAIT_S:-180}"); do [ -s "$COORD/mofka.json" ] && break; sleep 1; done
+if [ ! -s "$COORD/mofka.json" ]; then echo "consumer shard=$SHARD_ID: no mofka.json" >&2; touch "$COORD/CONS_FAIL.$SHARD_ID"; exit 1; fi
+[ "$SHARD_ID" = 0 ] && broker_topic_partitions "$COORD/mofka.json" 1   # LEAD creates topic+partitions once
+targets="$(_shard_targets "$SHARD_ID" "$CONS_N" "$SRV_PARTITIONS")"
+cdir="$RES/fc/c$SHARD_ID"; mkdir -p "$cdir"
+export_on_stop=0; all_done_flag=""
+[ "$SHARD_ID" = 0 ] && { export_on_stop=1; all_done_flag="$COORD/ALL_DONE"; }
+FC_ROLE="$role" RUN_DIR="$cdir" FLAGDIR="$COORD" \
+  MONGO_DB="$SRV_MONGO_DB" MONGO_PORT="$SRV_MONGO_PORT" MONGOD="$MONGOD" \
+  MONGO_CACHE_GB="$SRV_MONGO_CACHE_GB" MONGO_DBPATH="$SRV_MONGO_DBPATH" \
+  TOPIC="$SRV_TOPIC" MOFKA_GROUP="$COORD/mofka.json" MOFKA_TARGETS="$targets" \
+  MQ_BUFFER_SIZE="$CONS_MQ_BUF" MQ_FLUSH_SECS="$CONS_MQ_FLUSH" \
+  DB_BUFFER_SIZE="$CONS_DB_BUF" DB_FLUSH_SECS="$CONS_DB_FLUSH" \
+  SHUTDOWN_FLAG="$COORD/SHUTDOWN" MOFKA_GROUP_WAIT_S="${MOFKA_GROUP_WAIT_S:-180}" \
+  EXPORT_ON_STOP="$export_on_stop" EXPORT_OUT="$RES/events.jsonl" ALL_DONE_FLAG="$all_done_flag" \
+  bash "$ROOT/Client/capture_flowcept.sh" > "$cdir/flowcept.out" 2>&1
+rc=$?
+touch "$COORD/CONS_DONE.$SHARD_ID"
+[ "$rc" -ne 0 ] && touch "$COORD/CONS_FAIL.$SHARD_ID"
+exit "$rc"
+CONSUMER
+    } > "$SEC/s_consumer.sh"
+
+    # ---------------- s_workload.sh  (N1..Nk, WL_TOTAL_RANKS ranks) ----------------
+    # Non-MPI POSIX workload under the Darshan->Mofka connector. Waits for CONSUMER_READY, then runs
+    # exactly like the legacy separate-node launch (env $ESTR DARSHAN_LOGPATH LD_PRELOAD cmd) so the
+    # native .darshan logs land in $RES for the reconstruct+strict_compare tail. ESTR/DLIB/CMD/WL_TYPE
+    # are baked from the head node (arrays don't cross mpiexec).
+    {
+        printf '#!/bin/bash\n'
+        printf 'ROOT=%q COORD=%q RES=%q PROFILE=%q WL_TYPE=%q\n' "$ROOT" "$COORD" "$RES" "$ENV_PROFILE" "$WL_TYPE"
+        printf 'ESTR=%q\n' "$ESTR"
+        printf 'DLIB=%q\n' "$DLIB"
+        printf 'CMD=%q\n' "$CMD"
+        printf '%s\n' 'RANKID="${PALS_RANKID:-0}"'
+        printf '%s\n' "$STRIP"
+        printf '%s\n' "$COLLAPSE"
+        cat <<'WORKLOAD'
+cd "$ROOT"
+source "$ROOT/env/workload.sh" --"$PROFILE" >/dev/null 2>&1
+echo "s_workload rank=$RANKID host=$(hostname -s) VNIS=[${SLINGSHOT_VNIS:-}]" > "$RES/workload.$RANKID.out"
+for _ in $(seq 1 "${CONSUMER_READY_WAIT_S:-180}"); do [ -f "$COORD/CONSUMER_READY" ] && break; sleep 1; done
+if [ ! -f "$COORD/CONSUMER_READY" ]; then echo "workload rank=$RANKID: CONSUMER_READY never appeared" >> "$RES/workload.$RANKID.out"; touch "$COORD/WL_FAIL.$RANKID"; exit 3; fi
+scratch="/tmp/dm_${WL_TYPE}_${RANKID}_$$"; mkdir -p "$scratch"
+env $ESTR DARSHAN_LOGPATH="$RES" LD_PRELOAD="$DLIB" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
+rc=$?
+rm -rf "$scratch" 2>/dev/null || true
+touch "$COORD/WL_DONE.$RANKID"
+[ "$rc" -ne 0 ] && touch "$COORD/WL_FAIL.$RANKID"
+exit "$rc"
+WORKLOAD
+    } > "$SEC/s_workload.sh"
+
+    chmod +x "$SEC"/s_broker.sh "$SEC"/s_consumer.sh "$SEC"/s_workload.sh
+
+    # ---------------- launch: ONE MPMD mpiexec (shared job VNI) ----------------
+    local WL_HOSTS; WL_HOSTS="$(IFS=,; printf '%s' "${WL_NODES_ARR[*]}")"
+    mpi_launch_mpmd \
+        "$SRV_NODE 1 $SEC/s_broker.sh" \
+        "$SRV_NODE $CONS_N $SEC/s_consumer.sh" \
+        "$WL_HOSTS $WL_TOTAL_RANKS $SEC/s_workload.sh"
+    echo "mpmd launch: broker[$SRV_NODE x1] : consumer[$SRV_NODE x$CONS_N] : workload[$WL_HOSTS x$WL_TOTAL_RANKS]  (proto=$SRV_PROTOCOL)"
+    "${MPI_MPMD[@]}" > "$RES/mpmd.log" 2>&1 &
+    local MPMD_PID=$!
+
+    # ---------------- drive shutdown + watch for terminal state ----------------
+    # When all workload ranks have touched WL_DONE.*, signal SHUTDOWN so the lead consumer flushes,
+    # exports events.jsonl, and touches ALL_DONE. Terminal states: ALL_DONE (ok) | *_FAIL (bad) |
+    # mpiexec death (bad) | ceiling (bad). The mpiexec exit code is IGNORED by design (amendment #6).
+    local shutdown_sent=0 verdict="" ndone
+    local deadline=$(( $(date +%s) + ${MPMD_CEIL_S:-1500} ))
+    while :; do
+        if [ "$shutdown_sent" = 0 ]; then
+            ndone=$(find "$COORD" -maxdepth 1 -name 'WL_DONE.*' 2>/dev/null | wc -l)
+            if [ "$ndone" -ge "$WL_TOTAL_RANKS" ]; then
+                touch "$COORD/SHUTDOWN"; shutdown_sent=1
+                echo "all $WL_TOTAL_RANKS workload rank(s) done -> touched SHUTDOWN"
+            fi
+        fi
+        [ -f "$COORD/ALL_DONE" ] && { verdict=all_done; break; }
+        if find "$COORD" -maxdepth 1 -name '*_FAIL.*' 2>/dev/null | grep -q .; then verdict="fail_flag:$(find "$COORD" -maxdepth 1 -name '*_FAIL.*' -printf '%f ' 2>/dev/null)"; break; fi
+        kill -0 "$MPMD_PID" 2>/dev/null || { verdict=mpiexec_exit; break; }
+        [ "$(date +%s)" -ge "$deadline" ] && { verdict=ceiling; break; }
+        sleep 3
+    done
+
+    # ---------------- teardown (kill the still-running broker; exit code meaningless) ----------------
+    # NB: PALS_RANKID is GLOBAL across MPMD sections (broker=0, consumer=1.., workload=last), so the
+    # workload rank is NOT rank 0 -- grab whatever workload.*.out exists. pkill matches 'bedrock '
+    # (trailing space) NOT "bedrock $SRV_PROTOCOL": the '+' in ofi+cxi is a regex metachar and would
+    # fail to match the real cmdline (same pattern job.sh's EXIT trap uses).
+    kill "$MPMD_PID" 2>/dev/null || true
+    pkill -f 'bedrock ' 2>/dev/null || true
+    wait "$MPMD_PID" 2>/dev/null || true
+    local _w0; _w0="$(ls "$RES"/workload.*.out 2>/dev/null | head -1)"
+    [ -n "$_w0" ] && cp "$_w0" "$RES/workload.out" 2>/dev/null || true
+    grep -h -E 'INGEST:|tasks total=' "$RES"/fc/c0/flowcept.out 2>/dev/null > "$RES/ingest.txt" || true
+
+    # ---------------- verdict: ALL_DONE + non-empty events.jsonl (amendment #6) ----------------
+    local nlines; nlines="$(wc -l < "$RES/events.jsonl" 2>/dev/null || echo 0)"
+    echo "run_mpmd_rep verdict=$verdict  events.jsonl=${nlines} lines  mofka=$(grep -oE 'ofi\+cxi://[^"]+' "$COORD/mofka.json" 2>/dev/null | head -1)"
+    if [ "$verdict" = all_done ] && [ -s "$RES/events.jsonl" ]; then
+        return 0
+    fi
+    echo "run_mpmd_rep FAIL ($verdict) -- diagnostics:"
+    echo "--- broker.log (tail) ---";           tail -15 "$RES/broker.log"          2>/dev/null
+    echo "--- mpmd.log (tail) ---";             tail -15 "$RES/mpmd.log"            2>/dev/null
+    echo "--- fc/c0/flowcept.out (tail) ---";   tail -25 "$RES/fc/c0/flowcept.out"  2>/dev/null
+    echo "--- workload.0.err (tail) ---";       tail -20 "$RES/workload.0.err"      2>/dev/null
+    return 1
+}
