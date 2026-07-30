@@ -14,7 +14,8 @@ overhead_buffer_sweep}.sh; workloads/mpi/; workloads/dlio/; server/{bedrock-conf
 start_server.sh,stop_server.sh}. Shared files (job.sh/run.sh/common.sh) UNTOUCHED per constraint —
 so dormant legacy branches now hold 3 intentional dangling refs (job.sh:150/162 mpi build+run arms;
 run.sh:249 multi-broker render; _profile.sh:7/13 lcrc source) — all unreachable on cxi. Restore
-manifest + exact mv-back commands: ../legacy-preserved/RESTORE.md. cxi path re-verified: see table.
+manifest + exact mv-back commands: ../legacy-preserved/RESTORE.md. Relocation committed 04c9c2b.
+cxi re-verify post-relocation: job 7302440 (C 1+1) QUEUED — expect ofi+cxi + all_done + events + PASS.
 
 **Single next action:** DONE — validation ladder complete + cleanup complete + behavior-unchanged
 re-verify GREEN. Nothing pending. CLEANUP committed e5a16d3 (resolve-once DARSHAN_LIB_SO, dropped
