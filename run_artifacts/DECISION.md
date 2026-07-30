@@ -7,9 +7,9 @@ resumes from this file alone. Orchestrator writes; subagents report diffs.
 
 ## MORNING SUMMARY (live — updated as phases complete; 2026-07-30 overnight)
 
-**Single next action:** submit io_bench 1+1 (`WORKLOAD=io_bench REPS=1 NODES=2 TASKS=1
-CONSUMERS=1`). ✅ C 1+1 GREEN (job 7301622, RUN6) — first real cross-node ofi+cxi e2e:
-strict_compare PASS (perproc), 22 events, INGEST PASS. CXI confirmed, no TCP.
+**Single next action:** await io_bench 1+1 (job 7301654, queued); on green → 5-node multi-proc
+(task #6). ✅ C 1+1 GREEN (job 7301622, RUN6): strict_compare PASS (perproc) + independent
+pydarshan diff (87 counters, 0 mismatch). CXI confirmed, no TCP.
 
 **Mechanism:** cross-node ofi+cxi PROVEN (jobs 7301370/7301419). Implementation = `run_mpmd_rep`.
 **CXI ONLY — no TCP fallback counts as done.** Overnight rules: [[bx-overnight-cxi-rules]] / see foot.
@@ -19,7 +19,7 @@ strict_compare PASS (perproc), 22 events, INGEST PASS. CXI confirmed, no TCP.
 | run_mpmd_rep written + syntax-clean | ✅ done | — | bash -n clean; 3 sections render+`bash -n` OK |
 | run_mpmd_rep review | ✅ done (self) | — | 6-way wf stopped (API-degraded: retry 2-4, 300k+ tok, 0/6 @17m); self-review vs proven probe — see note |
 | 2-node e2e workload C (1+1) | ✅ GREEN | 7301622 | RUN6: proto=ofi+cxi://0x00003600, ALL_DONE, events=22, INGEST PASS (POSIX10/STDIO11), strict_compare **PASS (perproc)** |
-| io_bench (1+1) | ⬜ pending | — | — |
+| io_bench (1+1) | ⏳ queued | 7301654 | submitted 2026-07-30; debug q, 2 nodes, wall 30m |
 | 5-node scale (1+4, TASKS>1) | ⬜ pending | — | — |
 | multi-rep (REPS>1) | ⬜ pending | — | — |
 | CONSUMERS>1 | ⬜ pending | — | — |
