@@ -187,6 +187,8 @@ workload_env() {
     [ "$every" -lt 1 ] && every=1
     case "$WL_TYPE" in
         c)         WORKLOAD_ENV=(EPOCHS="$WL_EVENTS" CHECKPOINT_EVERY="$every") ;;
+        io_bench)  WORKLOAD_ENV=(); for _k in IO_SIZE_MB IO_ITERS IO_SLEEP_MS IO_BLOCK_KB; do
+                       [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;  # tunable; else built-in defaults
         python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS") ;;
         mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS") ;;  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
         dlio)      # TF spawns ~1 Eigen thread/CPU; on Polaris that exceeds the per-user

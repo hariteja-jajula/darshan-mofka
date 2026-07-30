@@ -28,7 +28,13 @@ darshan_ensure_logdir >/dev/null
 # shellcheck disable=SC1091
 source lib/run.sh || die "could not source lib/run.sh"
 load_run_config; WORKLOAD="$WL_TYPE"
-echo "profile=$ENV_PROFILE  CC=$CC  PY=$PY"
+# RUN_MODE: mpmd = single-MPMD ofi+cxi path (broker+consumer+workload in ONE launch, shared
+# job VNI); legacy = old 3-launch TCP baseline (amendment #4, still selectable). cxi -> mpmd.
+RUN_MODE="${RUN_MODE:-$([[ "$SRV_PROTOCOL" == *cxi* ]] && echo mpmd || echo legacy)}"
+# Gate-0: MPI_Init hangs beside a stripped MPMD section -> MPI-IO can't stream over cxi/mpmd.
+# It stays on the legacy/TCP baseline. (run_artifacts/DECISION.md, fork resolved non-MPI only.)
+[[ "$RUN_MODE" == mpmd && "$WL_TYPE" == mpi ]] && die "WL_TYPE=mpi unsupported in mpmd/cxi mode (Gate-0); use RUN_MODE=legacy for the MPI baseline"
+echo "profile=$ENV_PROFILE  CC=$CC  PY=$PY  run_mode=$RUN_MODE"
 echo "run: workload=$WL_TYPE events=$WL_EVENTS checkpoints=$WL_CHECKPOINTS reps=$WL_REPS"
 echo "topology: nodes=$WL_NODES tasks=$WL_TASKS placement=$WL_PLACEMENT brokers=$WL_BROKERS"
 echo "stream: topic=$SRV_TOPIC partitions=$SRV_PARTITIONS/$SRV_PART_TYPE protocol=$SRV_PROTOCOL connector.enable=$C_ENABLE mongo=$SRV_MONGO_DB:$SRV_MONGO_PORT"
@@ -109,16 +115,22 @@ else
 fi
 say "topology: ${#NODELIST[@]} node(s) | broker ranks=$NRANKS_BROKER on ${SRV_NODE} | workload ${WL_TASKS} task/node x ${WL_NNODES} node = ${WL_TOTAL_RANKS} rank(s) on: ${WL_NODES_ARR[*]}"
 
-# --- 5. broker (single or one-per-node via tm), created once ---
-say "5. broker"
-pkill -f 'bedrock ' 2>/dev/null || true; sleep 1
-start_broker "$ROOT/server/_broker" "$NRANKS_BROKER" "$BROKER_HOSTFILE" || die "broker failed"
-trap 'kill "$BROKER_PID" 2>/dev/null; pkill -f "bedrock " 2>/dev/null || true' EXIT
-echo "broker up: $(grep -oE '[a-z0-9+;_]+://[0-9.]+:[0-9]+' "$GROUP" | head -1) | group $GROUP"
+# --- 5. broker: legacy only. mpmd launches broker per-rep inside run_mpmd_rep (one VNI). ---
+if [[ "$RUN_MODE" == legacy ]]; then
+    say "5. broker (legacy)"
+    pkill -f 'bedrock ' 2>/dev/null || true; sleep 1
+    start_broker "$ROOT/server/_broker" "$NRANKS_BROKER" "$BROKER_HOSTFILE" || die "broker failed"
+    trap 'kill "$BROKER_PID" 2>/dev/null; pkill -f "bedrock " 2>/dev/null || true' EXIT
+    echo "broker up: $(grep -oE '[a-z0-9+;_]+://[0-9.]+:[0-9]+' "$GROUP" | head -1) | group $GROUP"
+else
+    say "5. broker (mpmd: launched per-rep in one MPMD mpiexec)"
+    trap 'pkill -f "bedrock " 2>/dev/null || true' EXIT
+fi
 
 # --- 6. compile the workload binary (c/mpi) once ---
 case "$WL_TYPE" in
-    c)   "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke || die "compile failed" ;;
+    c)        "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke || die "compile failed" ;;
+    io_bench) "$CC" -O2 workloads/c/io_bench.c -o workloads/c/io_bench || die "compile failed" ;;  # moderate-I/O, non-MPI
     mpi) # Ensure the MPI-aware darshan lib exists (needed even under SKIP_BUILD, since the
          # plain build section may have been skipped); build it once if absent.
          [[ -e "$ENV_ROOT/darshan/install-mpi/lib/libdarshan.so" ]] || DARSHAN_MPI=1 ./build.sh >/dev/null 2>&1 || die "darshan MPI build failed"
@@ -142,6 +154,7 @@ run_workload_once() {
     local cmd=()
     case "$WL_TYPE" in
         c)         cmd=(./workloads/c/mofka_forward_smoke "$scratch") ;;
+        io_bench)  cmd=(./workloads/c/io_bench "$scratch") ;;
         python-ml) cmd=("$PY" workloads/python-ml/train.py "$scratch") ;;
         mpi)       cmd=(./workloads/mpi/mofka_forward_mpiio "$scratch") ;;
         dlio)      # DLIO benchmark from its own isolated venv (install/_dlio_venv); tensorflow
@@ -183,14 +196,20 @@ FINAL_RC=0
 for rep in $(seq 1 "$WL_REPS"); do
     RES="$(next_run_dir "$RESBASE")"; mkdir -p "$RES"
     say "run $rep/$WL_REPS -> $RES"
-    RUN_DIR="$ROOT/server/_flowcept_run"; rm -rf "$RUN_DIR"
-    start_consumer "$RUN_DIR" "$GROUP" || die "consumer failed"
-    run_workload_once "$RES"; cat "$RES/workload.out"
-    SENDS="$(grep -c 'darshan-mofka\[timing\] send' "$RES/workload.err" 2>/dev/null || true)"; SENDS=${SENDS:-0}
-    echo "sends: $SENDS"
     EVJSONL="$RES/events.jsonl"
-    stop_consumer_verdict "$RUN_DIR" "$RES/ingest.txt" "$EVJSONL"   # exports before killing mongod
-    echo "exported lines: $(wc -l < "$EVJSONL")"
+    if [[ "$RUN_MODE" == mpmd ]]; then
+        # broker + consumer + workload in ONE MPMD mpiexec (shared job VNI); leaves events.jsonl.
+        run_mpmd_rep "$RES" || { echo "rep $rep: run_mpmd_rep FAILED"; FINAL_RC=1; }
+        [ -f "$RES/workload.out" ] && cat "$RES/workload.out"
+    else
+        RUN_DIR="$ROOT/server/_flowcept_run"; rm -rf "$RUN_DIR"
+        start_consumer "$RUN_DIR" "$GROUP" || die "consumer failed"
+        run_workload_once "$RES"; cat "$RES/workload.out"
+        SENDS="$(grep -c 'darshan-mofka\[timing\] send' "$RES/workload.err" 2>/dev/null || true)"; SENDS=${SENDS:-0}
+        echo "sends: $SENDS"
+        stop_consumer_verdict "$RUN_DIR" "$RES/ingest.txt" "$EVJSONL"   # exports before killing mongod
+    fi
+    echo "exported lines: $(wc -l < "$EVJSONL" 2>/dev/null || echo 0)"
     # Reconstruct ONE .darshan per process (pid) into streamed/ -- mirroring native's
     # per-process output. Then collect the native per-process logs into native/ so the
     # two directories hold the SAME set of files (one per process) for a 1:1 comparison.
