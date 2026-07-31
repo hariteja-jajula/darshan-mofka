@@ -181,7 +181,7 @@ workload_env() {
     [ "$every" -lt 1 ] && every=1
     case "$WL_TYPE" in
         c)         WORKLOAD_ENV=(EPOCHS="$WL_EVENTS" CHECKPOINT_EVERY="$every") ;;
-        io_bench)  WORKLOAD_ENV=(); for _k in IO_SIZE_MB IO_ITERS IO_SLEEP_MS IO_BLOCK_KB; do
+        io_bench)  WORKLOAD_ENV=(); for _k in IO_SIZE_MB IO_ITERS IO_SLEEP_MS IO_BLOCK_KB COMPUTE_MODE COMPUTE MATRIX_SIZE; do
                        [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;  # tunable; else built-in defaults
         python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS") ;;
         mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS") ;;  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
@@ -468,6 +468,7 @@ CONSUMER
     {
         printf '#!/bin/bash\n'
         printf 'ROOT=%q COORD=%q RES=%q PROFILE=%q WL_TYPE=%q\n' "$ROOT" "$COORD" "$RES" "$ENV_PROFILE" "$WL_TYPE"
+        printf 'NO_DARSHAN=%q\n' "${NO_DARSHAN:-0}"
         printf 'ESTR=%q\n' "$ESTR"
         printf 'DLIB=%q\n' "$DLIB"
         printf 'CMD=%q\n' "$CMD"
@@ -481,7 +482,13 @@ echo "s_workload rank=$RANKID host=$(hostname -s) VNIS=[${SLINGSHOT_VNIS:-}]" > 
 for _ in $(seq 1 "${CONSUMER_READY_WAIT_S:-180}"); do [ -f "$COORD/CONSUMER_READY" ] && break; sleep 1; done
 if [ ! -f "$COORD/CONSUMER_READY" ]; then echo "workload rank=$RANKID: CONSUMER_READY never appeared" >> "$RES/workload.$RANKID.out"; touch "$COORD/WL_FAIL.$RANKID"; exit 3; fi
 scratch="/tmp/dm_${WL_TYPE}_${RANKID}_$$"; mkdir -p "$scratch"
-env $ESTR DARSHAN_LOGPATH="$RES" LD_PRELOAD="$DLIB" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
+# NO_DARSHAN=1 (baseline arm): run the workload WITHOUT LD_PRELOAD'ing libdarshan, so it
+# does raw I/O only (no instrumentation, no streaming). Gives a true no-Darshan wall time.
+if [ "${NO_DARSHAN:-0}" = 1 ]; then
+  env $ESTR DARSHAN_LOGPATH="$RES" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
+else
+  env $ESTR DARSHAN_LOGPATH="$RES" LD_PRELOAD="$DLIB" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
+fi
 rc=$?
 rm -rf "$scratch" 2>/dev/null || true
 touch "$COORD/WL_DONE.$RANKID"

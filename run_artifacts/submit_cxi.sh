@@ -1,28 +1,47 @@
 #!/bin/bash
-# submit_cxi.sh -- THE one file to edit + submit for a cross-node ofi+cxi run.
-# Edit the knobs below, then:  PBS_ACCOUNT=radix-io bash run_artifacts/submit_cxi.sh
-#
-# Forces ofi+cxi, which selects the single-MPMD path in job.sh (broker + FlowCept
-# consumer + Darshan workload in ONE mpiexec sharing one Slingshot job VNI). Non-MPI
-# workloads only (c | io_bench | python-ml); MPI-IO stays on the legacy/TCP baseline
-# (Gate-0: MPI_Init hangs beside a stripped MPMD section -- run_artifacts/DECISION.md).
+
 set -euo pipefail
 
+
+
 # ===================== KNOBS (edit these) =====================
-NODES="${NODES:-2}"            # total nodes: 1 broker/consumer (N0) + rest run the workload
-TASKS="${TASKS:-1}"            # workload processes PER workload node
-WORKLOAD="${WORKLOAD:-io_bench}"   # c | io_bench | python-ml   (NOT mpi over cxi)
-REPS="${REPS:-1}"             # repeat the whole run N times
-EVENTS="${EVENTS:-8}"         # workload scale knob (write-events / steps)
-PARTITIONS="${PARTITIONS:-1}" # broker partitions (>= CONSUMERS to scale the drain)
-CONSUMERS="${CONSUMERS:-1}"   # parallel sharded FlowCept drainers on N0
-QUEUE="${QUEUE:-debug}"       # debug (<=2 nodes) | debug-scaling (up to ~10) | prod
-WALLTIME="${WALLTIME:-00:30:00}"
-NCPUS="${NCPUS:-32}"          # Polaris compute node = 32 physical cores
+NODES=2            # total nodes: 1 broker/consumer (N0) + rest run the workload
+TASKS=1            # workload processes PER workload node
+WORKLOAD=io_bench   # c | io_bench | python-ml   (NOT mpi over cxi)
+REPS=2             # repeat the whole run N times
+EVENTS=100         # workload scale knob (write-events / steps)
+PARTITIONS=16 # broker partitions (>= CONSUMERS to scale the drain)
+CONSUMERS=1   # parallel sharded FlowCept drainers on N0
+QUEUE=debug       # debug (<=2 nodes) | debug-scaling (up to ~10) | prod
+WALLTIME=01:00:00
+NCPUS=32          # Polaris compute node = 32 physical cores
 # io_bench profile (only used when WORKLOAD=io_bench; defaults = moderate/sustained):
-IO_SIZE_MB="${IO_SIZE_MB:-16}"; IO_ITERS="${IO_ITERS:-16}"
-IO_SLEEP_MS="${IO_SLEEP_MS:-50}"; IO_BLOCK_KB="${IO_BLOCK_KB:-1024}"
+
+
+IO_SIZE_MB=16
+IO_ITERS=16
+IO_SLEEP_MS=50
+IO_BLOCK_KB=1024
+# compute knobs (io_bench): COMPUTE dense NxN matmuls PER I/O iteration (0=off),
+# MATRIX_SIZE = N. I/O is UNCHANGED (same 600 events) -- this only adds per-rank CPU.
+# Default tuned for ~10 min/rank: 16 iters * 76 matmuls * ~0.5s (N=512) ~= 600s.
+# (login-node estimate; read WORK_START_NS/WORK_END_NS in the log to recalibrate.)
+COMPUTE=76
+MATRIX_SIZE=512
+
+
+MAX_BATCHES=512    # DARSHAN_MOFKA_MAX_BATCHES: backpressure/drop point (run.sh default 64)
+FLUSH_MS=30000        # DARSHAN_MOFKA_FLUSH_MS: final drain-wait ceiling (run.sh default 5000)
+ENABLE=1                # DARSHAN_MOFKA_ENABLE: 1=stream (arm C), 0=darshan-native-only (arm B)
+TIMING=1                # DARSHAN_MOFKA_TIMING: 1=emit per-call us to stderr (micro metrics), 0=clean macro run (run.sh default 1)
+
+account=radix-io
+SKIP_BUILD=1
 # ==============================================================
+
+
+
+
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 account="${PBS_ACCOUNT:-radix-io}"
@@ -37,8 +56,21 @@ PBS_EXTRA=()
 FWD="MOFKA_PROTOCOL=ofi+cxi,WORKLOAD=$WORKLOAD,NODES=$NODES,TASKS=$TASKS,REPS=$REPS"
 FWD="$FWD,EVENTS=$EVENTS,PARTITIONS=$PARTITIONS,CONSUMERS=$CONSUMERS,PLACEMENT=separate"
 FWD="$FWD,IO_SIZE_MB=$IO_SIZE_MB,IO_ITERS=$IO_ITERS,IO_SLEEP_MS=$IO_SLEEP_MS,IO_BLOCK_KB=$IO_BLOCK_KB"
+FWD="$FWD,COMPUTE=$COMPUTE,MATRIX_SIZE=$MATRIX_SIZE"
+# connector knobs (env-var-wins over workload.config, so this file is the single source):
+FWD="$FWD,DARSHAN_MOFKA_MAX_BATCHES=$MAX_BATCHES,DARSHAN_MOFKA_FLUSH_MS=$FLUSH_MS,DARSHAN_MOFKA_ENABLE=$ENABLE"
+# TIMING is now a first-class knob in the block above (value-based gate: 0=off, 1=on),
+# so it is always forwarded -- this file is the single source, workload.config is gone.
+FWD="$FWD,DARSHAN_MOFKA_TIMING=$TIMING"
 [ -n "${SKIP_BUILD:-}" ] && FWD="$FWD,SKIP_BUILD=$SKIP_BUILD"
 [ -n "${MONGOD:-}" ]     && FWD="$FWD,MONGOD=$MONGOD"
+# A/B: forward DARSHAN_MOFKA_ASYNC when set in the environment (0=sync inline push, 1=async default).
+[ -n "${DARSHAN_MOFKA_ASYNC:-}" ] && FWD="$FWD,DARSHAN_MOFKA_ASYNC=$DARSHAN_MOFKA_ASYNC"
+# Study driver: route this job's runs into a labeled results subdir + set rpc threads.
+[ -n "${RESULTS_TAG:-}" ]        && FWD="$FWD,RESULTS_TAG=$RESULTS_TAG"
+[ -n "${RPC_THREADS:-}" ]        && FWD="$FWD,RPC_THREADS=$RPC_THREADS"
+# Baseline arm: run workload without libdarshan (raw wall time, no streaming).
+[ -n "${NO_DARSHAN:-}" ]         && FWD="$FWD,NO_DARSHAN=$NO_DARSHAN"
 
 echo "submit: select=${NODES}:ncpus=${NCPUS}:mpiprocs=${NCPUS} q=$QUEUE wall=$WALLTIME cxi mpmd | $WORKLOAD ${TASKS}task/node reps=$REPS part=$PARTITIONS cons=$CONSUMERS"
 qsub -A "$account" -q "$QUEUE" \

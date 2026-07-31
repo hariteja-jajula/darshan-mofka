@@ -34,6 +34,11 @@ RUN_MODE="${RUN_MODE:-$([[ "$SRV_PROTOCOL" == *cxi* ]] && echo mpmd || echo lega
 # Gate-0: MPI_Init hangs beside a stripped MPMD section -> MPI-IO can't stream over cxi/mpmd.
 # It stays on the legacy/TCP baseline. (run_artifacts/DECISION.md, fork resolved non-MPI only.)
 [[ "$RUN_MODE" == mpmd && "$WL_TYPE" == mpi ]] && die "WL_TYPE=mpi unsupported in mpmd/cxi mode (Gate-0); use RUN_MODE=legacy for the MPI baseline"
+# Gate-1: over cxi/mpmd the supported non-MPI shape is 1 rank PER NODE. Multi-rank/node C/io_bench/
+# python-ml floods the single broker -> proven ~85% event loss (C N2T4 500K MISMATCH) or ceiling
+# timeout / PALS node drop at scale (C N5T4 16-rank). For multi-rank runs use the TCP/legacy path
+# (MOFKA_PROTOCOL=ofi+tcp), which is also how MPI/dlio run. (Overnight 2026-07-31 evidence.)
+[[ "$RUN_MODE" == mpmd && "${WL_TASKS:-1}" -gt 1 ]] && die "WL_TASKS=$WL_TASKS (>1 rank/node) unsupported in mpmd/cxi mode (Gate-1): cxi streaming is 1-rank/node only. For multi-rank use MOFKA_PROTOCOL=ofi+tcp (legacy path, same as MPI/dlio)."
 echo "profile=$ENV_PROFILE  CC=$CC  PY=$PY  run_mode=$RUN_MODE"
 echo "run: workload=$WL_TYPE events=$WL_EVENTS checkpoints=$WL_CHECKPOINTS reps=$WL_REPS"
 echo "topology: nodes=$WL_NODES tasks=$WL_TASKS placement=$WL_PLACEMENT brokers=$WL_BROKERS"
@@ -194,7 +199,9 @@ run_workload_once() {
 }
 
 # --- 7. reps: run + drain + reconstruct + compare, into descriptive RUN<n> dirs ---
-RESBASE="$ROOT/results/$(results_dir_name)"
+# RESULTS_TAG (optional): override the results subdir name so a study driver can route
+# each arm/config into its own labeled dir (e.g. overhead_study.sh). Default = topology name.
+RESBASE="$ROOT/results/${RESULTS_TAG:-$(results_dir_name)}"
 FINAL_RC=0
 for rep in $(seq 1 "$WL_REPS"); do
     RES="$(next_run_dir "$RESBASE")"; mkdir -p "$RES"
@@ -213,6 +220,13 @@ for rep in $(seq 1 "$WL_REPS"); do
         stop_consumer_verdict "$RUN_DIR" "$RES/ingest.txt" "$EVJSONL"   # exports before killing mongod
     fi
     echo "exported lines: $(wc -l < "$EVJSONL" 2>/dev/null || echo 0)"
+    # Baseline arm (NO_DARSHAN=1): the workload ran without libdarshan, so there are no
+    # native logs and nothing was streamed. Skip reconstruct/compare -- the value of this
+    # arm is the raw workload wall time (in workload.*.out), not a log comparison.
+    if [ "${NO_DARSHAN:-0}" = 1 ]; then
+        echo "VERDICT: BASELINE (no-Darshan arm: reconstruct/compare skipped)" | tee "$RES/compare.txt"
+        continue
+    fi
     # Reconstruct ONE .darshan per process (pid) into streamed/ -- mirroring native's
     # per-process output. Then collect the native per-process logs into native/ so the
     # two directories hold the SAME set of files (one per process) for a 1:1 comparison.
