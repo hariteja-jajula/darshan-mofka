@@ -50,7 +50,15 @@ Per-phase connector cost from an io_bench streaming run (600 events). Regenerate
 |-----|-------:|-----:|---------:|-----------:|---------:|---------:|-------:|:-------:|
 | io_bench (ref RUN10, short) _(measured)_ | 601 | 157.0 ms | 29.65 us | 17.82 ms | 3.08 us | 0.067 ms | 1.05 | PASS |
 | **OH_IOBENCH_10MIN streaming (job 7307666)** _(measured)_ | 601 | **560.1 ms** | **19.90 us** | **11.96 ms** | **3.44 us** | **0.069 ms** | **1134.2** | **PASS** |
-| OH_IOBENCH_10MIN baseline (job 7307667) _(pending)_ | 0 | — | — | — | — | — | TBD | BASELINE |
+| OH_IOBENCH_10MIN baseline (job 7307667) _(measured)_ | 0 | — | — | — | — | — | 633.5 | BASELINE |
+
+> **Methodology caveat — use self-timed overhead, not cross-run wall diffs.** The baseline
+> (633.5 s) and streaming (1134.2 s) reps ran in **separate allocations on different compute nodes**
+> (baseline x3206/x3005; streaming x3001), and the `COMPUTE` matmul loop is CPU-clock-sensitive, so
+> their raw wall times are **not** directly comparable — the gap is node-to-node compute variance,
+> not streaming cost. The trustworthy overhead metric is the connector's **self-reported** init+push+
+> finalize (0.572 s, measured inside the streaming process itself), which is immune to node variance.
+> To get a clean wall A/B, run all arms **in one job/allocation** (same nodes) — future work.
 
 ### The headline measured result (job 7307666, ~19 min run)
 ```
