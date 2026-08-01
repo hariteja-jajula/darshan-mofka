@@ -139,6 +139,7 @@ fi
 case "$WL_TYPE" in
     c)        "$CC" -O2 workloads/c/mofka_forward_smoke.c -o workloads/c/mofka_forward_smoke || die "compile failed" ;;
     io_bench) "$CC" -O2 workloads/c/io_bench.c -o workloads/c/io_bench || die "compile failed" ;;  # moderate-I/O, non-MPI
+    io_bench_py) : ;;  # Python twin of io_bench -- no compile step
     mpi) # Ensure the MPI-aware darshan lib exists (needed even under SKIP_BUILD, since the
          # plain build section may have been skipped); build it once if absent.
          [[ -e "$ENV_ROOT/darshan/install-mpi/lib/libdarshan.so" ]] || DARSHAN_MPI=1 ./build.sh >/dev/null 2>&1 || die "darshan MPI build failed"
@@ -163,6 +164,7 @@ run_workload_once() {
     case "$WL_TYPE" in
         c)         cmd=(./workloads/c/mofka_forward_smoke "$scratch") ;;
         io_bench)  cmd=(./workloads/c/io_bench "$scratch") ;;
+        io_bench_py) cmd=("$PY" workloads/python-ml/io_bench.py "$scratch") ;;
         python-ml) cmd=("$PY" workloads/python-ml/train.py "$scratch") ;;
         mpi)       cmd=(./workloads/mpi/mofka_forward_mpiio "$scratch") ;;
         dlio)      # DLIO benchmark from its own isolated venv (install/_dlio_venv); tensorflow

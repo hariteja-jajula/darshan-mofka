@@ -181,8 +181,8 @@ workload_env() {
     [ "$every" -lt 1 ] && every=1
     case "$WL_TYPE" in
         c)         WORKLOAD_ENV=(EPOCHS="$WL_EVENTS" CHECKPOINT_EVERY="$every") ;;
-        io_bench)  WORKLOAD_ENV=(); for _k in IO_SIZE_MB IO_ITERS IO_SLEEP_MS IO_BLOCK_KB COMPUTE_MODE COMPUTE MATRIX_SIZE; do
-                       [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;  # tunable; else built-in defaults
+        io_bench|io_bench_py)  WORKLOAD_ENV=(); for _k in IO_SIZE_MB IO_ITERS IO_SLEEP_MS IO_BLOCK_KB COMPUTE_MODE COMPUTE MATRIX_SIZE; do
+                       [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;  # tunable; else built-in defaults (C + Python twin share knobs)
         python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS") ;;
         mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS") ;;  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
         dlio)      # TF spawns ~1 Eigen thread/CPU; on Polaris that exceeds the per-user
@@ -394,10 +394,11 @@ run_mpmd_rep() {
     local DLIB; DLIB="${DARSHAN_LIB_SO:-$(darshan_lib)}"   # reuse the once-resolved path (job.sh); fall back if called standalone
     local CMD
     case "$WL_TYPE" in
-        c)         CMD="./workloads/c/mofka_forward_smoke" ;;
-        io_bench)  CMD="./workloads/c/io_bench" ;;
-        python-ml) CMD="$PY workloads/python-ml/train.py" ;;
-        *)         echo "run_mpmd_rep: unknown non-MPI workload '$WL_TYPE'"; return 2 ;;
+        c)           CMD="./workloads/c/mofka_forward_smoke" ;;
+        io_bench)    CMD="./workloads/c/io_bench" ;;
+        io_bench_py) CMD="$PY workloads/python-ml/io_bench.py" ;;
+        python-ml)   CMD="$PY workloads/python-ml/train.py" ;;
+        *)           echo "run_mpmd_rep: unknown non-MPI workload '$WL_TYPE'"; return 2 ;;
     esac
     local STRIP COLLAPSE; STRIP="$(pmi_strip)"; COLLAPSE="$(cxi_collapse)"
 
