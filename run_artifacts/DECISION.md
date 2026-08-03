@@ -15,7 +15,115 @@ start_server.sh,stop_server.sh}. Shared files (job.sh/run.sh/common.sh) UNTOUCHE
 so dormant legacy branches now hold 3 intentional dangling refs (job.sh:150/162 mpi build+run arms;
 run.sh:249 multi-broker render; _profile.sh:7/13 lcrc source) — all unreachable on cxi. Restore
 manifest + exact mv-back commands: ../legacy-preserved/RESTORE.md. Relocation committed 04c9c2b.
-cxi re-verify post-relocation: job 7302440 (C 1+1) QUEUED — expect ofi+cxi + all_done + events + PASS.
+cxi re-verify post-relocation: job 7302440 (C 1+1) ✅ **GREEN** — RUN8: mofka=ofi+cxi://0x0000d400,
+verdict=all_done, events.jsonl=22, 1 pid recon/0 failed, strict_compare **PASS (perproc)**.
+Relocation proven safe; legacy-relocation loop CLOSED.
+
+**OVERHEAD STUDY — PHASE-0 INFRA PLAN APPROVED (2026-07-30):** Hari approved the plan at
+`~/.claude/plans/rosy-pondering-charm.md`. 3-arm study (A=baseline no-preload / B=darshan preload+
+ENABLE=0 native-log-only / C=stream=validated mpmd-cxi). Key decision: **arms A/B via a SEPARATE
+workload-only runner under run_artifacts/overhead_study/ — job.sh + run_mpmd_rep NOT modified for
+arm selection** (arm C keeps the validated path untouched). Build order: (2,3) io_bench COMPUTE_MODE+
+WORK_NS markers & train.py WORK_NS markers [EASY] → (1) connector per-push μs SUMMARY line [TRICKY:
+async push is untimed on drain thread darshan-mofka.c:250] → (4,5) A/B runner + resumable manifest.csv
+[MODERATE]. Each edit: login-node C 1+1 smoke before proceeding. NOT executing the study, only infra.
+
+**OVERHEAD STUDY — PHASE-0 BUILD PROGRESS (2026-07-30):**
+- C2 io_bench (COMPUTE_MODE=busy|sleep + WORK_START/END_NS on CLOCK_MONOTONIC): DONE, verified.
+- C3 train.py (WORK_START/END_NS; py3.6 fallback via _mono_ns since login py3 is 3.6.15): DONE,
+  standalone smoke both markers + positive delta.
+- C1 connector push timing: SCOPE REDUCED (Hari: "darshan-mofka must stay lean, it's going
+  upstream"). NO histogram/summary line added to the connector. Instead the real drain-thread push
+  is timed with the EXISTING `mofka_took` helper → emits `darshan-mofka[timing] push <us>` (gated on
+  DARSHAN_MOFKA_TIMING, default 1 via run.sh:50). Net functional delta = 2 lines + 1 comment.
+  All stats (mean/p50/p95/p99, reconciliation) move OFFLINE into the driver that parses timing lines.
+  Committed as THREE commits in the darshan submodule, branch `mofka-dev` (pushed to fork
+  github.com/hariteja-jajula/darshan):
+    92449bd  darshan-mofka: trim inline comments, group helpers (refactor, NO behavior change)
+    e296772  darshan-mofka: time the real push on the drain thread (+2 lines)
+    57f7f45  darshan-mofka: value-based DARSHAN_MOFKA_TIMING gate (unset/empty/"0" = off; matches
+             the sibling DARSHAN_MOFKA_ENABLE / FINAL_SWEEP gates). Fixes presence-only gate that
+             read TIMING=0 as ON — needed because run.sh:50/102 ALWAYS injects the var, so step-4a
+             (TIMING off) was previously unreachable.
+  Superproject submodule pointer bumped e416988→e296772→57f7f45 (git submodule status shows no `+`).
+  **⚠ install-mpi rebuild required before DLIO phase.** The incremental build rebuilt the PLAIN
+  prefix only (darshan/install). darshan/install-mpi (used by mpi/dlio on the legacy path) does NOT
+  have the push timer OR the TIMING gate until it is rebuilt too. Not needed for the cxi non-MPI arms.
+- BUILD 2026-07-30 17:49: incremental `make -j4 && make install` in darshan/_build (srcdir + VPATH
+  verified = this worktree's darshan-runtime; prefix = darshan/install). `CC libdarshan_la-darshan-
+  mofka.lo` → `CCLD libdarshan.la`, both exit 0, NO warnings. Installed libdarshan.so.0.0.0 @17:49:44
+  carries fmt `darshan-mofka[timing] %s %.3f us` + `push` literal (verified via strings). Bare
+  ./build.sh NOT used (would wipe _build). NEXT: step-4 verify jobs (4a TIMING off, 4b TIMING=1).
+- DRIVER PARSING SPEC (so nobody re-adds connector code for stats): pushes = `grep -c 'timing] push'`
+  per rank; first_push = FIRST push line per rank (lazy-init cost, reported separately); percentiles
+  computed exactly from the raw us values. SYNC-mode caveat: `send` ENCLOSES `push` (nested) — never
+  sum send+push. work_s from workload WORK_END_NS−WORK_START_NS (monotonic), NEVER job wall time or
+  the connector's CLOCK_REALTIME.
+- OFF-BY-ONE / METADATA-PUSH IDENTITY (grounded, cross-checked — do NOT write the driver against a
+  wrong identity). Three distinct counts, DO NOT conflate:
+    * SENDS  = app-thread enqueues; each increments g_seq (darshan-mofka.c:422).
+    * PUSHES = `grep -c 'timing] push'` = ONLY the module-record push, wrapped by mofka_took at
+               darshan-mofka.c:233 (real push at :230).
+    * EVENTS = successful diaspora_producer_push = mongo docs = the metadata push (:152, in
+               emit_metadata) + one per module record (:230).
+  The metadata push (:152) is emitted ONCE on the drain thread before the pop loop
+  (mofka_drain_main:243 → emit_metadata_once:158 → emit_metadata:128), BYPASSES the ring (cannot be
+  dropped), and is NOT wrapped by mofka_took (NO `[timing] push` line). Therefore:
+    * DROPS  = SENDS − PUSHES   ← CORRECT drop formula (NOT `(sends+1) − pushes`).
+    * EVENTS = SENDS + 1        ← the observed sends=21 / events.jsonl=22 (C 1+1, job 7301622).
+    * EVENTS = PUSHES + 1       (clean run, no drops).
+  The metadata `+1` lives ONLY in EVENTS. It is excluded from BOTH sides of the drop subtraction
+  (it neither increments g_seq nor calls mofka_took), so adding it would over-count drops by exactly
+  one every clean run. Σpush RECONCILIATION (push+init+finalize μs vs (C−B)·ranks) uses PUSHES only —
+  the metadata push carries NO timed μs, so it contributes nothing to Σpush and is correctly absent.
+  [Corrected against the code + independent Explore cross-check; supersedes an earlier draft that
+  proposed `drops ≈ (sends+1) − pushes` — that draft double-counted the metadata event.]
+- C4/C5 (A/B workload-only runner + resumable manifest): PENDING.
+- STEP-4 VERIFY (2026-07-30, ≤1 job in flight): submit_cxi.sh now forwards DARSHAN_MOFKA_TIMING when
+  explicitly set (value-based gate). Plan: 4a TIMING=0 (expect ZERO `timing] push` lines + strict_
+  compare PASS), then 4b TIMING=1 (expect `timing] push` lines present, plausible μs, count(push) ==
+  sends−drops, strict_compare PASS), then 4c record both work_s as observer-effect bound. All C 1+1
+  (NODES=2 TASKS=1 io_bench) SKIP_BUILD=1 to reuse the 17:49 .so (bare build.sh would wipe _build).
+  4a JOB 7302829 (TIMING=0, NODES=2 TASKS=1 io_bench SKIP_BUILD=1) ✅ PASS: RUN5 workload.2.err = 0
+     bytes, ZERO `darshan-mofka[timing]` lines anywhere (proves value-gate: pre-fix TIMING=0 read as
+     ON). strict_compare VERDICT=PASS (perproc). events.jsonl=602, 1 pid reconstructed/0 failed.
+     work_s(off)=1.047423s (4c observer-effect bound, timing OFF).
+  4b JOB 7302839 (TIMING=1, same C 1+1 SKIP_BUILD=1) ✅ PASS (RUN6): push=601 send=601 dropped=0 →
+     IDENTITY push==send−drops HOLDS (601==601−0). events.jsonl=602 = pushes(601)+1 metadata →
+     confirms EVENTS=PUSHES+1, and the metadata +1 does NOT enter the drop formula. push μs:
+     min=15.7 p50=20.3 max=412 mean=28.5 (plausible real cxi push). init=169.7ms finalize=219.2ms.
+     strict_compare VERDICT=PASS (perproc). 1 pid reconstructed/0 failed.
+     >>> EMPIRICAL PROOF the earlier `(sends+1)−pushes` draft was wrong: it would compute drops=
+     602−601=1 (false drop) here; correct `drops=sends−pushes=0` matches reality. Spec is right.
+  4c OBSERVER-EFFECT BOUND (same C 1+1 io_bench, self-timed WORK monotonic):
+     work_s(TIMING off, 7302829)=1.047423s ; work_s(TIMING on, 7302839)=1.052721s. Δ=+5.3ms (+0.51%)
+     — the cost of emitting 601 push + init/send/finalize timing lines to stderr. Upper bound on the
+     timing instrument's observer effect at this scale; the study runs arms with TIMING as configured.
+  ==> C1 CONNECTOR INSTRUMENTATION COMPLETE + VERIFIED. 3 commits on mofka-dev (pushed), submodule
+      bumped, PLAIN prefix rebuilt+installed, value-gate + push-timer both proven on cxi. install-mpi
+      still needs its own rebuild before any DLIO phase.
+- SINGLE-SOURCE EXPERIMENT (2026-07-30, Hari): make submit_cxi.sh the ONLY place to set env vars for
+  the cxi path; prove workload.config is not required. Change: baked scale-proven connector knobs into
+  submit_cxi.sh (MAX_BATCHES=512, FLUSH_MS=30000, ENABLE=1) + forwarded them in FWD (env-var-wins over
+  config via _cfg_env, lib/run.sh:23). Then RENAMED workloads/workload.config -> workload_legacy.config
+  (reversible) to flush hidden deps. Nothing hard-requires the file (no die/[[-f]]; cfg_get catches
+  FileNotFoundError->default). NOTE: config/code split — env/*.sh + lib/{run,config}.sh are SOURCED
+  code (not optional); only *.config files are data. Smoke: JOB <below> (C 1+1 io_bench SKIP_BUILD=1).
+  Expect: VERDICT=PASS with workload.config ABSENT (proves single-source). If it regresses, restore:
+  mv workloads/workload_legacy.config workloads/workload.config.
+  SMOKE JOB 7302995 (config ABSENT, C 1+1 io_bench SKIP_BUILD=1) — **PASS**. VERDICT=PASS (perproc:
+  every compared integer counter matches native); run_mpmd_rep verdict=all_done; events.jsonl=602;
+  sends=601 push=601 dropped=0 -> identity holds (drops=sends-pushes=0; events=pushes+1=602). Proof the
+  forwarded knobs (not run.sh's weaker 64/5000 fallbacks) took effect: RUN7/sections/s_workload.sh line 3
+  shows DARSHAN_MOFKA_MAX_BATCHES=512 + DARSHAN_MOFKA_FLUSH_MS=30000 (would be 64/5000 if config were
+  silently needed). CONCLUSION: workload.config is NOT required on the cxi path — submit_cxi.sh is the
+  single source. FOLLOW-UP CATCH: the smoke surfaced one MORE divergent default the config had been
+  hiding — connector.timing:1 (run.sh:50 default 1). It leaked TIMING=1 into the run even though I did
+  not forward it, because the retired config's default WAS being replaced by run.sh's own baked default 1.
+  Closed the gap: TIMING is now a first-class knob in submit_cxi.sh's block (TIMING="${TIMING:-1}") and
+  always forwarded. Dry-run confirms FWD now carries all 4 connector knobs from the one block
+  (MAX_BATCHES=512, FLUSH_MS=30000, ENABLE=1, TIMING=1). bash -n OK. submit_cxi.sh is now the complete
+  single source of truth for every env var on the cxi path.
 
 **Single next action:** DONE — validation ladder complete + cleanup complete + behavior-unchanged
 re-verify GREEN. Nothing pending. CLEANUP committed e5a16d3 (resolve-once DARSHAN_LIB_SO, dropped
@@ -101,6 +209,26 @@ Reachability graph (agent A): submit_cxi.sh → job.sh → {env/server.sh, env/w
 error twice → STOP + wait; (3) 5-node → debug-scaling/preemptable, ≤1 job in flight, wall ≤1h;
 (4) API degrades → jobs run without me, record jobid, never resubmit unconfirmed; (5) this block
 stays current; (6) never conclude from mpiexec exit code — flags/files/logs only.
+
+---
+
+## KNOWN ISSUES (connector; relocated here so nothing is lost across refactors)
+
+**FINAL_SWEEP hangs python-ml at shutdown — MUST stay unset/0 for python-ml study runs.**
+The connector's `darshan_mofka_connector_flush_records` (opt-in via `DARSHAN_MOFKA_FINAL_SWEEP=1`)
+re-streams every module's FINAL record at finalize. It is DISABLED BY DEFAULT. The lean-refactor
+commit (darshan 92449bd) trimmed the full mechanism note down to one line in the code; the exact
+pre-refactor wording (darshan e416988, darshan-mofka.c:504-507) is preserved here verbatim:
+
+> KNOWN ISSUE -- DISABLED BY DEFAULT. Enabled, the first push here hangs on python-ml: these are NEW
+> sends from the shutdown context, and mofka's producer sender runs on the margo *progress* pool, so
+> a send RPC started as the process winds down never progresses (live sends work; the process is
+> still active). A proper fix is mofka-side (dedicated non-progress pool), out of scope here.
+
+Guard behavior (darshan-mofka.c): unset, `""`, and `"0"` all mean OFF. The `.h` still carries a
+shorter form of this note. **Study impact:** arm C uses python-ml as one workload → the driver and
+all study configs MUST NOT set `DARSHAN_MOFKA_FINAL_SWEEP=1`. It is 0 by default in
+workloads/workload.config (connector.final_sweep 0); leave it there.
 
 ---
 
