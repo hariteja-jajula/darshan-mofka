@@ -107,7 +107,8 @@ connector_env() {
     # this array (not inherited), so pass through any that are set rather than relying on MPI
     # env-forwarding. (The A/B DARSHAN_MOFKA_ASYNC=0 arm in particular depends on this.)
     for _k in DARSHAN_MOFKA_ASYNC DARSHAN_MOFKA_QUEUE_DEPTH DARSHAN_MOFKA_DROP_POLICY \
-              DARSHAN_MOFKA_DRAIN_THREADS DARSHAN_MOFKA_JOIN_MS DARSHAN_MOFKA_VERBOSE; do
+              DARSHAN_MOFKA_DRAIN_THREADS DARSHAN_MOFKA_JOIN_MS DARSHAN_MOFKA_VERBOSE \
+              DARSHAN_MOFKA_MARGO_JSON DIASPORA_C_SENDER_THREADS; do
         [ -n "${!_k:-}" ] && CONNECTOR_ENV+=( "$_k=${!_k}" )
     done
     # Producer-only: make the connector's Mofka engine non-listening (patched mofka reads
@@ -546,7 +547,10 @@ WORKLOAD
     # ---------------- verdict: ALL_DONE + non-empty events.jsonl (amendment #6) ----------------
     local nlines; nlines="$(wc -l < "$RES/events.jsonl" 2>/dev/null || echo 0)"
     echo "run_mpmd_rep verdict=$verdict  events.jsonl=${nlines} lines  mofka=$(grep -oE 'ofi\+cxi://[^"]+' "$COORD/mofka.json" 2>/dev/null | head -1)"
-    if [ "$verdict" = all_done ] && [ -s "$RES/events.jsonl" ]; then
+    # Runtime-only arm (DARSHAN_MOFKA_ENABLE=0) legitimately streams 0 events, so an
+    # empty events.jsonl is expected -- success is ALL_DONE alone. The streaming arm
+    # still requires non-empty events.jsonl (amendment #6).
+    if [ "$verdict" = all_done ] && { [ "${DARSHAN_MOFKA_ENABLE:-1}" = 0 ] || [ -s "$RES/events.jsonl" ]; }; then
         return 0
     fi
     echo "run_mpmd_rep FAIL ($verdict) -- diagnostics:"
