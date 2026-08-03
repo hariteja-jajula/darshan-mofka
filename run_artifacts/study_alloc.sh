@@ -19,7 +19,7 @@ say "allocation: $NNODES nodes"
 
 WALL_S=$(( ${STUDY_WALL_S:-10800} ))          # 3h default
 START=$(date +%s)
-GUARD_S=$(( 20*60 ))                            # stop starting new arms if <20 min left
+GUARD_S=$(( ${STUDY_GUARD_S:-1200} ))           # stop starting new arms if < this many s left
 
 # calibration knob values (from deliverables/calibration.md)
 CMP_IOBENCH=${CMP_IOBENCH:-72}                  # COMPUTE @ MATRIX=512 (~10 min)

@@ -15,6 +15,7 @@ Usage:
 import os
 import sys
 import struct
+import time
 
 DATA_DIR = sys.argv[1] if len(sys.argv) > 1 else "/tmp/mofka-ml"
 N_FILES = int(os.environ.get("ML_FILES", "6"))
@@ -24,6 +25,12 @@ EPOCHS = int(os.environ.get("ML_EPOCHS", "2"))
 N_CHECKPOINTS = int(os.environ.get("ML_CHECKPOINTS", "1"))    # checkpoints written across the run
 
 os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def _mono_ns():
+    """Monotonic nanoseconds; time.monotonic_ns() is 3.7+, fall back for 3.6."""
+    f = getattr(time, "monotonic_ns", None)
+    return f() if f else int(time.monotonic() * 1e9)
 
 
 def write_dataset():
@@ -54,6 +61,9 @@ def read_shard(path):
 
 
 def main():
+    # WORK markers bracket the self-timed work (dataset write + train loop) so the
+    # overhead-study driver reads a monotonic WORK duration, not job wall time.
+    print(f"WORK_START_NS {_mono_ns()}", flush=True)
     paths = write_dataset()
     print(f"wrote {len(paths)} shards to {DATA_DIR}")
 
@@ -85,6 +95,7 @@ def main():
             saved += 1
         print(f"epoch {epoch}: mean-of-means={epoch_sum/len(paths):.6f}")
 
+    print(f"WORK_END_NS {_mono_ns()}", flush=True)
     print(f"saved {saved} checkpoints to {DATA_DIR}")
     print("python-ml workload complete")
 
