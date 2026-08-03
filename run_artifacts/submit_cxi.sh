@@ -7,7 +7,7 @@ set -euo pipefail
 # ===================== KNOBS (edit these) =====================
 NODES=2            # total nodes: 1 broker/consumer (N0) + rest run the workload
 TASKS=1            # workload processes PER workload node
-WORKLOAD=io_bench   # c | io_bench | python-ml   (NOT mpi over cxi)
+WORKLOAD=io_bench   # c | io_bench | io_bench_py | python-ml   (NOT mpi over cxi)
 REPS=2             # repeat the whole run N times
 EVENTS=100         # workload scale knob (write-events / steps)
 PARTITIONS=16 # broker partitions (>= CONSUMERS to scale the drain)
@@ -77,5 +77,9 @@ qsub -A "$account" -q "$QUEUE" \
      -l select="${NODES}:ncpus=${NCPUS}:mpiprocs=${NCPUS}" -l walltime="$WALLTIME" \
      "${PBS_EXTRA[@]}" -N dm_cxi -j oe -o "$ROOT/results/" -v "$FWD" <<PBS
 cd "$ROOT"
+# Fix A' (work.py model): yielding dedicated progress thread, NO cpubind/pinning.
+# Exported here (not via -v) so the JSON's commas don't corrupt the qsub -v list.
+# run.sh forwards DARSHAN_MOFKA_MARGO_JSON into CONNECTOR_ENV -> reaches the workload rank.
+export DARSHAN_MOFKA_MARGO_JSON='{"use_progress_thread":false,"rpc_thread_count":0,"argobots":{"pools":[{"name":"__primary__","kind":"fifo_wait","access":"mpmc"},{"name":"__progress__","kind":"fifo_wait","access":"mpmc"}],"xstreams":[{"name":"__primary__","scheduler":{"type":"basic_wait","pools":["__primary__"]}},{"name":"__progress__","scheduler":{"type":"basic_wait","pools":["__progress__"]}}]},"progress_pool":"__progress__"}'
 bash workloads/job.sh
 PBS

@@ -189,7 +189,14 @@ run_workload_once() {
     if [[ "$WL_TOTAL_RANKS" -le 1 && "$WL_NNODES" -le 1 && "$WL_NODE" == "$SRV_NODE" && "$WL_TYPE" != mpi && "$WL_TYPE" != dlio ]]; then
         env "${base[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
     else
-        local estr="${CONNECTOR_ENV[*]} ${DARSHAN_ENV[*]} ${WORKLOAD_ENV[*]}"
+        # Shell-quote every env assignment with %q so values containing shell metacharacters
+        # (e.g. DARSHAN_MOFKA_MARGO_JSON's {}[]":, argobots JSON) survive the double-quoted
+        # `bash -lc "... env $estr ..."` re-parse. A plain "${CONNECTOR_ENV[*]}" space-join lets
+        # the JSON's embedded quotes terminate the shell string and shred the value.
+        local estr=""; local _kv
+        for _kv in "${CONNECTOR_ENV[@]}" "${DARSHAN_ENV[@]}" "${WORKLOAD_ENV[@]}"; do
+            estr+=" $(printf '%q' "$_kv")"
+        done
         # ofi+cxi producer must collapse to the same single VNI the broker used, else it can't
         # attach across nodes over the shared job VNI. cxi_pfx runs inside the launched shell.
         local cxi_pfx=""; [[ "$SRV_PROTOCOL" == *cxi* ]] && cxi_pfx="$(cxi_collapse) "
@@ -227,6 +234,14 @@ for rep in $(seq 1 "$WL_REPS"); do
     # arm is the raw workload wall time (in workload.*.out), not a log comparison.
     if [ "${NO_DARSHAN:-0}" = 1 ]; then
         echo "VERDICT: BASELINE (no-Darshan arm: reconstruct/compare skipped)" | tee "$RES/compare.txt"
+        continue
+    fi
+    # Runtime-only arm (DARSHAN_MOFKA_ENABLE=0): libdarshan ran and wrote a native
+    # log, but streamed 0 events -> events.jsonl is empty, so reconstruct/compare
+    # has nothing to do. Skip it; this arm's value is the workload wall time (the
+    # instrumented-but-not-streaming cost), captured in workload.*.out.
+    if [ "${DARSHAN_MOFKA_ENABLE:-1}" = 0 ]; then
+        echo "VERDICT: RUNTIMEONLY (no-stream arm: reconstruct/compare skipped)" | tee "$RES/compare.txt"
         continue
     fi
     # Reconstruct ONE .darshan per process (pid) into streamed/ -- mirroring native's
