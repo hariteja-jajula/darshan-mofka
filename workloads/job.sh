@@ -186,8 +186,12 @@ run_workload_once() {
     # Fast path: a single local rank on the head node needs no launcher. Otherwise place
     # WL_TASKS ranks per workload node (multi-proc and/or multi-node) with ppr mapping --
     # NO oversubscription (WL_TASKS must be <= ncpus/node or PRRTE errors, which is correct).
+    # Shell-level WORK window = true workload-process wall (launch->exit), EXCLUDING broker/
+    # consumer setup + drain. This is the valid workload wall for workloads that do not self-time
+    # (mpi, dlio). Written into workload.out so extract.sh can read WORK_SH_START/END_NS.
+    echo "WORK_SH_START_NS $(date +%s%N)" > "$RES/workload.out"
     if [[ "$WL_TOTAL_RANKS" -le 1 && "$WL_NNODES" -le 1 && "$WL_NODE" == "$SRV_NODE" && "$WL_TYPE" != mpi && "$WL_TYPE" != dlio ]]; then
-        env "${base[@]}" "${cmd[@]}" > "$RES/workload.out" 2> "$RES/workload.err"
+        env "${base[@]}" "${cmd[@]}" >> "$RES/workload.out" 2> "$RES/workload.err"
     else
         # Shell-quote every env assignment with %q so values containing shell metacharacters
         # (e.g. DARSHAN_MOFKA_MARGO_JSON's {}[]":, argobots JSON) survive the double-quoted
@@ -203,8 +207,9 @@ run_workload_once() {
         mpi_launch "$WL_TOTAL_RANKS" "$WL_TASKS" "$WL_HOSTFILE"
         "${MPI_LAUNCH[@]}" bash -lc \
           "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && ${cxi_pfx}env $estr DARSHAN_LOGPATH='$RES' LD_PRELOAD='$dlib' ${cmd[*]}" \
-          > "$RES/workload.out" 2> "$RES/workload.err"
+          >> "$RES/workload.out" 2> "$RES/workload.err"
     fi
+    echo "WORK_SH_END_NS $(date +%s%N)" >> "$RES/workload.out"
 }
 
 # --- 7. reps: run + drain + reconstruct + compare, into descriptive RUN<n> dirs ---

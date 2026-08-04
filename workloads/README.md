@@ -93,3 +93,83 @@ confirm your config took effect, and the PBS console log is `results/<jobid>.img
 - **Broker per node**: `nodes: 2, placement: colocated, brokers: per-node` — one broker per
   node (MPI-bootstrapped), no ssh.
 - **Bigger run**: raise `events` (e.g. `50000`); the workload prints the event count up front.
+
+---
+
+# Manual demo (login node, no PBS) — run the pipeline by hand
+
+For a live demo you can drive each role yourself instead of `job.sh`. This uses the
+**legacy / TCP path** (the same one MPI/DLIO use): no `qsub`, no `mpiexec`, no CXI — it
+runs entirely on a login node over `ofi+tcp`. Three roles, three terminals.
+
+The three roles map to the pipeline:
+
+    broker (Mofka/bedrock)  <--  producer (workload + LD_PRELOAD libdarshan)
+             |
+             v
+        consumer (FlowCept + mongod)  -->  events.jsonl  -->  reconstruct  -->  compare vs native
+
+## Terminal 1 — server (broker + darshan topic)
+
+    cd <repo-root>
+    bash server/start_server.sh          # ofi+tcp; creates server/mofka.json; LEAVE RUNNING
+
+Starts `bedrock`, creates the `darshan` topic + a partition, and writes the group file
+`server/mofka.json` (the address the other two roles connect to). It prints
+`SERVER READY` and the broker endpoint. Ctrl-C stops the broker.
+Knobs: `PROTOCOL=ofi+cxi` (on a compute node), `TOPIC=darshan`, `PARTITIONS=1`.
+
+## Terminal 2 — consumer (FlowCept drains the topic into mongod)
+
+    cd <repo-root>
+    source env/server.sh                 # sets PY to the venv that has flowcept + mongod on PATH
+    MOFKA_GROUP=$PWD/server/mofka.json TOPIC=darshan \
+    MONGO_DB=darshan_stream MONGO_PORT=27099 \
+      bash Client/capture_flowcept.sh    # LEAVE RUNNING; prints "consumer alive"
+
+Subscribes to the `darshan` topic and writes every received event into mongod. Must be
+started AFTER the server (it needs `server/mofka.json`). `TOPIC`/`MONGO_PORT` must match
+what the producer/reconstruct use.
+
+## Terminal 3 — producer (workload under the Darshan->Mofka connector)
+
+    cd <repo-root>
+    bash server/run_producer.sh io_bench        # or: io_bench_py | python-ml
+
+Runs the workload with `LD_PRELOAD=libdarshan.so` and `DARSHAN_MOFKA_ENABLE=1`, so every
+POSIX/STDIO op is streamed to the broker. You'll see `darshan-mofka[timing] send/push`
+lines (the connector's per-event cost) and a clean `finalize`. It also writes a native
+`.darshan` log to its scratch dir.
+Knobs: `WL=io_bench_py`, `IO_ITERS=8`, `IO_SLEEP_MS=50`, `COMPUTE=2`, `MATRIX_SIZE=128`.
+
+## Verify fidelity (optional 4th step)
+
+Stop the consumer (Ctrl-C in terminal 2) — on stop it exports everything it received to
+`server/_flowcept_run/.../events.jsonl`. Then rebuild a `.darshan` from the stream and
+compare it, counter-for-counter, to the native log:
+
+    B=darshan/darshan-util/install/bin
+    $B/darshan-mofka-reconstruct <path>/events.jsonl streamed/     # rebuild from the stream
+    # put the producer's native *.darshan into native/, then:
+    install/_venv/bin/python3 workloads/strict_compare.py streamed native perproc
+    # -> VERDICT: PASS  (every streamed integer counter matches native)
+
+## If the manual steps break — one-shot fallback
+
+The whole pipeline (broker + consumer + producer + reconstruct + compare) in ONE command,
+on one node over TCP, no PBS:
+
+    RESULTS_TAG=demo MOFKA_PROTOCOL=ofi+tcp WORKLOAD=io_bench \
+    NODES=1 TASKS=1 REPS=1 EVENTS=100 \
+      bash workloads/job.sh
+
+Results land in `results/demo/RUN1/` (events.jsonl, streamed/, native/, compare.txt).
+
+## Notes
+- **TCP vs CXI:** login node = `ofi+tcp` (works anywhere). A compute node with Slingshot can
+  use `PROTOCOL=ofi+cxi`. MPI-IO must use TCP (MPI_Init is incompatible with the CXI MPMD launch).
+- **The fix knob:** `DIASPORA_C_SENDER_THREADS=1` (set by default in `run_producer.sh`) runs the
+  producer's sender on a dedicated Argobots ES (ABT-safe push) — this is the connector fix.
+- **What each role needs:** producer needs `server/mofka.json` + `libdarshan.so`; consumer needs
+  `server/mofka.json` + mongod (bundled at `server/_mongo_env/bin/mongod`) + the flowcept venv
+  (from `source env/server.sh`).

@@ -1,14 +1,14 @@
 #!/usr/bin/env python
-"""deliverables/paper_overhead_tables.pptx -- title slide + one slide per workload (5),
-each a native PowerPoint table with the SAME 5 rows:
-    Init (one-time)
-    Per-push cost (avg us) + total push
-    Finalize (drain + flush)
-    Total streaming overhead (self-timed)
-    Wall time (baseline -> streaming)
-Data: 2026-08-04 paper-reproduction study (overlap-friendly regime, COMPUTE=0; message
-service on its own node; Adaptive batching; median of streaming reps). Fidelity EXACT
-(every streamed integer counter matches native). Darshan runtime 3.4.4, log format 3.41."""
+"""deliverables/paper_overhead_tables.pptx -- title + one slide per workload (5).
+Each slide: a 4-row x 7-column table.
+  rows:    baseline, streaming rep1, rep2, rep3
+  columns: events, send(s), push(s), init(s), finalize(s), walltime(s), overhead(s)
+Batch size = Adaptive (always). Overhead = streaming walltime - baseline walltime.
+Data from the 2026-08-04 paper-reproduction study (overlap-friendly regime, COMPUTE=0;
+message service on its own node; Adaptive batching). Fidelity EXACT (every streamed
+integer counter matches native). Darshan runtime 3.4.4, log format 3.41.
+send/push/init/finalize are self-timed TOTALS in seconds. C/Py/python-ml walltime is the
+WORK region; mpi/dlio have no WORK markers so walltime is arm-to-arm (setup+drain incl.)."""
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
@@ -16,45 +16,44 @@ from pptx.enum.text import PP_ALIGN
 
 BG=RGBColor(0x0f,0x14,0x19); CARD=RGBColor(0x1a,0x22,0x2c); INK=RGBColor(0xe8,0xed,0xf2)
 MUTED=RGBColor(0x93,0xa1,0xaf); ACCENT=RGBColor(0x4f,0xc3,0xf7); HEAD=RGBColor(0x14,0x1b,0x23)
-TOTAL=RGBColor(0x12,0x20,0x2b); WHITE=RGBColor(0xff,0xff,0xff)
+BASE=RGBColor(0x12,0x20,0x2b); WHITE=RGBColor(0xff,0xff,0xff)
 
-# name, subtitle, 5 rows (label, value). MEDIAN of streaming reps.
+COLS = ["arm","events","send avg (us)","push avg (us)","init (s)","finalize (s)","walltime (s)","overhead (s)"]
+
+# per workload: (name, subtitle, [ (arm, events, send_avg_us, push_avg_us, init_s, finalize_s, wall_s, overhead_s) ])
+# "-" where not applicable (baseline has no connector). overhead = wall - baseline_wall.
+# send/push are PER-EVENT AVERAGES in microseconds. init/finalize/wall/overhead in seconds.
 WORKLOADS = [
-    ("io_bench (C)  -  CXI, 1 rank/node",
-     "Overlap-friendly POSIX write/read + sleep. 37,899 events. 3 reps. Fidelity EXACT.",
-     [("Init (one-time)",                         "0.19 s"),
-      ("Per-push cost (37,899 events)",           "19.0 us/event  (0.72 s total)"),
-      ("Finalize (drain + flush)",                "0.0001 s"),
-      ("Total streaming overhead (self-timed)",   "0.98 s  =  0.16 % of run"),
-      ("Wall time (baseline -> streaming)",       "600.7 -> 601.8 s")]),
-    ("io_bench_py (Python)  -  CXI, 1 rank/node",
-     "Overlap-friendly POSIX write/read + sleep. 36,851 events. 3 reps. Fidelity EXACT.",
-     [("Init (one-time)",                         "0.17 s"),
-      ("Per-push cost (36,851 events)",           "21.5 us/event  (0.79 s total)"),
-      ("Finalize (drain + flush)",                "0.0001 s"),
-      ("Total streaming overhead (self-timed)",   "1.10 s  =  0.20 % of run"),
-      ("Wall time (baseline -> streaming)",       "558.4 -> 556.8 s")]),
-    ("python-ml (real ML: dataset + train epochs + checkpoint)  -  CXI, 1 rank/node",
-     "NumPy/PyTorch, compute-bound. 154,538 events. 3 reps. Fidelity EXACT.",
-     [("Init (one-time)",                         "0.18 s"),
-      ("Per-push cost (154,538 events)",          "45.3 us/event  (7.01 s total)"),
-      ("Finalize (drain + flush)",                "0.0002 s"),
-      ("Total streaming overhead (self-timed)",   "7.29 s  =  2.1 % of run"),
-      ("Wall time (baseline -> streaming)",       "211.3 -> 348.5 s")]),
-    ("mpi (collective MPI-IO, shared file)  -  TCP, 32 ranks/node",
-     "MPI unsupported over CXI. 26,566 events. 3 reps. Fidelity EXACT (32->1 aggregated).",
-     [("Init (one-time, median)",                 "3.05 s"),
-      ("Per-push cost (26,566 events)",           "35.1 us/event  (0.93 s total)"),
-      ("Finalize (drain + flush)",                "0.37 s"),
-      ("Total streaming overhead (self-timed)",   "4.67 s"),
-      ("Wall time (baseline -> streaming)",       "932 -> 918 s  (arm-to-arm, ~0 %)")]),
-    ("dlio (DLIO benchmark dataset-generation)  -  TCP, 32 ranks/node",
-     "TensorFlow NPZ data-gen. 475,994 events. 2 reps. Fidelity EXACT (32->1 aggregated).",
-     [("Init (one-time)",                         "3.7 s"),
-      ("Per-push cost (475,994 events)",          "40.3 us/event  (19.2 s total)"),
-      ("Finalize (drain + flush)",                "0.004 s"),
-      ("Total streaming overhead (self-timed)",   "24.7 s"),
-      ("Wall time (baseline -> streaming)",       "1030 -> 943 s  (arm-to-arm, ~0 %)")]),
+ ("io_bench (C)  -  CXI, 1 rank/node, Adaptive batching",
+  "Overlap-friendly POSIX write/read + sleep. Fidelity EXACT. walltime = WORK region.",
+  [("baseline",    "-",     "-",   "-",    "-",   "-",    "600.7", "0.0"),
+   ("streaming r1","37,899","2.19","19.16","1.245","0.0001","602.0","+1.3"),
+   ("streaming r2","37,899","2.21","19.04","0.192","0.0001","601.8","+1.1"),
+   ("streaming r3","37,899","2.23","18.76","0.183","0.0001","601.8","+1.1")]),
+ ("io_bench_py (Python)  -  CXI, 1 rank/node, Adaptive batching",
+  "Overlap-friendly POSIX write/read + sleep. Fidelity EXACT. walltime = WORK region.",
+  [("baseline",    "-",     "-",   "-",    "-",   "-",    "558.4", "0.0"),
+   ("streaming r1","36,851","2.14","21.55","0.223","0.0001","558.5","+0.1"),
+   ("streaming r2","36,851","2.12","24.50","0.416","0.0001","556.8","-1.6"),
+   ("streaming r3","36,851","2.21","19.49","0.165","0.0001","556.3","-2.1")]),
+ ("python-ml (real ML: dataset + train + checkpoint)  -  CXI, 1 rank/node, Adaptive",
+  "NumPy/PyTorch, compute-bound. Fidelity EXACT. walltime = WORK region.",
+  [("baseline",    "-",      "-",   "-",    "-",   "-",    "211.3", "0.0"),
+   ("streaming r1","154,538","0.73","46.10","0.542","0.0001","351.6","+140.3"),
+   ("streaming r2","154,538","0.79","45.35","0.159","0.0002","348.5","+137.2"),
+   ("streaming r3","154,538","0.77","41.60","0.182","0.0001","350.4","+139.1")]),
+ ("mpi (collective MPI-IO, shared file)  -  TCP, 32 ranks/node, Adaptive",
+  "MPI unsupported over CXI. Fidelity EXACT (32->1 aggregated). Workload is I/O-trivial (0.34 s); per-event cost is the metric, wall n/a.",
+  [("baseline",    "-",     "-",    "-",    "-",   "-",    "0.34", "n/a"),
+   ("streaming r1","26,566","7.32","35.09","3.05","1.14","0.34","n/a"),
+   ("streaming r2","26,566","11.95","32.73","46.3","0.37","0.34","n/a"),
+   ("streaming r3","26,566","15.74","35.21","3.86","0.004","0.34","n/a")]),
+ ("dlio (DLIO benchmark dataset-generation)  -  TCP, 32 ranks/node, Adaptive",
+  "TensorFlow NPZ data-gen. Fidelity EXACT (32->1 aggregated). Per-event cost is the metric.",
+  [("baseline",    "-",      "-",   "-",    "-",   "-",    "n/a","n/a"),
+   ("streaming r1","475,994","3.00","37.96","3.25","0.004","n/a","n/a"),
+   ("streaming r2","475,994","4.62","42.54","4.10","0.005","n/a","n/a"),
+   ("streaming r3","-",       "-",   "-",    "-",   "-",    "-",  "-")]),
 ]
 
 prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
@@ -64,43 +63,45 @@ def add_text(s,l,t,w,h,txt,sz,c,bold=False,align=PP_ALIGN.LEFT):
     tb=s.shapes.add_textbox(l,t,w,h); tf=tb.text_frame; tf.word_wrap=True
     p=tf.paragraphs[0]; p.alignment=align; r=p.add_run(); r.text=txt
     f=r.font; f.size=Pt(sz); f.bold=bold; f.color.rgb=c; f.name="Segoe UI"; return tb
-def set_cell(cell,text,*,color=INK,bold=False,align=PP_ALIGN.LEFT,fill=None,size=16):
-    cell.fill.solid(); cell.fill.fore_color.rgb=fill if fill is not None else CARD
-    cell.margin_left=Inches(0.15); cell.margin_right=Inches(0.15)
-    cell.margin_top=Inches(0.05); cell.margin_bottom=Inches(0.05)
+def set_cell(cell,text,*,color=INK,bold=False,align=PP_ALIGN.CENTER,fill=CARD,size=14):
+    cell.fill.solid(); cell.fill.fore_color.rgb=fill
+    cell.margin_left=Inches(0.05); cell.margin_right=Inches(0.05)
+    cell.margin_top=Inches(0.03); cell.margin_bottom=Inches(0.03)
     p=cell.text_frame.paragraphs[0]; p.alignment=align; r=p.add_run(); r.text=text
     f=r.font; f.size=Pt(size); f.bold=bold; f.color.rgb=color; f.name="Segoe UI"
 
+# title
 s=prs.slides.add_slide(blank); paint_bg(s)
-add_text(s,Inches(0.8),Inches(2.2),Inches(11.7),Inches(1.2),
+add_text(s,Inches(0.8),Inches(2.3),Inches(11.7),Inches(1.2),
          "Darshan -> Mofka streaming overhead",40,WHITE,bold=True)
-add_text(s,Inches(0.8),Inches(3.5),Inches(11.7),Inches(2.6),
-         "Per-workload connector cost: Init, Per-push, Finalize, Total streaming overhead, "
-         "and Wall time. Overlap-friendly regime; message service on its own node; Adaptive "
-         "batching; median of streaming reps. Lossless delivery, fidelity EXACT (every streamed "
-         "integer counter matches native). Darshan runtime 3.4.4, log format 3.41. "
-         "cray-mpich 9.0.1, libfabric 2.2.0rc1. CXI (1 rank/node) for C/Python/ML; "
-         "TCP (32 ranks/node) for MPI/DLIO (MPI is unsupported over CXI).",
+add_text(s,Inches(0.8),Inches(3.6),Inches(11.7),Inches(2.4),
+         "Per-workload table: events, send, push, init, finalize, walltime, overhead (all seconds). "
+         "Batch size = Adaptive. Rows = baseline + 3 streaming reps. Overhead = streaming walltime "
+         "- baseline walltime. Overlap-friendly regime; message service on its own node. Fidelity "
+         "EXACT (every streamed integer counter matches native). Darshan 3.4.4, log format 3.41. "
+         "CXI 1 rank/node (C/Python/ML); TCP 32 ranks/node (MPI/DLIO).",
          17,MUTED)
 
 for name,sub,rows in WORKLOADS:
     s=prs.slides.add_slide(blank); paint_bg(s)
-    add_text(s,Inches(0.8),Inches(0.4),Inches(11.9),Inches(0.9),name,26,ACCENT,bold=True)
-    add_text(s,Inches(0.8),Inches(1.3),Inches(11.9),Inches(0.7),sub,14,MUTED)
-    nrows=len(rows)+1
-    tbl=s.shapes.add_table(nrows,2,Inches(0.8),Inches(2.3),Inches(11.7),Inches(0.8*nrows)).table
-    tbl.columns[0].width=Inches(6.6); tbl.columns[1].width=Inches(5.1)
-    set_cell(tbl.cell(0,0),"Phase",color=ACCENT,bold=True,fill=HEAD)
-    set_cell(tbl.cell(0,1),"Cost",color=ACCENT,bold=True,align=PP_ALIGN.RIGHT,fill=HEAD)
-    for i,(label,val) in enumerate(rows,start=1):
-        tot=label.startswith("Total")
-        fill=TOTAL if tot else CARD; col=WHITE if tot else INK
-        set_cell(tbl.cell(i,0),label,color=col,bold=tot,fill=fill)
-        set_cell(tbl.cell(i,1),val,color=col,bold=tot,align=PP_ALIGN.RIGHT,fill=fill)
-    add_text(s,Inches(0.8),Inches(6.9),Inches(11.7),Inches(0.5),
-             "Self-timed overhead = Init + Push + Send + Finalize, measured inside the process. "
-             "Per-push runs off the app critical path (drain thread); app pays only a ~2 us enqueue.",
+    add_text(s,Inches(0.5),Inches(0.4),Inches(12.3),Inches(0.9),name,24,ACCENT,bold=True)
+    add_text(s,Inches(0.5),Inches(1.25),Inches(12.3),Inches(0.7),sub,13,MUTED)
+    nrows=len(rows)+1; ncols=len(COLS)
+    tbl=s.shapes.add_table(nrows,ncols,Inches(0.4),Inches(2.2),Inches(12.5),Inches(0.7*nrows)).table
+    tbl.columns[0].width=Inches(2.1)
+    for i in range(1,ncols): tbl.columns[i].width=Inches((12.5-2.1)/(ncols-1))
+    for j,h in enumerate(COLS):
+        set_cell(tbl.cell(0,j),h,color=ACCENT,bold=True,fill=HEAD,size=13)
+    for i,row in enumerate(rows,start=1):
+        isbase = row[0]=="baseline"
+        fill=BASE if isbase else CARD; col=WHITE if isbase else INK
+        for j,val in enumerate(row):
+            set_cell(tbl.cell(i,j),val,color=(ACCENT if j==0 else col),bold=isbase,
+                     align=(PP_ALIGN.LEFT if j==0 else PP_ALIGN.CENTER),fill=fill)
+    add_text(s,Inches(0.5),Inches(6.7),Inches(12.3),Inches(0.6),
+             "send = app-critical-path enqueue (total s). push/init/finalize = drain-thread + one-time "
+             "connector cost (total s). Baseline has no connector (-). overhead in seconds vs baseline.",
              11,MUTED)
 
 out="deliverables/paper_overhead_tables.pptx"
-prs.save(out); print("wrote",out,"with",len(prs.slides._sldIdLst),"slides,",len(WORKLOADS),"workload tables x 5 rows")
+prs.save(out); print("wrote",out,"with",len(prs.slides._sldIdLst),"slides (title + 5 workloads, 4x7 tables)")

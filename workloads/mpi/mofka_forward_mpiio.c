@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <mpi.h>
 
 static void die(const char* msg)
@@ -52,6 +53,14 @@ int main(int argc, char** argv)
     long steps = 1;
     { const char* s = getenv("STEPS"); if (s && *s) { long v = strtol(s, NULL, 10); if (v > 0) steps = v; } }
 
+    /* IO_SLEEP_MS: pause between steps so the workload runs a comparable, meaningful wall
+     * (like the CXI io_bench overlap regime). The MPI I/O itself is tiny (32-byte writes),
+     * so without pacing the workload finishes in ~0.3s and its wall is swamped by broker/
+     * consumer setup. The sleep gives the streaming a realistic event RATE and a workload
+     * wall long enough for a fair baseline-vs-streaming comparison. Default 0 = no pause. */
+    long sleep_ms = 0;
+    { const char* s = getenv("IO_SLEEP_MS"); if (s && *s) { long v = strtol(s, NULL, 10); if (v > 0) sleep_ms = v; } }
+
     /* rank 0 makes the output directory; everyone waits for it */
     if (rank == 0) {
         if (mkdir(dir, 0755) != 0 && errno != EEXIST)
@@ -73,6 +82,13 @@ int main(int argc, char** argv)
 
     MPI_Offset offset = (MPI_Offset)rank * (MPI_Offset)sizeof(wbuf);
 
+    /* WORK region self-timing (rank 0), so the overhead study has a valid workload wall
+     * that excludes broker/consumer setup + drain (arm-to-arm timestamps are NOT a valid
+     * workload comparison). Barrier so the window spans all ranks' I/O. */
+    MPI_Barrier(MPI_COMM_WORLD);
+    double _work_t0 = MPI_Wtime();
+    if (rank == 0) { printf("WORK_START_NS %llu\n", (unsigned long long)(_work_t0 * 1e9)); fflush(stdout); }
+
     /* Repeat the collective write+read STEPS times inside the single open/close. Each
      * rank keeps its own disjoint offset band so writes never collide across ranks. */
     for (long step = 0; step < steps; step++) {
@@ -88,15 +104,21 @@ int main(int argc, char** argv)
 
         if (MPI_File_read_at_all(fh, off, rbuf, sizeof(rbuf), MPI_CHAR, &st) != MPI_SUCCESS)
             die("MPI_File_read_at_all");
+
+        if (sleep_ms > 0) usleep((useconds_t)sleep_ms * 1000);
     }
 
     if (MPI_File_close(&fh) != MPI_SUCCESS)
         die("MPI_File_close");
 
+    MPI_Barrier(MPI_COMM_WORLD);
+    double _work_t1 = MPI_Wtime();
     if (rank == 0) {
+        printf("WORK_END_NS %llu\n", (unsigned long long)(_work_t1 * 1e9));
         MPI_File_delete(path, MPI_INFO_NULL);
-        printf("mofka_forward_mpiio complete: %d ranks x %ld steps wrote/read shared MPI-IO file in %s\n",
-               nprocs, steps, dir);
+        printf("mofka_forward_mpiio complete: %d ranks x %ld steps wrote/read shared MPI-IO file in %s (WORK %.2f s)\n",
+               nprocs, steps, dir, _work_t1 - _work_t0);
+        fflush(stdout);
     }
 
     MPI_Finalize();
