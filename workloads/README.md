@@ -175,6 +175,36 @@ the stream and compare it, counter-for-counter, to the native log:
     install/_venv/bin/python3 workloads/strict_compare.py streamed native perproc
     # -> VERDICT: PASS  (every streamed integer counter matches native)
 
+## Compare native vs streamed .darshan with pydarshan (HTML reports)
+
+Any streaming run leaves two logs to compare side-by-side:
+- `native/*.darshan`   — the log Darshan wrote directly (ground truth)
+- `streamed/*.darshan` — the log rebuilt from the Mofka stream (`darshan-mofka-reconstruct`)
+
+Generate a pydarshan HTML report for each and open them next to each other. pydarshan needs
+the util lib on `LD_LIBRARY_PATH`, and the `.darshan` files are read-only so copy them to a
+writable dir first (`-m darshan summary` writes `<name>_report.html` beside the input):
+
+    cd <repo-root>
+    export LD_LIBRARY_PATH="$PWD/darshan/darshan-util/install/lib:$LD_LIBRARY_PATH"
+    PY="$PWD/install/_venv/bin/python3"
+
+    # pick a completed streaming run (has both native/ and streamed/)
+    RUN=results/PAPER_iobench/streaming_rep1/RUN1        # or any results/<study>/streaming*/RUN*
+
+    mkdir -p /tmp/darshan_cmp && cd /tmp/darshan_cmp
+    cp "$OLDPWD/$RUN"/native/*.darshan   native.darshan   && chmod u+w native.darshan
+    cp "$OLDPWD/$RUN"/streamed/*.darshan streamed.darshan && chmod u+w streamed.darshan
+
+    "$PY" -m darshan summary native.darshan      # -> native_report.html
+    "$PY" -m darshan summary streamed.darshan    # -> streamed_report.html
+
+    ls -la native_report.html streamed_report.html   # open both in a browser to compare
+
+The I/O counters (POSIX/STDIO/MPI-IO/HDF5) match exactly between the two. The HEATMAP/DXT
+trace modules are NOT streamed by design, so those panels differ (native has them, streamed
+does not) — that is expected, not data loss.
+
 ## If the manual steps break — one-shot fallback
 
 The whole pipeline (broker + consumer + producer + reconstruct + compare) in ONE command,
