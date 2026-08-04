@@ -43,17 +43,14 @@ WORKLOADS = [
    ("streaming r2","154,538","0.79","45.35","0.159","0.0002","348.5","+137.2"),
    ("streaming r3","154,538","0.77","41.60","0.182","0.0001","350.4","+139.1")]),
  ("mpi (collective MPI-IO, shared file)  -  TCP, 32 ranks/node, Adaptive",
-  "MPI unsupported over CXI. Fidelity EXACT (32->1 aggregated). Workload is I/O-trivial (0.34 s); per-event cost is the metric, wall n/a.",
-  [("baseline",    "-",     "-",    "-",    "-",   "-",    "0.34", "n/a"),
-   ("streaming r1","26,566","7.32","35.09","3.05","1.14","0.34","n/a"),
-   ("streaming r2","26,566","11.95","32.73","46.3","0.37","0.34","n/a"),
-   ("streaming r3","26,566","15.74","35.21","3.86","0.004","0.34","n/a")]),
+  "MPI unsupported over CXI. Paced (IO_SLEEP_MS) for a comparable ~600 s wall. Fidelity EXACT (32->1 aggregated).",
+  [("baseline",    "-",     "-",    "-",    "-",   "-",    "602.4", "0.0"),
+   ("streaming r1","39,770","15.0","67.2","2.70","0.003","600.7","-1.7")]),
  ("dlio (DLIO benchmark dataset-generation)  -  TCP, 32 ranks/node, Adaptive",
-  "TensorFlow NPZ data-gen. Fidelity EXACT (32->1 aggregated). Per-event cost is the metric.",
+  "TensorFlow NPZ data-gen. Fidelity EXACT (32->1 aggregated). Wall = cold/warm-dominated -> per-event cost is the metric.",
   [("baseline",    "-",      "-",   "-",    "-",   "-",    "n/a","n/a"),
-   ("streaming r1","475,994","3.00","37.96","3.25","0.004","n/a","n/a"),
-   ("streaming r2","475,994","4.62","42.54","4.10","0.005","n/a","n/a"),
-   ("streaming r3","-",       "-",   "-",    "-",   "-",    "-",  "-")]),
+   ("streaming r1","475,994","3.0","38.0","3.25","0.004","n/a","n/a"),
+   ("streaming r2","475,994","4.6","42.5","4.09","0.005","n/a","n/a")]),
 ]
 
 prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)

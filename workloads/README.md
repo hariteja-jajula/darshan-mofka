@@ -161,19 +161,27 @@ The consumer flushes, prints the ingest verdict, and exits cleanly, e.g.:
 That `INGEST: PASS` (darshan count == events produced) is the proof the full pipeline
 worked: producer -> broker -> consumer -> mongo, lossless.
 
-## Verify fidelity (optional 5th step)
+## Verify fidelity (optional 5th step) — reconstruct + compare
 
-The consumer leaves mongod up so you can export the events, then rebuild a `.darshan` from
-the stream and compare it, counter-for-counter, to the native log:
+`run_producer.sh` keeps the native log in `server/_demo_native/` (it prints the path).
+The consumer leaves mongod up so you can export the streamed events, RECONSTRUCT a
+`.darshan` from them, and compare it counter-for-counter to the native log:
 
+    # 1. export the streamed events from mongo (same login node as the consumer)
     install/_venv/bin/python3 Client/export_jsonl.py 127.0.0.1 darshan_stream \
       --mongo-port 27099 > events.jsonl
 
-    B=darshan/darshan-util/install/bin
-    $B/darshan-mofka-reconstruct <path>/events.jsonl streamed/     # rebuild from the stream
-    # put the producer's native *.darshan into native/, then:
-    install/_venv/bin/python3 workloads/strict_compare.py streamed native perproc
+    # 2. RECONSTRUCT a .darshan from the stream (darshan-mofka-reconstruct <events> <outdir>)
+    darshan/darshan-util/install/bin/darshan-mofka-reconstruct events.jsonl server/_demo_streamed/
+
+    # 3. compare reconstructed vs native, counter-for-counter
+    install/_venv/bin/python3 workloads/strict_compare.py \
+      server/_demo_streamed server/_demo_native perproc
     # -> VERDICT: PASS  (every streamed integer counter matches native)
+
+This is the reconstruct step the automated `job.sh` also runs (job.sh:259). To eyeball them
+as HTML instead, see "Compare native vs streamed .darshan with pydarshan" below and point it
+at `server/_demo_native` + `server/_demo_streamed`.
 
 ## Compare native vs streamed .darshan with pydarshan (HTML reports)
 
