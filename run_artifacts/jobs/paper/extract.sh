@@ -9,6 +9,9 @@ for wl in PAPER_iobench PAPER_iobenchpy PAPER_mpi PAPER_dlio; do
     out=$(ls "$d"/workload*.out 2>/dev/null | head -1)
     ws=$(grep -hoE 'WORK_START_NS [0-9]+' "$out" 2>/dev/null|awk '{print $2}'|head -1)
     we=$(grep -hoE 'WORK_END_NS [0-9]+' "$out" 2>/dev/null|awk '{print $2}'|head -1)
+    # fallback to shell-level WORK window (dlio + any black-box workload) if no self-markers
+    [ -z "$ws" ] && ws=$(grep -hoE 'WORK_SH_START_NS [0-9]+' "$out" 2>/dev/null|awk '{print $2}'|head -1)
+    [ -z "$we" ] && we=$(grep -hoE 'WORK_SH_END_NS [0-9]+' "$out" 2>/dev/null|awk '{print $2}'|head -1)
     [ -n "$we" ] || { printf "%-14s %-14s %8s\n" "$wl" "$arm" "running"; continue; }
     work=$(awk -v a=$ws -v b=$we 'BEGIN{printf "%.1f",(b-a)/1e9}')
     ev=$(wc -l < "$d/events.jsonl" 2>/dev/null||echo 0)

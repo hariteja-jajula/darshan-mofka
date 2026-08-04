@@ -195,7 +195,9 @@ workload_env() {
                    # scaled to a meaningful ~10min run for the overhead study.
                    for _k in ML_FILES ML_ROWS ML_COLS; do
                        [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;
-        mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS") ;;  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
+        mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS")  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
+                   # IO_SLEEP_MS paces the steps so the workload runs a comparable wall (else ~0.3s).
+                   [ -n "${IO_SLEEP_MS:-}" ] && WORKLOAD_ENV+=(IO_SLEEP_MS="$IO_SLEEP_MS") ;;
         dlio)      # TF spawns ~1 Eigen thread/CPU; on Polaris that exceeds the per-user
                    # cgroup pids.max=256 -> pthread_create EAGAIN -> SIGABRT (env.cc:84),
                    # which kills Darshan's atexit finalize -> no native log. Cap TF threads.
@@ -502,12 +504,19 @@ if [ ! -f "$COORD/CONSUMER_READY" ]; then echo "workload rank=$RANKID: CONSUMER_
 scratch="/tmp/dm_${WL_TYPE}_${RANKID}_$$"; mkdir -p "$scratch"
 # NO_DARSHAN=1 (baseline arm): run the workload WITHOUT LD_PRELOAD'ing libdarshan, so it
 # does raw I/O only (no instrumentation, no streaming). Gives a true no-Darshan wall time.
+# Shell-level WORK window (rank 0) so EVERY workload -- even black-box ones like dlio that
+# emit no WORK markers -- has a valid workload wall that EXCLUDES broker/consumer setup and
+# post-run drain (arm-to-arm timestamps are not a valid workload comparison). If the workload
+# also prints its own WORK_START/END (mpi, io_bench), those take precedence in extraction.
+_wl_t0=$(date +%s.%N)
+[ "$RANKID" = 0 ] && echo "WORK_SH_START_NS $(date +%s%N)" >> "$RES/workload.$RANKID.out"
 if [ "${NO_DARSHAN:-0}" = 1 ]; then
   ${PERFWRAP:-} env $ESTR DARSHAN_LOGPATH="$RES" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
 else
   ${PERFWRAP:-} env $ESTR DARSHAN_LOGPATH="$RES" LD_PRELOAD="$DLIB" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
 fi
 rc=$?
+[ "$RANKID" = 0 ] && echo "WORK_SH_END_NS $(date +%s%N)" >> "$RES/workload.$RANKID.out"
 rm -rf "$scratch" 2>/dev/null || true
 touch "$COORD/WL_DONE.$RANKID"
 [ "$rc" -ne 0 ] && touch "$COORD/WL_FAIL.$RANKID"
