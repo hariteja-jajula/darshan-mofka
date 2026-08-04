@@ -66,6 +66,9 @@ FWD="$FWD,DARSHAN_MOFKA_TIMING=$TIMING"
 [ -n "${MONGOD:-}" ]     && FWD="$FWD,MONGOD=$MONGOD"
 # A/B: forward DARSHAN_MOFKA_ASYNC when set in the environment (0=sync inline push, 1=async default).
 [ -n "${DARSHAN_MOFKA_ASYNC:-}" ] && FWD="$FWD,DARSHAN_MOFKA_ASYNC=$DARSHAN_MOFKA_ASYNC"
+# Fix: run the producer sender on a dedicated Argobots ES (ABT-safe push, no raw-pthread
+# thallium::mutex). Default ON (1) for this study; override with DIASPORA_C_SENDER_THREADS.
+FWD="$FWD,DIASPORA_C_SENDER_THREADS=${DIASPORA_C_SENDER_THREADS:-1}"
 # Study driver: route this job's runs into a labeled results subdir + set rpc threads.
 [ -n "${RESULTS_TAG:-}" ]        && FWD="$FWD,RESULTS_TAG=$RESULTS_TAG"
 [ -n "${RPC_THREADS:-}" ]        && FWD="$FWD,RPC_THREADS=$RPC_THREADS"

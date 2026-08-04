@@ -36,6 +36,21 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
+
+/* CPU-time over the WORK region: RUSAGE_SELF = whole process (all threads),
+ * RUSAGE_THREAD = just this (main compute) thread. Same probe as the Python twin,
+ * so C vs Python mechanism is compared apples-to-apples. */
+static double ru_cpu(int who)
+{
+    struct rusage r;
+    if (getrusage(who, &r) != 0) return -1.0;
+    return (double)r.ru_utime.tv_sec + (double)r.ru_utime.tv_usec / 1e6
+         + (double)r.ru_stime.tv_sec + (double)r.ru_stime.tv_usec / 1e6;
+}
+#ifndef RUSAGE_THREAD
+#define RUSAGE_THREAD 1
+#endif
 
 static void die(const char* m) { perror(m); exit(1); }
 
@@ -141,6 +156,8 @@ int main(int argc, char** argv)
     }
 
     unsigned long long total_w = 0, total_r = 0;
+    double cpu0_self = ru_cpu(RUSAGE_SELF);
+    double cpu0_thr  = ru_cpu(RUSAGE_THREAD);
     double t0 = now_sec();
     printf("WORK_START_NS %llu\n", now_ns());
     fflush(stdout);
@@ -172,6 +189,11 @@ int main(int argc, char** argv)
     }
 
     printf("WORK_END_NS %llu\n", now_ns());
+    { double cpu1_self = ru_cpu(RUSAGE_SELF), cpu1_thr = ru_cpu(RUSAGE_THREAD);
+      double wall = now_sec() - t0;
+      /* CPU_PROBE wall cpu_self(all threads) cpu_thread(compute thread) -- see header. */
+      printf("CPU_PROBE wall=%.2f cpu_self=%.2f cpu_thread=%.2f\n",
+             wall, cpu1_self - cpu0_self, cpu1_thr - cpu0_thr); }
     fflush(stdout);
 
     /* clean up scratch files so we don't fill /tmp */

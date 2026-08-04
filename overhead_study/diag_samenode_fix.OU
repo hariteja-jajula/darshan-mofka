@@ -1,0 +1,17 @@
+[19:50:49] allocation: 2 nodes: x3003c0s25b1n0.hsn.cm.polaris.alcf.anl.gov x3003c0s31b0n0.hsn.cm.polaris.alcf.anl.gov
+[19:50:49] broker node = x3003c0s25b1n0.hsn.cm.polaris.alcf.anl.gov | workload node (reused by ALL arms) = x3003c0s31b0n0.hsn.cm.polaris.alcf.anl.gov
+[19:50:49] ===== io_bench_py: baseline, streaming(FIX t=100 rpc=0), streaming(SPIN t=0), baseline2 (same node) =====
+[19:50:49] RUN io_bench_py/baseline (enable=1 no_darshan=1 compute=8 matrix=256 extra=[])
+[19:56:00]   FAILED io_bench_py/baseline (continuing)
+[19:56:04] RUN io_bench_py/streaming_fix (enable=1 no_darshan=0 compute=8 matrix=256 extra=[DARSHAN_MOFKA_PROGRESS_TIMEOUT_MS=100 DARSHAN_MOFKA_RPC_THREADS=0])
+[20:03:06]   done io_bench_py/streaming_fix
+[20:03:10] RUN io_bench_py/streaming_spin (enable=1 no_darshan=0 compute=8 matrix=256 extra=[DARSHAN_MOFKA_PROGRESS_TIMEOUT_MS=0 DARSHAN_MOFKA_RPC_THREADS=0])
+[20:09:57]   done io_bench_py/streaming_spin
+[20:10:01] RUN io_bench_py/baseline2 (enable=1 no_darshan=1 compute=8 matrix=256 extra=[])
+[20:14:51]   FAILED io_bench_py/baseline2 (continuing)
+[20:14:55] ===== io_bench (C): baseline, streaming(FIX) -- confirm the wasted core is reclaimed in C too =====
+[20:14:55] RUN io_bench/baseline (enable=1 no_darshan=1 compute=24 matrix=512 extra=[])
+[20:18:14]   FAILED io_bench/baseline (continuing)
+[20:18:18] RUN io_bench/streaming_fix (enable=1 no_darshan=0 compute=24 matrix=512 extra=[DARSHAN_MOFKA_PROGRESS_TIMEOUT_MS=100 DARSHAN_MOFKA_RPC_THREADS=0])
+[20:21:46]   done io_bench/streaming_fix
+[20:21:50] ===== DIAGFIX DONE =====

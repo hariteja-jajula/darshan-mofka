@@ -1,0 +1,17 @@
+[19:16:11] allocation: 2 nodes: x3003c0s13b0n0.hsn.cm.polaris.alcf.anl.gov x3003c0s13b1n0.hsn.cm.polaris.alcf.anl.gov
+[19:16:11] broker node = x3003c0s13b0n0.hsn.cm.polaris.alcf.anl.gov | workload node (reused by ALL arms) = x3003c0s13b1n0.hsn.cm.polaris.alcf.anl.gov
+[19:16:11] ===== io_bench_py: baseline, darshan-only, streaming, baseline2 (same node) =====
+[19:16:11] RUN io_bench_py/baseline (enable=1 no_darshan=1 compute=8 matrix=256)
+[19:21:40]   FAILED io_bench_py/baseline (continuing)
+[19:21:44] RUN io_bench_py/darshan-only (enable=0 no_darshan=0 compute=8 matrix=256)
+[19:26:34]   done io_bench_py/darshan-only
+[19:26:38] RUN io_bench_py/streaming (enable=1 no_darshan=0 compute=8 matrix=256)
+[19:33:40]   done io_bench_py/streaming
+[19:33:44] RUN io_bench_py/baseline2 (enable=1 no_darshan=1 compute=8 matrix=256)
+[19:38:40]   FAILED io_bench_py/baseline2 (continuing)
+[19:38:44] ===== io_bench (C): baseline, streaming (same node -- is C truly immune?) =====
+[19:38:44] RUN io_bench/baseline (enable=1 no_darshan=1 compute=24 matrix=512)
+[19:42:04]   FAILED io_bench/baseline (continuing)
+[19:42:08] RUN io_bench/streaming (enable=1 no_darshan=0 compute=24 matrix=512)
+[19:45:35]   done io_bench/streaming
+[19:45:39] ===== DIAG DONE =====

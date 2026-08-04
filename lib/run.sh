@@ -183,8 +183,18 @@ workload_env() {
     case "$WL_TYPE" in
         c)         WORKLOAD_ENV=(EPOCHS="$WL_EVENTS" CHECKPOINT_EVERY="$every") ;;
         io_bench|io_bench_py)  WORKLOAD_ENV=(); for _k in IO_SIZE_MB IO_ITERS IO_SLEEP_MS IO_BLOCK_KB COMPUTE_MODE COMPUTE MATRIX_SIZE; do
-                       [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;  # tunable; else built-in defaults (C + Python twin share knobs)
-        python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS") ;;
+                       [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done  # tunable; else built-in defaults (C + Python twin share knobs)
+                       # Cap library threading so the CPU_PROBE app thread is the ONLY compute
+                       # thread -- otherwise a BLAS/OMP/runtime helper thread inflates cpu_self
+                       # (RUSAGE_SELF, all-threads) even in the NO_DARSHAN baseline, masking the
+                       # connector's real per-core cost. Measurement-neutral across all arms.
+                       WORKLOAD_ENV+=(OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+                                      NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1) ;;
+        python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS")
+                   # optional dataset-size knobs (forwarded when set) so python-ml can be
+                   # scaled to a meaningful ~10min run for the overhead study.
+                   for _k in ML_FILES ML_ROWS ML_COLS; do
+                       [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;
         mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS") ;;  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
         dlio)      # TF spawns ~1 Eigen thread/CPU; on Polaris that exceeds the per-user
                    # cgroup pids.max=256 -> pthread_create EAGAIN -> SIGABRT (env.cc:84),
@@ -474,6 +484,12 @@ CONSUMER
         printf 'ESTR=%q\n' "$ESTR"
         printf 'DLIB=%q\n' "$DLIB"
         printf 'CMD=%q\n' "$CMD"
+        # DM_WRAP_PERF=1 -> prefix the workload rank with perf stat (trisection diagnostics).
+        if [ "${DM_WRAP_PERF:-0}" = 1 ]; then
+            printf 'PERFWRAP=%q\n' "perf stat -o $RES/perf.$( [ "${NO_DARSHAN:-0}" = 1 ] && echo baseline || echo streaming ).\${RANKID}.txt -e task-clock,cycles,ref-cycles,instructions,dTLB-load-misses,cache-misses,context-switches,cpu-migrations,minor-faults --"
+        else
+            printf 'PERFWRAP=%q\n' ""
+        fi
         printf '%s\n' 'RANKID="${PALS_RANKID:-0}"'
         printf '%s\n' "$STRIP"
         printf '%s\n' "$COLLAPSE"
@@ -487,9 +503,9 @@ scratch="/tmp/dm_${WL_TYPE}_${RANKID}_$$"; mkdir -p "$scratch"
 # NO_DARSHAN=1 (baseline arm): run the workload WITHOUT LD_PRELOAD'ing libdarshan, so it
 # does raw I/O only (no instrumentation, no streaming). Gives a true no-Darshan wall time.
 if [ "${NO_DARSHAN:-0}" = 1 ]; then
-  env $ESTR DARSHAN_LOGPATH="$RES" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
+  ${PERFWRAP:-} env $ESTR DARSHAN_LOGPATH="$RES" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
 else
-  env $ESTR DARSHAN_LOGPATH="$RES" LD_PRELOAD="$DLIB" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
+  ${PERFWRAP:-} env $ESTR DARSHAN_LOGPATH="$RES" LD_PRELOAD="$DLIB" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
 fi
 rc=$?
 rm -rf "$scratch" 2>/dev/null || true
@@ -547,10 +563,11 @@ WORKLOAD
     # ---------------- verdict: ALL_DONE + non-empty events.jsonl (amendment #6) ----------------
     local nlines; nlines="$(wc -l < "$RES/events.jsonl" 2>/dev/null || echo 0)"
     echo "run_mpmd_rep verdict=$verdict  events.jsonl=${nlines} lines  mofka=$(grep -oE 'ofi\+cxi://[^"]+' "$COORD/mofka.json" 2>/dev/null | head -1)"
-    # Runtime-only arm (DARSHAN_MOFKA_ENABLE=0) legitimately streams 0 events, so an
-    # empty events.jsonl is expected -- success is ALL_DONE alone. The streaming arm
-    # still requires non-empty events.jsonl (amendment #6).
-    if [ "$verdict" = all_done ] && { [ "${DARSHAN_MOFKA_ENABLE:-1}" = 0 ] || [ -s "$RES/events.jsonl" ]; }; then
+    # Runtime-only arm (DARSHAN_MOFKA_ENABLE=0) AND baseline arm (NO_DARSHAN=1) legitimately
+    # stream 0 events, so an empty events.jsonl is expected -- success is ALL_DONE alone. The
+    # streaming arm still requires non-empty events.jsonl (amendment #6).
+    if [ "$verdict" = all_done ] && \
+       { [ "${DARSHAN_MOFKA_ENABLE:-1}" = 0 ] || [ "${NO_DARSHAN:-0}" = 1 ] || [ -s "$RES/events.jsonl" ]; }; then
         return 0
     fi
     echo "run_mpmd_rep FAIL ($verdict) -- diagnostics:"
