@@ -249,7 +249,11 @@ for rep in $(seq 1 "$WL_REPS"); do
     # two directories hold the SAME set of files (one per process) for a 1:1 comparison.
     STREAMED_DIR="$RES/streamed"; NATIVE_DIR="$RES/native"
     rm -rf "$STREAMED_DIR" "$NATIVE_DIR"; mkdir -p "$STREAMED_DIR" "$NATIVE_DIR"
+    # Time the reconstruct step (meeting ask: how long does reconstruct take?).
+    _rc_t0=$(date +%s.%N)
     "$B/darshan-mofka-reconstruct" "$EVJSONL" "$STREAMED_DIR" || die "reconstruct failed"
+    _rc_t1=$(date +%s.%N)
+    awk -v a="$_rc_t0" -v b="$_rc_t1" 'BEGIN{printf "reconstruct_seconds=%.3f\n", b-a}' | tee "$RES/reconstruct_time.txt"
     # Native per-process logs from this run (each process writes its own nprocs=1 log).
     # EXCLUDE the reconstructed logs we just wrote under $RES/streamed (and anything already
     # copied into $RES/native): find scans $RES recursively and would otherwise sweep the

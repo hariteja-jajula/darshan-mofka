@@ -1,0 +1,17 @@
+[20:21:59] allocation: 2 nodes: x3002c0s13b0n0.hsn.cm.polaris.alcf.anl.gov x3002c0s13b1n0.hsn.cm.polaris.alcf.anl.gov
+[20:21:59] broker node = x3002c0s13b0n0.hsn.cm.polaris.alcf.anl.gov | workload node (reused by ALL arms) = x3002c0s13b1n0.hsn.cm.polaris.alcf.anl.gov
+[20:21:59] ===== io_bench_py: baseline, streaming(NOPROG async), streaming(NOPROG sync), baseline2 =====
+[20:21:59] RUN io_bench_py/baseline (enable=1 no_darshan=1 compute=8 matrix=256 extra=[])
+[20:27:17]   FAILED io_bench_py/baseline (continuing)
+[20:27:21] RUN io_bench_py/streaming_noprog_async (enable=1 no_darshan=0 compute=8 matrix=256 extra=[DARSHAN_MOFKA_PROGRESS_THREAD=0])
+[20:34:23]   done io_bench_py/streaming_noprog_async
+[20:34:27] RUN io_bench_py/streaming_noprog_sync (enable=1 no_darshan=0 compute=8 matrix=256 extra=[DARSHAN_MOFKA_PROGRESS_THREAD=0 DARSHAN_MOFKA_ASYNC=0])
+[20:41:11]   done io_bench_py/streaming_noprog_sync
+[20:41:15] RUN io_bench_py/baseline2 (enable=1 no_darshan=1 compute=8 matrix=256 extra=[])
+[20:46:12]   FAILED io_bench_py/baseline2 (continuing)
+[20:46:16] ===== io_bench (C): baseline, streaming(NOPROG sync) -- core reclaimed when no deadlock? =====
+[20:46:16] RUN io_bench/baseline (enable=1 no_darshan=1 compute=24 matrix=512 extra=[])
+[20:49:49]   FAILED io_bench/baseline (continuing)
+[20:49:53] RUN io_bench/streaming_noprog_sync (enable=1 no_darshan=0 compute=24 matrix=512 extra=[DARSHAN_MOFKA_PROGRESS_THREAD=0 DARSHAN_MOFKA_ASYNC=0])
+[20:53:27]   done io_bench/streaming_noprog_sync
+[20:53:31] ===== DIAGLDMS DONE =====
