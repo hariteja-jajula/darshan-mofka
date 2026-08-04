@@ -19,6 +19,9 @@ TOPIC="${TOPIC:-darshan}"
 GROUP="$ROOT/server/mofka.json"
 DLIB="$ROOT/darshan/install/lib/libdarshan.so"
 SCRATCH="/tmp/dm_manual_$$"; mkdir -p "$SCRATCH"
+# Keep the native .darshan in a stable place (NOT the scratch that gets deleted) so the
+# fidelity step can compare it against the stream-reconstructed log.
+NATIVE_DIR="$ROOT/server/_demo_native"; rm -rf "$NATIVE_DIR"; mkdir -p "$NATIVE_DIR"
 
 [ -f "$GROUP" ] || { echo "no $GROUP -- start the broker first: bash server/start_server.sh"; exit 1; }
 [ -e "$DLIB" ]  || { echo "libdarshan.so missing at $DLIB (build it: ./build.sh)"; exit 1; }
@@ -49,9 +52,14 @@ env \
   DARSHAN_MOFKA_VERBOSE=1 \
   MOFKA_CLIENT_MODE=1 \
   DIASPORA_C_SENDER_THREADS=1 \
-  DARSHAN_LOGPATH="$SCRATCH" \
+  DARSHAN_LOGPATH="$NATIVE_DIR" \
   LD_PRELOAD="$DLIB" \
   "${CMD[@]}"
 rc=$?
-echo "=== producer done (rc=$rc). streamed events are now in the broker/consumer. ==="
 rm -rf "$SCRATCH" 2>/dev/null || true
+echo "=== producer done (rc=$rc). streamed events are now in the broker/consumer. ==="
+NAT=$(ls "$NATIVE_DIR"/*.darshan 2>/dev/null | head -1)
+echo "  native .darshan (for comparison): ${NAT:-<none written>}"
+echo "  to verify fidelity after flushing the consumer (touch .../SHUTDOWN + export events.jsonl):"
+echo "    darshan/darshan-util/install/bin/darshan-mofka-reconstruct events.jsonl server/_demo_streamed/"
+echo "    install/_venv/bin/python3 workloads/strict_compare.py server/_demo_streamed server/_demo_native perproc"
