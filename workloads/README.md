@@ -102,6 +102,11 @@ For a live demo you can drive each role yourself instead of `job.sh`. This uses 
 **legacy / TCP path** (the same one MPI/DLIO use): no `qsub`, no `mpiexec`, no CXI — it
 runs entirely on a login node over `ofi+tcp`. Three roles, three terminals.
 
+> **IMPORTANT: run all three terminals on the SAME login node** (the mongod + broker are
+> local to that node). First, reset any leftover state:
+>
+>     bash server/reset_demo.sh
+
 The three roles map to the pipeline:
 
     broker (Mofka/bedrock)  <--  producer (workload + LD_PRELOAD libdarshan)
@@ -142,11 +147,27 @@ lines (the connector's per-event cost) and a clean `finalize`. It also writes a 
 `.darshan` log to its scratch dir.
 Knobs: `WL=io_bench_py`, `IO_ITERS=8`, `IO_SLEEP_MS=50`, `COMPUTE=2`, `MATRIX_SIZE=128`.
 
-## Verify fidelity (optional 4th step)
+## Finish + confirm capture (terminal 2)
 
-Stop the consumer (Ctrl-C in terminal 2) — on stop it exports everything it received to
-`server/_flowcept_run/.../events.jsonl`. Then rebuild a `.darshan` from the stream and
-compare it, counter-for-counter, to the native log:
+Once the producer is done, flush the consumer and land everything in mongo:
+
+    touch server/_flowcept_run/SHUTDOWN
+
+The consumer flushes, prints the ingest verdict, and exits cleanly, e.g.:
+
+    tasks total=63  darshan=63  modules={'POSIX': 52, 'STDIO': 10}
+    INGEST: PASS
+
+That `INGEST: PASS` (darshan count == events produced) is the proof the full pipeline
+worked: producer -> broker -> consumer -> mongo, lossless.
+
+## Verify fidelity (optional 5th step)
+
+The consumer leaves mongod up so you can export the events, then rebuild a `.darshan` from
+the stream and compare it, counter-for-counter, to the native log:
+
+    install/_venv/bin/python3 Client/export_jsonl.py 127.0.0.1 darshan_stream \
+      --mongo-port 27099 > events.jsonl
 
     B=darshan/darshan-util/install/bin
     $B/darshan-mofka-reconstruct <path>/events.jsonl streamed/     # rebuild from the stream
