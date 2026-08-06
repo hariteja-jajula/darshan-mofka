@@ -193,7 +193,9 @@ workload_env() {
         python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS")
                    # optional dataset-size knobs (forwarded when set) so python-ml can be
                    # scaled to a meaningful ~10min run for the overhead study.
-                   for _k in ML_FILES ML_ROWS ML_COLS ML_WRITE_MODE; do
+                   # ML_PROFILE/ML_BLAS_THREADS: heavy in-workload profiler (per-region
+                   # wall+thread-CPU + RUSAGE_THREAD minflt/ctx-sw). Inert unless ML_PROFILE=1.
+                   for _k in ML_FILES ML_ROWS ML_COLS ML_WRITE_MODE ML_PROFILE ML_BLAS_THREADS; do
                        [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;
         mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS")  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
                    # IO_SLEEP_MS paces the steps so the workload runs a comparable wall (else ~0.3s).

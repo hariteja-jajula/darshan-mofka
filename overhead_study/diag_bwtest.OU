@@ -1,0 +1,7 @@
+[20:51:30] allocation: 2 nodes: x3110c0s13b0n0.hsn.cm.polaris.alcf.anl.gov x3110c0s13b1n0.hsn.cm.polaris.alcf.anl.gov
+[20:51:30] ===== BW-contention test: big cache-spilling GEMMs, baseline vs streaming =====
+[20:51:30] RUN python-ml/baseline (enable=0 no_darshan=1 BIG-GEMM hidden=4096 batch=4096)
+[20:54:19]   done python-ml/baseline
+[20:54:23] RUN python-ml/streaming (enable=1 no_darshan=0 BIG-GEMM hidden=4096 batch=4096)
+[20:57:05]   done python-ml/streaming
+[20:57:09] ===== DIAGBW DONE (compare MLPROF region=compute cpu_s across the two arms) =====
