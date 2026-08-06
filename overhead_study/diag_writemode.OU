@@ -1,0 +1,4 @@
+[18:51:42] allocation: 2 nodes: x3001c0s7b1n0.hsn.cm.polaris.alcf.anl.gov x3005c0s19b0n0.hsn.cm.polaris.alcf.anl.gov
+[18:51:42] broker node = x3001c0s7b1n0.hsn.cm.polaris.alcf.anl.gov | workload node = x3005c0s19b0n0.hsn.cm.polaris.alcf.anl.gov
+[18:51:42] ===== python-ml write-pattern A/B: row (385k events) vs buffered (128k events), both streaming =====
+[18:51:42] RUN python-ml/row_385k (ML_WRITE_MODE=row, streaming ON, default progress thread)
