@@ -193,7 +193,7 @@ workload_env() {
         python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS")
                    # optional dataset-size knobs (forwarded when set) so python-ml can be
                    # scaled to a meaningful ~10min run for the overhead study.
-                   for _k in ML_FILES ML_ROWS ML_COLS; do
+                   for _k in ML_FILES ML_ROWS ML_COLS ML_WRITE_MODE; do
                        [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;
         mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS")  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
                    # IO_SLEEP_MS paces the steps so the workload runs a comparable wall (else ~0.3s).
@@ -483,6 +483,9 @@ CONSUMER
         printf '#!/bin/bash\n'
         printf 'ROOT=%q COORD=%q RES=%q PROFILE=%q WL_TYPE=%q\n' "$ROOT" "$COORD" "$RES" "$ENV_PROFILE" "$WL_TYPE"
         printf 'NO_DARSHAN=%q\n' "${NO_DARSHAN:-0}"
+        # DM_MPSTAT=1 -> sample per-core CPU (mpstat -P ALL) on the workload rank (non-invasive).
+        printf 'DM_MPSTAT=%q\n' "${DM_MPSTAT:-0}"
+        printf 'DM_MPSTAT_INT=%q\n' "${DM_MPSTAT_INT:-5}"
         printf 'ESTR=%q\n' "$ESTR"
         printf 'DLIB=%q\n' "$DLIB"
         printf 'CMD=%q\n' "$CMD"
@@ -509,6 +512,16 @@ scratch="/tmp/dm_${WL_TYPE}_${RANKID}_$$"; mkdir -p "$scratch"
 # post-run drain (arm-to-arm timestamps are not a valid workload comparison). If the workload
 # also prints its own WORK_START/END (mpi, io_bench), those take precedence in extraction.
 _wl_t0=$(date +%s.%N)
+# Non-invasive per-core CPU sampler (one per workload NODE): mpstat -P ALL in the background,
+# writing $RES/mpstat.$RANKID.txt for the whole workload window. Killed right after the run.
+# Gate on the NODE-LOCAL rank (PALS_LOCAL_RANKID=0), not the global PALS_RANKID -- in the MPMD
+# launch the workload rank's global id is offset past broker+consumer (e.g. 2), so a global
+# "==0" test would never fire on the workload node.
+_mpstat_pid=""
+if [ "${DM_MPSTAT:-0}" = 1 ] && [ "${PALS_LOCAL_RANKID:-0}" = 0 ] && command -v mpstat >/dev/null 2>&1; then
+  mpstat -P ALL "${DM_MPSTAT_INT:-5}" > "$RES/mpstat.$RANKID.txt" 2>/dev/null &
+  _mpstat_pid=$!
+fi
 [ "$RANKID" = 0 ] && echo "WORK_SH_START_NS $(date +%s%N)" >> "$RES/workload.$RANKID.out"
 if [ "${NO_DARSHAN:-0}" = 1 ]; then
   ${PERFWRAP:-} env $ESTR DARSHAN_LOGPATH="$RES" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
@@ -517,6 +530,7 @@ else
 fi
 rc=$?
 [ "$RANKID" = 0 ] && echo "WORK_SH_END_NS $(date +%s%N)" >> "$RES/workload.$RANKID.out"
+[ -n "$_mpstat_pid" ] && kill "$_mpstat_pid" 2>/dev/null || true
 rm -rf "$scratch" 2>/dev/null || true
 touch "$COORD/WL_DONE.$RANKID"
 [ "$rc" -ne 0 ] && touch "$COORD/WL_FAIL.$RANKID"

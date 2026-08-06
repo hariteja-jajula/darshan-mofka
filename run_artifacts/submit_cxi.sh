@@ -5,16 +5,26 @@ set -euo pipefail
 
 
 # ===================== KNOBS (edit these) =====================
-NODES=2            # total nodes: 1 broker/consumer (N0) + rest run the workload
-TASKS=1            # workload processes PER workload node
-WORKLOAD=io_bench   # c | io_bench | io_bench_py | python-ml   (NOT mpi over cxi)
+NODES=4            # total nodes: 1 broker/consumer (N0) + 3 run the realistic ML workload (1 rank/node)
+TASKS=1            # workload processes PER workload node (cxi/mpmd = 1 rank/node)
+WORKLOAD=python-ml   # c | io_bench | io_bench_py | python-ml   (NOT mpi over cxi)
 REPS=2             # repeat the whole run N times
-EVENTS=100         # workload scale knob (write-events / steps)
+EVENTS=600         # -> ML_EPOCHS. Realistic trainer: login-node calib ~0.83s/epoch non-streaming,
+                   # so 600 epochs ~= 10min WORK/rep non-streaming; streaming adds overhead on top,
+                   # so >=10min/rep with ENABLE=1. REPS=2 -> ~20-24min work, safely inside 1h wall.
 PARTITIONS=16 # broker partitions (>= CONSUMERS to scale the drain)
 CONSUMERS=1   # parallel sharded FlowCept drainers on N0
-QUEUE=debug       # debug (<=2 nodes) | debug-scaling (up to ~10) | prod
+QUEUE=debug-scaling  # 4 nodes -> debug-scaling (debug is <=2 nodes)
 WALLTIME=01:00:00
 NCPUS=32          # Polaris compute node = 32 physical cores
+# python-ml dataset size (big -> meaningful ~10min run; matches PAPER_pythonml calibration):
+ML_FILES=64
+ML_ROWS=4096
+ML_COLS=64
+CHECKPOINTS=2
+# non-invasive per-core CPU sampling on the workload rank (mpstat -P ALL every N s -> mpstat.0.txt):
+DM_MPSTAT=1
+DM_MPSTAT_INT=5
 # io_bench profile (only used when WORKLOAD=io_bench; defaults = moderate/sustained):
 
 
@@ -30,13 +40,19 @@ COMPUTE=76
 MATRIX_SIZE=512
 
 
-MAX_BATCHES=512    # DARSHAN_MOFKA_MAX_BATCHES: backpressure/drop point (run.sh default 64)
+BATCH=512          # DARSHAN_MOFKA_BATCH: producer BatchSize. 0=Adaptive (send-on-notify=~1 RPC/event,
+                   # the +351s pathology); N>0 = fixed N events/RPC (~384938/N RPCs). 512 => ~750 RPCs.
+MAX_BATCHES=512    # DARSHAN_MOFKA_MAX_BATCHES: backpressure/drop point (run.sh default 64).
+                   # INERT under Adaptive; becomes a live "block when N batches pending" valve once BATCH>0.
 FLUSH_MS=30000        # DARSHAN_MOFKA_FLUSH_MS: final drain-wait ceiling (run.sh default 5000)
 ENABLE=1                # DARSHAN_MOFKA_ENABLE: 1=stream (arm C), 0=darshan-native-only (arm B)
 TIMING=1                # DARSHAN_MOFKA_TIMING: 1=emit per-call us to stderr (micro metrics), 0=clean macro run (run.sh default 1)
 
 account=radix-io
 SKIP_BUILD=1
+# Route this BATCH=512 validation into its own results subdir so it doesn't mix with the
+# Adaptive baseline (PYTHONML_2NODE_1PROC_1Broker-separate/RUN5,RUN6). One-variable A/B.
+RESULTS_TAG=${RESULTS_TAG:-REALISTIC_pythonml_N4}
 # ==============================================================
 
 
@@ -54,11 +70,13 @@ PBS_EXTRA=()
 
 # ofi+cxi -> job.sh RUN_MODE=mpmd; forward the knobs as config overrides.
 FWD="MOFKA_PROTOCOL=ofi+cxi,WORKLOAD=$WORKLOAD,NODES=$NODES,TASKS=$TASKS,REPS=$REPS"
-FWD="$FWD,EVENTS=$EVENTS,PARTITIONS=$PARTITIONS,CONSUMERS=$CONSUMERS,PLACEMENT=separate"
+FWD="$FWD,EVENTS=$EVENTS,CHECKPOINTS=$CHECKPOINTS,PARTITIONS=$PARTITIONS,CONSUMERS=$CONSUMERS,PLACEMENT=separate"
+# python-ml dataset-size knobs (workload_env forwards ML_FILES/ML_ROWS/ML_COLS when set) + CPU sampler
+FWD="$FWD,ML_FILES=$ML_FILES,ML_ROWS=$ML_ROWS,ML_COLS=$ML_COLS,DM_MPSTAT=$DM_MPSTAT,DM_MPSTAT_INT=$DM_MPSTAT_INT"
 FWD="$FWD,IO_SIZE_MB=$IO_SIZE_MB,IO_ITERS=$IO_ITERS,IO_SLEEP_MS=$IO_SLEEP_MS,IO_BLOCK_KB=$IO_BLOCK_KB"
 FWD="$FWD,COMPUTE=$COMPUTE,MATRIX_SIZE=$MATRIX_SIZE"
 # connector knobs (env-var-wins over workload.config, so this file is the single source):
-FWD="$FWD,DARSHAN_MOFKA_MAX_BATCHES=$MAX_BATCHES,DARSHAN_MOFKA_FLUSH_MS=$FLUSH_MS,DARSHAN_MOFKA_ENABLE=$ENABLE"
+FWD="$FWD,DARSHAN_MOFKA_BATCH=$BATCH,DARSHAN_MOFKA_MAX_BATCHES=$MAX_BATCHES,DARSHAN_MOFKA_FLUSH_MS=$FLUSH_MS,DARSHAN_MOFKA_ENABLE=$ENABLE"
 # TIMING is now a first-class knob in the block above (value-based gate: 0=off, 1=on),
 # so it is always forwarded -- this file is the single source, workload.config is gone.
 FWD="$FWD,DARSHAN_MOFKA_TIMING=$TIMING"
