@@ -49,10 +49,12 @@ WORKLOADS = [
   [("baseline",    "-",     "-",    "-",    "-",   "-",    "602.4", "0.0"),
    ("streaming r1","39,770","15.0","67.2","2.70","0.003","600.7","-1.7")]),
  ("dlio (DLIO benchmark dataset-generation)  -  TCP, 32 ranks/node, Adaptive",
-  "TensorFlow NPZ data-gen. Fidelity EXACT (32->1 aggregated). Wall = cold/warm-dominated -> per-event cost is the metric.",
-  [("baseline",    "-",      "-",   "-",    "-",   "-",    "n/a","n/a"),
-   ("streaming r1","475,994","3.0","38.0","3.25","0.004","n/a","n/a"),
-   ("streaming r2","475,994","4.6","42.5","4.09","0.005","n/a","n/a")]),
+  "TensorFlow NPZ data-gen. Fidelity EXACT (32->1). Wall = COLD-vs-WARM: baseline ran cold "
+  "(TF import + FS warmup ~139 s); streaming reps ran warm (~15 s) -> wall not comparable, per-event is the metric.",
+  [("baseline (cold)","475,994","-",   "-",    "-",   "-",    "139.2","0.0"),
+   ("streaming r1 (warm)","475,994","3.0","38.0","3.25","0.004","15.0","-124"),
+   ("streaming r2 (warm)","475,994","4.6","42.5","4.09","0.005","48.3","-91"),
+   ("streaming r3 (warm)","475,994","3.0","38.0","3.25","0.004","15.3","-124")]),
 ]
 
 prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)

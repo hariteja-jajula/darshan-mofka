@@ -191,6 +191,22 @@ workload_env() {
                        WORKLOAD_ENV+=(OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
                                       NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1) ;;
         python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS")
+                   # Cap numpy/BLAS threads for EVERY arm (baseline/runtimeonly/streaming),
+                   # exactly like io_bench above. The venv links scipy-openblas (DYNAMIC_ARCH,
+                   # NO_AFFINITY, MAX_THREADS=64): with no cap a single matmul spawns 64 OS
+                   # threads (verified), so on a packed node BLAS oversubscribes the cores and
+                   # the connector's drain/margo threads contend for CPU that BLAS already took
+                   # -- which inflates the APPARENT streaming overhead. Setting the caps here
+                   # (in the child env, before the interpreter starts) guarantees they take
+                   # effect: numpy reads them only at import, so os.environ-after-import is a
+                   # silent no-op. Measurement-neutral: identical fixed thread count across all
+                   # arms. Overridable via ML_BLAS_THREADS (default 1) for compute-heavy runs.
+                   # (OPENBLAS_/OMP_ are the two that actually govern this build; MKL_/NUMEXPR_/
+                   # VECLIB_ are set too for portability to other BLAS backends.)
+                   _mlbt="${ML_BLAS_THREADS:-1}"
+                   WORKLOAD_ENV+=(OMP_NUM_THREADS="$_mlbt" OPENBLAS_NUM_THREADS="$_mlbt" \
+                                  MKL_NUM_THREADS="$_mlbt" NUMEXPR_NUM_THREADS="$_mlbt" \
+                                  VECLIB_MAXIMUM_THREADS="$_mlbt")
                    # optional dataset-size knobs (forwarded when set) so python-ml can be
                    # scaled to a meaningful ~10min run for the overhead study.
                    # ML_PROFILE/ML_BLAS_THREADS: heavy in-workload profiler (per-region

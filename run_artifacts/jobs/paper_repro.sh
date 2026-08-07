@@ -25,7 +25,7 @@ echo "submit: $WL $PROTO ${TASKS}t/node nodes=$NODES q=$QUEUE bsweep=[$BSWEEP] E
 
 qsub -A "$account" -q "$QUEUE" -l select="${NODES}:ncpus=32:mpiprocs=32" -l walltime="$WALL" \
      "${PBS_EXTRA[@]}" -N "paper_$WL" -j oe -o "$ROOT/results/$STUDY/" \
-     -v "WL=$WL,PROTO=$PROTO,NODES=$NODES,TASKS=$TASKS,EV=$EV,PART=$PART,CONS=$CONS,RPC=$RPC,IO_ITERS=$IO_ITERS,IO_SLEEP_MS=$IO_SLEEP_MS,IO_SIZE_MB=$IO_SIZE_MB,IO_BLOCK_KB=$IO_BLOCK_KB,STUDY=$STUDY,SREPS=${SREPS:-3},ML_FILES=${ML_FILES:-},ML_ROWS=${ML_ROWS:-},ML_COLS=${ML_COLS:-}" <<'PBS'
+     -v "WL=$WL,PROTO=$PROTO,NODES=$NODES,TASKS=$TASKS,EV=$EV,PART=$PART,CONS=$CONS,RPC=$RPC,IO_ITERS=$IO_ITERS,IO_SLEEP_MS=$IO_SLEEP_MS,IO_SIZE_MB=$IO_SIZE_MB,IO_BLOCK_KB=$IO_BLOCK_KB,STUDY=$STUDY,SREPS=${SREPS:-3},BASE_REPS=${BASE_REPS:-2},ML_FILES=${ML_FILES:-},ML_ROWS=${ML_ROWS:-},ML_COLS=${ML_COLS:-}" <<'PBS'
 ROOT="/eagle/radix-io/hjajula/darshan-mofka-flowcept/darshan-mofka-worktree-stricter-overnight"
 cd "$ROOT"; set -uo pipefail
 export DARSHAN_MOFKA_MARGO_JSON='{"use_progress_thread":false,"rpc_thread_count":0,"argobots":{"pools":[{"name":"__primary__","kind":"fifo_wait","access":"mpmc"},{"name":"__progress__","kind":"fifo_wait","access":"mpmc"}],"xstreams":[{"name":"__primary__","scheduler":{"type":"basic_wait","pools":["__primary__"]}},{"name":"__progress__","scheduler":{"type":"basic_wait","pools":["__progress__"]}}]},"progress_pool":"__progress__"}'
@@ -46,8 +46,9 @@ run(){  # $1=arm-tag $2=enable $3=nodarshan $4=batch $5=sender
   pkill -f 'bedrock ' 2>/dev/null||true; pkill -f mongod 2>/dev/null||true; sleep 3
 }
 
-# baseline once, then streaming Adaptive (batch=0) for SREPS reps (paper default = Adaptive).
-run baseline 1 1 0 0
+# baseline BASE_REPS times (to see baseline variance), then streaming SREPS times.
+BASE_REPS="${BASE_REPS:-1}"
+for r in $(seq 1 "$BASE_REPS"); do run "baseline_rep$r" 1 1 0 0; done
 SREPS="${SREPS:-3}"
 for r in $(seq 1 "$SREPS"); do run "streaming_rep$r" 1 0 0 1; done
 echo "===== PAPER_REPRO DONE ($WL) $(date '+%H:%M:%S') ====="

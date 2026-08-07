@@ -17,15 +17,11 @@ die() { printf '\nFATAL: %s\n' "$*" >&2; exit 1; }
 
 # --- 1. environment + resolved run ---
 say "1. environment"
-export TERM="${TERM:-xterm}"
-# shellcheck disable=SC1091
 source env/server.sh   || die "could not source env/server.sh"
-# shellcheck disable=SC1091
 source env/workload.sh || die "could not source env/workload.sh"
 module unload darshan 2>/dev/null || true
 export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 darshan_ensure_logdir >/dev/null
-# shellcheck disable=SC1091
 source lib/run.sh || die "could not source lib/run.sh"
 load_run_config; WORKLOAD="$WL_TYPE"
 # RUN_MODE: mpmd = single-MPMD ofi+cxi path (broker+consumer+workload in ONE launch, shared
