@@ -5,5 +5,5 @@
 WLNODES=4 SRVNODES=1 WORKLOAD=dlio PROTO=ofi+tcp TASKS=32 REPS=2
 EVENTS=320   # num_files_train; ~300-350 ~= 10 min (calibration.md)
 PARTITIONS=16 CONSUMERS=16
-STUDY=OVH_dlio_4wl
+STUDY="${STUDY:-OVH_dlio_4wl}"   # overridable so each fix routes to its own results dir
 source "$(dirname "$0")/_submit_lib.sh"

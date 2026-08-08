@@ -37,6 +37,11 @@ COMPUTE="${COMPUTE:-0}"; MATRIX_SIZE="${MATRIX_SIZE:-256}"
 IO_SIZE_MB="${IO_SIZE_MB:-16}"; IO_ITERS="${IO_ITERS:-16}"; IO_SLEEP_MS="${IO_SLEEP_MS:-50}"; IO_BLOCK_KB="${IO_BLOCK_KB:-1024}"
 # python-ml knobs (only used when WORKLOAD=python-ml):
 ML_CHECKPOINTS="${ML_CHECKPOINTS:-1}"
+# python-ml dataset-size knobs (forwarded only when set; run.sh reads them ONLY in the
+# python-ml case, so they are inert for other workloads). Needed to scale python-ml to a
+# ~300s+ real-work run for the overhead study (proven point: ML_FILES=64 ROWS=4096 COLS=64
+# + EVENTS=1000 -> ~538s, results/NOSTREAM_pythonml).
+ML_FILES="${ML_FILES:-}"; ML_ROWS="${ML_ROWS:-}"; ML_COLS="${ML_COLS:-}"
 # connector knobs:
 MAX_BATCHES="${MAX_BATCHES:-512}"; FLUSH_MS="${FLUSH_MS:-30000}"; TIMING="${TIMING:-1}"
 RPC_THREAD_COUNT="${RPC_THREAD_COUNT:-4}"
@@ -75,6 +80,9 @@ submit_arm() {
     FWD="$FWD,EVENTS=$EVENTS,PARTITIONS=$PARTITIONS,CONSUMERS=$CONSUMERS,PLACEMENT=separate"
     FWD="$FWD,IO_SIZE_MB=$IO_SIZE_MB,IO_ITERS=$IO_ITERS,IO_SLEEP_MS=$IO_SLEEP_MS,IO_BLOCK_KB=$IO_BLOCK_KB"
     FWD="$FWD,COMPUTE=$COMPUTE,MATRIX_SIZE=$MATRIX_SIZE,ML_CHECKPOINTS=$ML_CHECKPOINTS"
+    [ -n "$ML_FILES" ] && FWD="$FWD,ML_FILES=$ML_FILES"
+    [ -n "$ML_ROWS" ]  && FWD="$FWD,ML_ROWS=$ML_ROWS"
+    [ -n "$ML_COLS" ]  && FWD="$FWD,ML_COLS=$ML_COLS"
     FWD="$FWD,DARSHAN_MOFKA_MAX_BATCHES=$MAX_BATCHES,DARSHAN_MOFKA_FLUSH_MS=$FLUSH_MS"
     FWD="$FWD,DARSHAN_MOFKA_ENABLE=$enable,DARSHAN_MOFKA_TIMING=$TIMING"
     FWD="$FWD,DARSHAN_MOFKA_DROP_POLICY=block,RPC_THREAD_COUNT=$RPC_THREAD_COUNT"

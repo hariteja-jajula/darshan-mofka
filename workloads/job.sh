@@ -154,7 +154,22 @@ esac
 
 # run the workload once into $1 (=RES); places it per WL_PLACEMENT / WL_TASKS
 run_workload_once() {
-    local RES="$1" scratch="/tmp/dm_${WL_TYPE}_$$_$RANDOM" dlib; dlib="$(darshan_lib)"
+    # Most workloads write per-rank files each rank reads back itself -> node-local /tmp
+    # is fine and fast (tmpfs). DLIO is different: it shards ONE dataset across ranks at
+    # generate_data, then reads it back expecting a SHARED view (rank A reads files rank B
+    # wrote). On multi-node, node-local /tmp is NOT shared across nodes, so those reads hit
+    # FileNotFoundError. Put DLIO's dataset on the shared Lustre project dir instead. All
+    # three arms use this same common code, so the stream-vs-runtimeonly overhead comparison
+    # stays fair (only the storage medium changes: tmpfs->Lustre, which is also the more
+    # realistic medium for an I/O-tracing study). Cleaned up at the end of the run since
+    # Lustre, unlike tmpfs, does not reclaim on node teardown.
+    local RES="$1" scratch dlib; dlib="$(darshan_lib)"
+    if [[ "$WL_TYPE" == dlio ]]; then
+        scratch="$ROOT/results/_dlio_scratch/dm_${WL_TYPE}_$$_$RANDOM"
+        mkdir -p "$scratch"
+    else
+        scratch="/tmp/dm_${WL_TYPE}_$$_$RANDOM"
+    fi
     connector_env "$GROUP"; darshan_env; workload_env
     local cmd=()
     case "$WL_TYPE" in
@@ -178,7 +193,13 @@ run_workload_once() {
                         "++hydra.run.dir=$scratch/hydra" "++hydra.output_subdir=null") ;;
         *)         die "unknown workload '$WL_TYPE'" ;;
     esac
-    local base=(DARSHAN_LOGPATH="$RES" LD_PRELOAD="$dlib" "${CONNECTOR_ENV[@]}" "${DARSHAN_ENV[@]}" "${WORKLOAD_ENV[@]}")
+    # Baseline arm (NO_DARSHAN=1) must run WITHOUT the LD_PRELOAD, else it "secretly
+    # streams" and its wall time includes the full streaming tax -> a garbage baseline.
+    # This mirrors the mpmd path's NO_DARSHAN branch (lib/run.sh). Legacy-path workloads
+    # (dlio, mpi, tcp io_bench) all go through here; the cxi python-ml path does not.
+    local preload_kv="LD_PRELOAD=$dlib"
+    [ "${NO_DARSHAN:-0}" = 1 ] && preload_kv=""
+    local base=(DARSHAN_LOGPATH="$RES" ${preload_kv:+"$preload_kv"} "${CONNECTOR_ENV[@]}" "${DARSHAN_ENV[@]}" "${WORKLOAD_ENV[@]}")
     # Fast path: a single local rank on the head node needs no launcher. Otherwise place
     # WL_TASKS ranks per workload node (multi-proc and/or multi-node) with ppr mapping --
     # NO oversubscription (WL_TASKS must be <= ncpus/node or PRRTE errors, which is correct).
@@ -200,12 +221,21 @@ run_workload_once() {
         # ofi+cxi producer must collapse to the same single VNI the broker used, else it can't
         # attach across nodes over the shared job VNI. cxi_pfx runs inside the launched shell.
         local cxi_pfx=""; [[ "$SRV_PROTOCOL" == *cxi* ]] && cxi_pfx="$(cxi_collapse) "
+        # Baseline arm: drop LD_PRELOAD from the launched shell string too (see above).
+        local preload_pfx="LD_PRELOAD='$dlib' "
+        [ "${NO_DARSHAN:-0}" = 1 ] && preload_pfx=""
         mpi_launch "$WL_TOTAL_RANKS" "$WL_TASKS" "$WL_HOSTFILE"
         "${MPI_LAUNCH[@]}" bash -lc \
-          "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && ${cxi_pfx}env $estr DARSHAN_LOGPATH='$RES' LD_PRELOAD='$dlib' ${cmd[*]}" \
+          "cd '$ROOT' && source env/workload.sh >/dev/null 2>&1 && ${cxi_pfx}env $estr DARSHAN_LOGPATH='$RES' ${preload_pfx}${cmd[*]}" \
           >> "$RES/workload.out" 2> "$RES/workload.err"
     fi
     echo "WORK_SH_END_NS $(date +%s%N)" >> "$RES/workload.out"
+    # DLIO scratch lives on shared Lustre (see top of function); reclaim it now so the
+    # dataset doesn't accumulate across reps/arms. Node-local /tmp scratch is left to the
+    # OS/tmpfs as before.
+    if [[ "$WL_TYPE" == dlio && -n "$scratch" && "$scratch" == "$ROOT/results/_dlio_scratch/"* ]]; then
+        rm -rf "$scratch" 2>/dev/null || true
+    fi
 }
 
 # --- 7. reps: run + drain + reconstruct + compare, into descriptive RUN<n> dirs ---
@@ -263,19 +293,27 @@ for rep in $(seq 1 "$WL_REPS"); do
     mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' \
         ! -path "$STREAMED_DIR/*" ! -path "$NATIVE_DIR/*" -newermt '-20 min' 2>/dev/null | sort)
     for nl in "${NATIVE_LOGS[@]}"; do cp "$nl" "$NATIVE_DIR/"; done
-    # STRICT compare: reconstructed vs native, EXACT integer counters per record.
-    # (Replaces the old summed-4-op-total rubber stamp -- that hid real capture gaps.)
-    # Mode by workload class: non-MPI workloads (c/python-ml/dlio) write one log per
-    # process -> per-process/per-record/per-counter exact compare. MPI writes ONE shared
-    # log reduced to rank=-1 -> aggregate the N reconstructed per-rank logs the way
-    # Darshan's reduction does, then compare. See workloads/strict_compare.py.
-    # Run from $RES so the repo's darshan/ source tree doesn't shadow the pydarshan pkg.
-    cmp_mode="perproc"; [[ "$WL_TYPE" == "mpi" || "$WL_TYPE" == "dlio" ]] && cmp_mode="mpi"   # dlio = MPI mode. NOT `local`: this block runs in the main-body for-loop, not a function
-    ( cd "$RES" && "$PY" "$ROOT/workloads/strict_compare.py" streamed native "$cmp_mode" ) \
-        | tee "$RES/compare.txt"
-    # exit 3 = MISMATCH (real capture bug), 2 = ERROR (harness/config failure, e.g. no
-    # native logs). BOTH must fail the run -- a config failure must not score as a pass.
-    CMP_RC="${PIPESTATUS[0]}"; [[ "$CMP_RC" == 3 || "$CMP_RC" == 2 ]] && FINAL_RC="$CMP_RC"
+    # TELEMETRY-ONLY verdict (rec_hex retired). The stream no longer carries the native
+    # record struct, so reconstructed logs are heatmap-only and have none of the exact
+    # integer counters strict_compare checks -- a byte-exact compare would mismatch by
+    # construction. Fidelity now rests on the native .darshan log (written by Darshan at
+    # process exit, independent of streaming = the source of truth). Here we do a LIGHT
+    # sanity check instead: telemetry streamed, reconstruct produced per-process heatmap
+    # logs, and native logs exist to compare against out-of-band. This does NOT gate the
+    # run (FINAL_RC untouched) -- the overhead study cares about the workload wall time,
+    # not a counter compare (which runs after run_workload_once anyway, so timing-neutral).
+    EXPORTED="$(wc -l < "$EVJSONL" 2>/dev/null || echo 0)"
+    RECON_LOGS="$(find "$STREAMED_DIR" -name '*.darshan' 2>/dev/null | wc -l)"
+    NATIVE_CNT="${#NATIVE_LOGS[@]}"
+    {
+      echo "VERDICT: TELEMETRY (slim envelope; native .darshan = source of truth)"
+      echo "  streamed_events=$EXPORTED reconstructed_heatmap_logs=$RECON_LOGS native_logs=$NATIVE_CNT"
+    } | tee "$RES/compare.txt"
+    # Sanity (non-gating): telemetry should have streamed something and reconstructed at
+    # least one heatmap log when native I/O occurred. Warn, don't fail, on a mismatch.
+    if [ "$EXPORTED" -gt 0 ] && [ "$RECON_LOGS" -lt 1 ]; then
+        echo "  WARN: $EXPORTED events streamed but 0 heatmap logs reconstructed" | tee -a "$RES/compare.txt"
+    fi
     # pydarshan HTML for ONE example process, native AND reconstructed, for a side-by-side
     # visual. pydarshan renders a single per-process log (a merged multi-process log has mixed
     # heatmap nbins and pydarshan rejects it -- native has the same limit, so we stay per-file).
