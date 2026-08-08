@@ -134,18 +134,20 @@ envelope (job 7307538).
 
 ## 7. Reproducibility audit
 
-**Config knobs (single source: `run_artifacts/submit_cxi.sh` / `overhead_study.sh`):**
+**Config knobs (single source: `overhead_study/_submit_lib.sh` + the `overhead_study/*wlnode_*` configs):**
 - topology: `NODES`, `TASKS` (cxi = 1 rank/node; multi-rank -> `PROTOCOL=ofi+tcp`)
 - scale: `EVENTS`; io_bench pacing: `IO_*`, `COMPUTE`, `MATRIX_SIZE`
 - stream: `PARTITIONS`, `CONSUMERS`, `DARSHAN_MOFKA_DROP_POLICY` (block|drop)
 - arm: `DARSHAN_MOFKA_ENABLE` (1/0), `NO_DARSHAN` (baseline), `TIMING` (per-op metrics)
 
-**To reproduce a study:**
+**To reproduce a study:** run the per-workload config, which sources `_submit_lib.sh` and
+submits the three arms as separate PBS jobs (knobs are env-overridable, e.g. `REPS`, `ARMS`):
 ```bash
-cd run_artifacts
-STUDY=<name> WORKLOAD=<c|io_bench|python-ml|mpi|dlio> NODES=.. TASKS=.. REPS=.. EVENTS=.. \
-  PARTITIONS=.. CONSUMERS=.. PROTOCOL=<ofi+cxi|ofi+tcp> COMPUTE=.. MATRIX_SIZE=.. TIMING=1 \
-  ARMS="baseline runtimeonly streaming" PBS_ACCOUNT=radix-io bash overhead_study.sh
+# one workload node + one broker (edit / pick the matching *wlnode_*srvnode_* config)
+ARMS="baseline runtimeonly streaming" REPS=3 \
+  bash overhead_study/1wlnode_1srvnode_iobench_1rnkpernd_cxi.sh
+# or drive all configs under the 1-in-Q-per-queue limit:
+bash overhead_study/dripfeed.sh
 ```
 
 **Per-run outputs** (in `results/<STUDY>/<arm>/RUN<n>/`):
@@ -170,7 +172,7 @@ can visually confirm the reconstructed log matches native.
 
 ## 8. Job ledger
 
-_(filled as runs complete; see run_artifacts/overhead_study.md for the live queue/verdict log)_
+_(filled as runs complete; the live queue/verdict log is `overhead_study/.dripfeed.log`)_
 
 | Study | workload | nodes x tasks | events | protocol | reps | jobid | verdict |
 |-------|----------|--------------:|-------:|----------|-----:|-------|:-------:|

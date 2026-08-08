@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Realistic NumPy MLP training workload with genuine file I/O.
 
-Unlike the old toy (train_old.py), which only read shards back and took a mean,
-this trains a REAL 2-layer MLP with mini-batch SGD and backpropagation on a
+Unlike a toy that only reads shards back and takes a mean, this trains a REAL
+2-layer MLP with mini-batch SGD and backpropagation on a
 synthetic regression dataset. The file-I/O pattern mirrors real ML training:
 
   * the dataset is written once as float32 .npy shards -- ONE buffered write per

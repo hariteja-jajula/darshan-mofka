@@ -98,7 +98,8 @@ WORKLOAD=io_bench NODES=5 TASKS=4 REPS=1 QUEUE=debug-scaling PBS_ACCOUNT=<projec
 WORKLOAD=io_bench NODES=2 TASKS=1 REPS=3 PBS_ACCOUNT=<project> bash run_artifacts/submit_cxi.sh
 ```
 
-The proven recipe and validation history live in `run_artifacts/DECISION.md`.
+The proven per-workload recipes and the overhead-study harness live in `overhead_study/`
+(see `overhead_study/README.md` and the `*wlnode_*srvnode_*` config scripts).
 
 For workload configuration and run details, see:
 

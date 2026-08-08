@@ -28,7 +28,7 @@ load_run_config; WORKLOAD="$WL_TYPE"
 # job VNI); legacy = old 3-launch TCP baseline (still selectable). cxi -> mpmd.
 RUN_MODE="${RUN_MODE:-$([[ "$SRV_PROTOCOL" == *cxi* ]] && echo mpmd || echo legacy)}"
 # Gate-0: MPI_Init hangs beside a stripped MPMD section -> MPI-IO can't stream over cxi/mpmd.
-# It stays on the legacy/TCP baseline. (run_artifacts/DECISION.md, fork resolved non-MPI only.)
+# It stays on the legacy/TCP baseline. (fork resolved non-MPI only.)
 [[ "$RUN_MODE" == mpmd && "$WL_TYPE" == mpi ]] && die "WL_TYPE=mpi unsupported in mpmd/cxi mode (Gate-0); use RUN_MODE=legacy for the MPI baseline"
 # Gate-1: over cxi/mpmd the supported non-MPI shape is 1 rank PER NODE. Multi-rank/node C/io_bench/
 # python-ml floods the single broker -> proven ~85% event loss (C N2T4 500K MISMATCH) or ceiling
@@ -240,7 +240,7 @@ run_workload_once() {
 
 # --- 7. reps: run + drain + reconstruct + compare, into descriptive RUN<n> dirs ---
 # RESULTS_TAG (optional): override the results subdir name so a study driver can route
-# each arm/config into its own labeled dir (e.g. overhead_study.sh). Default = topology name.
+# each arm/config into its own labeled dir (e.g. overhead_study/ configs). Default = topology name.
 RESBASE="$ROOT/results/${RESULTS_TAG:-$(results_dir_name)}"
 FINAL_RC=0
 for rep in $(seq 1 "$WL_REPS"); do
@@ -289,7 +289,7 @@ for rep in $(seq 1 "$WL_REPS"); do
     # EXCLUDE the reconstructed logs we just wrote under $RES/streamed (and anything already
     # copied into $RES/native): find scans $RES recursively and would otherwise sweep the
     # reconstructed .darshan back in as if it were native -> duplicate-pid ERROR in
-    # strict_compare (VERDICT: ERROR rc=2). Mirrors overhead_study.sh's ! -path guard.
+    # strict_compare (VERDICT: ERROR rc=2). Mirrors the study harness's ! -path guard.
     mapfile -t NATIVE_LOGS < <(find "$RES" "$DARSHAN_LOGPATH" -name '*.darshan' \
         ! -path "$STREAMED_DIR/*" ! -path "$NATIVE_DIR/*" -newermt '-20 min' 2>/dev/null | sort)
     for nl in "${NATIVE_LOGS[@]}"; do cp "$nl" "$NATIVE_DIR/"; done

@@ -1,8 +1,0 @@
-[17:49:55] allocation: 2 nodes: x3001c0s13b1n0.hsn.cm.polaris.alcf.anl.gov x3001c0s7b1n0.hsn.cm.polaris.alcf.anl.gov
-[17:49:55] broker node = x3001c0s13b1n0.hsn.cm.polaris.alcf.anl.gov | workload node = x3001c0s7b1n0.hsn.cm.polaris.alcf.anl.gov
-[17:49:55] ===== python-ml launch-path split: mpmd_native (ENABLE=0) then streaming_fixB (default progress thread) =====
-[17:49:55] RUN python-ml/mpmd_native (enable=0 no_darshan=0 extra=[])
-[18:00:05]   done python-ml/mpmd_native
-[18:00:09] RUN python-ml/streaming_fixB (enable=1 no_darshan=0 extra=[DARSHAN_MOFKA_BATCH=0])
-[18:16:44]   done python-ml/streaming_fixB
-[18:16:48] ===== DIAGLAUNCH DONE =====

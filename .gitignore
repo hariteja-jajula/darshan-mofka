@@ -43,7 +43,7 @@
 # compiled io_bench binary (source is workloads/c/io_bench.c; binary is a build output)
 /workloads/c/io_bench
 
-# per-run temp nodefiles written by study_alloc.sh
+# per-run temp nodefiles written by the study allocator
 /results/_nf_*
 
 # local upstream Mofka reference clone (github.com/mochi-hpc/mofka) for dev only

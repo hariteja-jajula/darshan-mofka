@@ -395,7 +395,7 @@ stop_consumer_verdict() {
 # run_mpmd_rep <RES> -- run ONE rep as a SINGLE MPMD mpiexec: broker + FlowCept consumer(s)
 # + Darshan workload as :-separated sections in ONE launch, so PALS gives the whole launch
 # ONE shared Slingshot job VNI (the ONLY way cross-node ofi+cxi routes -- 3 separate launches
-# get 3 non-routable VNIs). Proven recipe (run_artifacts/DECISION.md):
+# get 3 non-routable VNIs). Proven recipe:
 #   Lever 1 = single MPMD mpiexec (mpi_launch_mpmd).  Lever 2 = PMI-strip before exec (PALS
 #   injects a phantom PMI world that hangs non-MPI bedrock).  + cxi_collapse (margo multi-VNI
 #   bug) + exec bedrock DIRECTLY </dev/null.  Sections coordinate via files on the Eagle FS.
@@ -408,7 +408,7 @@ stop_consumer_verdict() {
 run_mpmd_rep() {
     local RES="$1"; load_run_config
     case "$WL_TYPE" in
-        mpi|dlio) echo "run_mpmd_rep: WL_TYPE=$WL_TYPE unsupported over cxi/mpmd (Gate-0, DECISION.md) -- MPI runs via RUN_MODE=legacy"; return 2 ;;
+        mpi|dlio) echo "run_mpmd_rep: WL_TYPE=$WL_TYPE unsupported over cxi/mpmd (Gate-0) -- MPI runs via RUN_MODE=legacy"; return 2 ;;
     esac
     [[ "$SRV_PROTOCOL" == *cxi* ]] || echo "run_mpmd_rep: WARN protocol=$SRV_PROTOCOL is not cxi (this path is for ofi+cxi)"
     local COORD="$RES/coord" SEC="$RES/sections"
