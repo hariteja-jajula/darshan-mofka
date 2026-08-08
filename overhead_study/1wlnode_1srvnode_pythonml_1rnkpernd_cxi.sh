@@ -5,7 +5,7 @@
 # REPS=3 = 1 cold (discarded) + 2 warm samples. Single warm sample is unusable given the
 # measured 3.6x cold/warm swing at sub-second scale; 2 warm lets us see if they agree.
 # 3 x ~538s work + broker/reconstruct still fits the 1h debug walltime.
-WLNODES=1 SRVNODES=1 WORKLOAD=python-ml PROTO=ofi+cxi TASKS=1 REPS=3
+WLNODES=1 SRVNODES=1 WORKLOAD=python-ml PROTO=ofi+cxi TASKS=1 REPS="${REPS:-3}"
 # EVENTS=ML_EPOCHS. Calibrated to ~300s+ REAL work so per-event streaming cost dominates
 # the constant init/finalize cost (proven point: results/NOSTREAM_pythonml did ~538s at
 # EVENTS=1000 + the big dataset below; the old EVENTS=50 gave only ~0.2s -> pure noise).

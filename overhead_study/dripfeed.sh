@@ -19,8 +19,10 @@
 # Env: POLL_S=30 (cycle sleep), MAXCYCLES=100000, DRYRUN=1 (print, don't submit).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE="$HERE/.dripfeed_state"
-LOG="$HERE/.dripfeed.log"
+STATE="${DRIPFEED_STATE:-$HERE/.dripfeed_state}"
+LOG="${DRIPFEED_LOG:-$HERE/.dripfeed.log}"
+# per-arm rep counts (study design: 1 baseline + 1 runtimeonly + 3 streaming reps)
+BASE_REPS="${BASE_REPS:-1}"; RUNTIME_REPS="${RUNTIME_REPS:-1}"; STREAM_REPS="${STREAM_REPS:-3}"
 POLL_S="${POLL_S:-30}"
 MAXCYCLES="${MAXCYCLES:-100000}"
 ME="$(whoami)"
@@ -32,42 +34,32 @@ log(){ echo "[$(date -u +%FT%TZ)] $*" | tee -a "$LOG"; }
 # debug queue (1wl = 2 total nodes): proven I/O first, python-ml last.
 # debug-scaling (2wl/4wl): all 2wl, then all 4wl; python-ml HELD (see below).
 WORK=(
-  # -- debug (1wl) --
+  # -- debug (1wl = 2 total nodes): 5 workloads x 3 arms --
   "1wlnode_1srvnode_iobench_1rnkpernd_cxi.sh baseline"
   "1wlnode_1srvnode_iobench_1rnkpernd_cxi.sh runtimeonly"
   "1wlnode_1srvnode_iobench_1rnkpernd_cxi.sh streaming"
   "1wlnode_1srvnode_iobenchpy_1rnkpernd_cxi.sh baseline"
   "1wlnode_1srvnode_iobenchpy_1rnkpernd_cxi.sh runtimeonly"
   "1wlnode_1srvnode_iobenchpy_1rnkpernd_cxi.sh streaming"
+  "1wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh baseline"
+  "1wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh runtimeonly"
+  "1wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh streaming"
   "1wlnode_1srvnode_mpi_32rnkpernd_tcp.sh baseline"
   "1wlnode_1srvnode_mpi_32rnkpernd_tcp.sh runtimeonly"
   "1wlnode_1srvnode_mpi_32rnkpernd_tcp.sh streaming"
   "1wlnode_1srvnode_dlio_32rnkpernd_tcp.sh baseline"
   "1wlnode_1srvnode_dlio_32rnkpernd_tcp.sh runtimeonly"
   "1wlnode_1srvnode_dlio_32rnkpernd_tcp.sh streaming"
-  "1wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh baseline"
-  "1wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh runtimeonly"
-  "1wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh streaming"
-  # -- debug-scaling (2wl) --
-  "2wlnode_1srvnode_iobench_1rnkpernd_cxi.sh baseline"
-  "2wlnode_1srvnode_iobench_1rnkpernd_cxi.sh runtimeonly"
-  "2wlnode_1srvnode_iobench_1rnkpernd_cxi.sh streaming"
-  "2wlnode_1srvnode_iobenchpy_1rnkpernd_cxi.sh baseline"
-  "2wlnode_1srvnode_iobenchpy_1rnkpernd_cxi.sh runtimeonly"
-  "2wlnode_1srvnode_iobenchpy_1rnkpernd_cxi.sh streaming"
-  "2wlnode_1srvnode_mpi_32rnkpernd_tcp.sh baseline"
-  "2wlnode_1srvnode_mpi_32rnkpernd_tcp.sh runtimeonly"
-  "2wlnode_1srvnode_mpi_32rnkpernd_tcp.sh streaming"
-  "2wlnode_1srvnode_dlio_32rnkpernd_tcp.sh baseline"
-  "2wlnode_1srvnode_dlio_32rnkpernd_tcp.sh runtimeonly"
-  "2wlnode_1srvnode_dlio_32rnkpernd_tcp.sh streaming"
-  # -- debug-scaling (4wl) --
+  # -- debug-scaling (4wl = 5 total nodes): 5 workloads x 3 arms --
   "4wlnode_1srvnode_iobench_1rnkpernd_cxi.sh baseline"
   "4wlnode_1srvnode_iobench_1rnkpernd_cxi.sh runtimeonly"
   "4wlnode_1srvnode_iobench_1rnkpernd_cxi.sh streaming"
   "4wlnode_1srvnode_iobenchpy_1rnkpernd_cxi.sh baseline"
   "4wlnode_1srvnode_iobenchpy_1rnkpernd_cxi.sh runtimeonly"
   "4wlnode_1srvnode_iobenchpy_1rnkpernd_cxi.sh streaming"
+  "4wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh baseline"
+  "4wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh runtimeonly"
+  "4wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh streaming"
   "4wlnode_1srvnode_mpi_32rnkpernd_tcp.sh baseline"
   "4wlnode_1srvnode_mpi_32rnkpernd_tcp.sh runtimeonly"
   "4wlnode_1srvnode_mpi_32rnkpernd_tcp.sh streaming"
@@ -75,9 +67,6 @@ WORK=(
   "4wlnode_1srvnode_dlio_32rnkpernd_tcp.sh runtimeonly"
   "4wlnode_1srvnode_dlio_32rnkpernd_tcp.sh streaming"
 )
-# HELD (uncalibrated python-ml at scale -- submit manually after 1wl validates):
-#   2wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh {baseline,runtimeonly,streaming}
-#   4wlnode_1srvnode_pythonml_1rnkpernd_cxi.sh {baseline,runtimeonly,streaming}
 
 queue_of(){ case "$1" in 1wlnode_*) echo debug ;; *) echo debug-scaling ;; esac; }
 
@@ -89,10 +78,14 @@ qcount_Q(){
 }
 done_already(){ grep -qF "$1 $2 " "$STATE"; }
 
+# reps for a given arm (baseline 1 / runtimeonly 1 / streaming 3 by default)
+reps_for(){ case "$1" in baseline) echo "$BASE_REPS";; runtimeonly) echo "$RUNTIME_REPS";; streaming) echo "$STREAM_REPS";; *) echo 1;; esac; }
+
 # submit exactly one arm of one file; echo jobid on success, empty on reject/fail.
 submit_one(){
-  local file="$1" arm="$2" out jid
-  out="$(cd "$HERE/.." && ARMS="$arm" DRYRUN="${DRYRUN:-0}" bash "overhead_study/$file" 2>&1)"
+  local file="$1" arm="$2" out jid reps
+  reps="$(reps_for "$arm")"
+  out="$(cd "$HERE/.." && ARMS="$arm" REPS="$reps" DRYRUN="${DRYRUN:-0}" bash "overhead_study/$file" 2>&1)"
   if [ "${DRYRUN:-0}" = 1 ]; then echo "$out" >>"$LOG"; echo "DRYRUN"; return 0; fi
   jid="$(grep -oE '^[0-9]+\.polaris[^ ]*' <<<"$out" | head -1)"
   if [ -n "$jid" ]; then echo "$jid"; else
