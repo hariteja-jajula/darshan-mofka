@@ -19,6 +19,15 @@ env_prepend LD_LIBRARY_PATH "$MOFKA_SPACK_VIEW/lib64"
 env_prepend LD_LIBRARY_PATH "$MOFKA_SPACK_VIEW/lib"
 env_prepend LD_LIBRARY_PATH "$ENV_ROOT/darshan/darshan-util/install/lib"
 
+# raw-json handoff (DARSHAN_MOFKA_RAW_JSON): the spack-view libdiaspora-stream-api.so
+# has no RawSerializer, so bedrock/mofkactl fall back to dlopen("libraw.so") and die.
+# Only when the raw knob is on, prepend the repo fork's C install/lib (SONAME-identical
+# superset that adds the "raw" serializer) so the C++ side resolves it. Gated so every
+# non-raw run keeps the view copy => byte-identical to production.
+if [ -n "${DARSHAN_MOFKA_RAW_JSON:-}" ] && [ "${DARSHAN_MOFKA_RAW_JSON}" != 0 ]; then
+    env_prepend LD_LIBRARY_PATH "$ENV_ROOT/diaspora-stream-api/install/lib"
+fi
+
 # mongod (FlowCept sink)
 if [[ -z "${MONGOD:-}" || ! -x "${MONGOD:-}" ]]; then
     for _m in "$ENV_ROOT/Database/_mongo_env/bin/mongod" \

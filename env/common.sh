@@ -37,17 +37,6 @@ cxx_runtime_pin() {
     case ":${LD_PRELOAD:-}:" in *:"$lib":*) ;; *) export LD_PRELOAD="$lib${LD_PRELOAD:+:$LD_PRELOAD}" ;; esac
 }
 
-# mpi_launch -- build MPI_LAUNCH=(...) for the current profile.
-#   mpi_launch <total_ranks> <ranks_per_node> [hostfile]
-# Polaris uses the cray-mpich PALS launcher (mpiexec --ppn/--cpu-bind); LCRC uses
-# OpenMPI (mpirun --map-by ppr:N:node + TCP --mca to dodge the verbs connect-storm).
-# On Polaris `mpirun` is a symlink to PALS mpiexec, so the OpenMPI flags would ERROR
-# there -- the profile split is mandatory, not cosmetic. PALS rejects --map-by/--mca and
-# chokes on "slots=" hostfiles (parses the whole line as a hostname), so the hostfile
-# passed here must be bare hostnames under polaris (see the writer in workloads/job.sh).
-# --cpu-bind none is deliberate: this is an I/O benchmark whose ranks each run a
-# Mercury/Margo progress thread for the connector; pinning rank+progress to one core
-# serializes the very sends the overhead study measures.
 mpi_launch() {
     local n="$1" ppn="$2" hf="${3:-}"
     if [[ "$ENV_PROFILE" == polaris ]]; then
@@ -58,17 +47,11 @@ mpi_launch() {
     [[ -n "$hf" ]] && MPI_LAUNCH+=(--hostfile "$hf")
 }
 
-# cxi_collapse -- Polaris exposes two Slingshot VNIs; margo 0.24 mishandles multi-VNI over
-# ofi+cxi (garbage rgroup -> "Invalid domain auth_key"). Emit a snippet that keeps only the
-# first entry of each list. Evaluated INSIDE the launched proc (SLINGSHOT_* are compute-only),
-# so it must be fed literally to bedrock/workload's own shell, never expanded at launch time.
+
 cxi_collapse() {
     printf '%s' 'export SLINGSHOT_VNIS=${SLINGSHOT_VNIS%%,*} SLINGSHOT_SVC_IDS=${SLINGSHOT_SVC_IDS%%,*} SLINGSHOT_DEVICES=${SLINGSHOT_DEVICES%%,*};'
 }
 
-# pmi_strip -- unset PALS's phantom PMI world (keeps SLINGSHOT_* / the VNI) so non-MPI
-# bedrock doesn't hang on a PMI collective. Emitted literally into the launched section
-# (PMI_* are compute-only), never expanded at launch time -- like cxi_collapse.
 pmi_strip() {
     printf '%s' 'for v in $(compgen -v | grep -E "^(PMI_|PMIX_|PALS_)"); do unset "$v"; done;'
 }
@@ -76,7 +59,7 @@ pmi_strip() {
 # mpi_launch_mpmd -- build MPI_MPMD=(...) as ONE mpiexec with colon-joined sections so PALS
 # gives the whole launch one shared job VNI. Each arg: "HOST COUNT SCRIPT". Polaris/PALS-only.
 mpi_launch_mpmd() {
-    MPI_MPMD=(mpiexec --cpu-bind none)
+    MPI_MPMD=(mpiexec )
     local first=1 spec host cnt scr
     for spec in "$@"; do
         read -r host cnt scr <<<"$spec"

@@ -100,7 +100,16 @@ WL_NODE="${WL_NODES_ARR[0]}"   # kept for messages / single-node paths
 # --map-by ppr:WL_TASKS:node puts exactly WL_TASKS ranks/node with NO oversubscription.
 WL_SLOTS="$(awk -v n="${WL_NODES_ARR[0]}" '$1==n{c++} END{print c+0}' "${PBS_NODEFILE:-/dev/null}" 2>/dev/null)"
 [ "${WL_SLOTS:-0}" -ge 1 ] 2>/dev/null || WL_SLOTS="$(nproc 2>/dev/null || echo 128)"
-WL_HOSTFILE="$ROOT/server/_wl_hostfile"
+# Per-job unique hostfile path. A FIXED shared path here is a cross-job data race: several of
+# my jobs run concurrently (debug-scaling), all legacy-path tcp workloads (mpi + dlio) write
+# this file early (below) but mpiexec reads it much later (mpi_launch), so a concurrent job can
+# truncate/overwrite it in between -> PALS "Cannot place all ranks on node list". Suffix with the
+# PBS job id ($$ fallback for interactive) so each job owns its own hostfile.
+# JOB_SUFFIX is the per-job token reused for ALL shared-Lustre runtime paths below (hostfiles,
+# broker dir, flowcept consumer dir) -- every one of them was a fixed shared path and thus a
+# cross-job race when >1 legacy job runs concurrently (debug + debug-scaling overlap).
+JOB_SUFFIX="${PBS_JOBID%%.*}"; [ -n "${PBS_JOBID:-}" ] || JOB_SUFFIX="$$"
+WL_HOSTFILE="$ROOT/server/_wl_hostfile.${JOB_SUFFIX}"
 # PALS (polaris) wants a PLAIN hostfile -- it treats "HOST slots=N" as one hostname and
 # errors ("Couldn't connect to tcp://HOST slots=N"). It gets per-node density from --ppn +
 # the PBS reservation, not the file. OpenMPI (lcrc) needs the "slots=" declaration.
@@ -111,7 +120,7 @@ else
 fi
 # Broker hostfile: pins the single ofi+cxi broker to node 0 (start_broker launches it under
 # mpiexec so it inherits the job VNI). Plain hostname (PALS) / slots= (OpenMPI), same as above.
-BROKER_HOSTFILE="$ROOT/server/_broker_hostfile"
+BROKER_HOSTFILE="$ROOT/server/_broker_hostfile.${JOB_SUFFIX}"
 if [[ "$ENV_PROFILE" == polaris ]]; then
     printf '%s\n' "$SRV_NODE" > "$BROKER_HOSTFILE"
 else
@@ -120,15 +129,22 @@ fi
 say "topology: ${#NODELIST[@]} node(s) | broker ranks=$NRANKS_BROKER on ${SRV_NODE} | workload ${WL_TASKS} task/node x ${WL_NNODES} node = ${WL_TOTAL_RANKS} rank(s) on: ${WL_NODES_ARR[*]}"
 
 # --- 5. broker: legacy only. mpmd launches broker per-rep inside run_mpmd_rep (one VNI). ---
+# Per-job broker + flowcept-consumer dirs on shared Lustre. Fixed paths here were a proven
+# cross-job race: two concurrent legacy jobs (e.g. mpi 4wl on debug-scaling + dlio 1wl on debug)
+# both rm -rf'd and rewrote the same dir mid-run -> "consumer N died: _flowcept_run/cN/... No such
+# file" / truncated flowcept_settings.yaml (YAML ParserError). Suffix with JOB_SUFFIX so each job
+# owns its own broker + consumer dirs; clean them up in the EXIT trap.
+BROKER_DIR="$ROOT/server/_broker.${JOB_SUFFIX}"
+RUN_DIR="$ROOT/server/_flowcept_run.${JOB_SUFFIX}"
 if [[ "$RUN_MODE" == legacy ]]; then
     say "5. broker (legacy)"
     pkill -f 'bedrock ' 2>/dev/null || true; sleep 1
-    start_broker "$ROOT/server/_broker" "$NRANKS_BROKER" "$BROKER_HOSTFILE" || die "broker failed"
-    trap 'kill "$BROKER_PID" 2>/dev/null; pkill -f "bedrock " 2>/dev/null || true' EXIT
+    start_broker "$BROKER_DIR" "$NRANKS_BROKER" "$BROKER_HOSTFILE" || die "broker failed"
+    trap 'kill "$BROKER_PID" 2>/dev/null; pkill -f "bedrock " 2>/dev/null || true; rm -f "$WL_HOSTFILE" "$BROKER_HOSTFILE" 2>/dev/null || true; rm -rf "$BROKER_DIR" "$RUN_DIR" 2>/dev/null || true' EXIT
     echo "broker up: $(grep -oE '[a-z0-9+;_]+://[0-9.]+:[0-9]+' "$GROUP" | head -1) | group $GROUP"
 else
     say "5. broker (mpmd: launched per-rep in one MPMD mpiexec)"
-    trap 'pkill -f "bedrock " 2>/dev/null || true' EXIT
+    trap 'pkill -f "bedrock " 2>/dev/null || true; rm -f "$WL_HOSTFILE" "$BROKER_HOSTFILE" 2>/dev/null || true; rm -rf "$BROKER_DIR" "$RUN_DIR" 2>/dev/null || true' EXIT
 fi
 
 # --- 6. compile the workload binary (c/mpi) once ---
@@ -155,17 +171,20 @@ esac
 # run the workload once into $1 (=RES); places it per WL_PLACEMENT / WL_TASKS
 run_workload_once() {
     # Most workloads write per-rank files each rank reads back itself -> node-local /tmp
-    # is fine and fast (tmpfs). DLIO is different: it shards ONE dataset across ranks at
-    # generate_data, then reads it back expecting a SHARED view (rank A reads files rank B
-    # wrote). On multi-node, node-local /tmp is NOT shared across nodes, so those reads hit
-    # FileNotFoundError. Put DLIO's dataset on the shared Lustre project dir instead. All
-    # three arms use this same common code, so the stream-vs-runtimeonly overhead comparison
-    # stays fair (only the storage medium changes: tmpfs->Lustre, which is also the more
-    # realistic medium for an I/O-tracing study). Cleaned up at the end of the run since
-    # Lustre, unlike tmpfs, does not reclaim on node teardown.
+    # is fine and fast (tmpfs). DLIO and MPI are different: they touch ONE SHARED object
+    # across all ranks. DLIO shards one dataset at generate_data then reads it back expecting
+    # a shared view (rank A reads files rank B wrote); MPI does a collective
+    # MPI_File_open(MPI_COMM_WORLD, ...) on a single file. On multi-node, node-local /tmp is
+    # NOT shared across nodes, so at >1 node DLIO reads hit FileNotFoundError and MPI ranks on
+    # the other nodes fail "MPI_File_open: No such file" and MPI_Abort the whole job. Put their
+    # scratch on the shared Lustre project dir instead. All three arms use this same common
+    # code, so the stream-vs-runtimeonly overhead comparison stays fair (only the storage
+    # medium changes: tmpfs->Lustre, which is also the more realistic medium for an I/O-tracing
+    # study). Cleaned up at the end of the run since Lustre, unlike tmpfs, does not reclaim on
+    # node teardown.
     local RES="$1" scratch dlib; dlib="$(darshan_lib)"
-    if [[ "$WL_TYPE" == dlio ]]; then
-        scratch="$ROOT/results/_dlio_scratch/dm_${WL_TYPE}_$$_$RANDOM"
+    if [[ "$WL_TYPE" == dlio || "$WL_TYPE" == mpi ]]; then
+        scratch="$ROOT/results/_shared_scratch/dm_${WL_TYPE}_$$_$RANDOM"
         mkdir -p "$scratch"
     else
         scratch="/tmp/dm_${WL_TYPE}_$$_$RANDOM"
@@ -230,10 +249,10 @@ run_workload_once() {
           >> "$RES/workload.out" 2> "$RES/workload.err"
     fi
     echo "WORK_SH_END_NS $(date +%s%N)" >> "$RES/workload.out"
-    # DLIO scratch lives on shared Lustre (see top of function); reclaim it now so the
-    # dataset doesn't accumulate across reps/arms. Node-local /tmp scratch is left to the
+    # DLIO/MPI scratch lives on shared Lustre (see top of function); reclaim it now so the
+    # dataset/file doesn't accumulate across reps/arms. Node-local /tmp scratch is left to the
     # OS/tmpfs as before.
-    if [[ "$WL_TYPE" == dlio && -n "$scratch" && "$scratch" == "$ROOT/results/_dlio_scratch/"* ]]; then
+    if [[ ( "$WL_TYPE" == dlio || "$WL_TYPE" == mpi ) && -n "$scratch" && "$scratch" == "$ROOT/results/_shared_scratch/"* ]]; then
         rm -rf "$scratch" 2>/dev/null || true
     fi
 }
@@ -252,7 +271,7 @@ for rep in $(seq 1 "$WL_REPS"); do
         run_mpmd_rep "$RES" || { echo "rep $rep: run_mpmd_rep FAILED"; FINAL_RC=1; }
         [ -f "$RES/workload.out" ] && cat "$RES/workload.out"
     else
-        RUN_DIR="$ROOT/server/_flowcept_run"; rm -rf "$RUN_DIR"
+        rm -rf "$RUN_DIR"   # RUN_DIR is per-job (JOB_SUFFIX, set at broker setup) -- no cross-job race
         start_consumer "$RUN_DIR" "$GROUP" || die "consumer failed"
         run_workload_once "$RES"; cat "$RES/workload.out"
         SENDS="$(grep -c 'darshan-mofka\[timing\] send' "$RES/workload.err" 2>/dev/null || true)"; SENDS=${SENDS:-0}

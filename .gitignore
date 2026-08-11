@@ -65,6 +65,7 @@
 /server/_diag_*/
 /server/_scale_*/
 /server/_flowcept_run/
+/server/_flowcept_run.*/
 *.o[0-9]*
 /data/
 /hydra_log/
@@ -86,7 +87,11 @@ __pycache__/
 /install/_spack
 # broker + workload runtime outputs
 /server/_broker/
+/server/_broker.*/
 /server/_wl_hostfile
+/server/_wl_hostfile.*
+/server/_broker_hostfile
+/server/_broker_hostfile.*
 /server/_study_wl_hostfile
 /server/_sweep_wl_hostfile
 # results run-id marker (dotfile not caught by /results/*/ or *.OU)

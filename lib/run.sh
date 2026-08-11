@@ -108,6 +108,8 @@ connector_env() {
     # env-forwarding. (The A/B DARSHAN_MOFKA_ASYNC=0 arm in particular depends on this.)
     for _k in DARSHAN_MOFKA_ASYNC DARSHAN_MOFKA_QUEUE_DEPTH DARSHAN_MOFKA_DROP_POLICY \
               DARSHAN_MOFKA_DRAIN_THREADS DARSHAN_MOFKA_JOIN_MS DARSHAN_MOFKA_VERBOSE \
+              DARSHAN_MOFKA_DRAIN_CPU_BASE DARSHAN_MOFKA_DRAIN_CPU_STRIDE \
+              DARSHAN_MOFKA_RAW_JSON \
               DARSHAN_MOFKA_MARGO_JSON DIASPORA_C_SENDER_THREADS; do
         [ -n "${!_k:-}" ] && CONNECTOR_ENV+=( "$_k=${!_k}" )
     done
@@ -182,7 +184,7 @@ workload_env() {
     [ "$every" -lt 1 ] && every=1
     case "$WL_TYPE" in
         c)         WORKLOAD_ENV=(EPOCHS="$WL_EVENTS" CHECKPOINT_EVERY="$every") ;;
-        io_bench|io_bench_py)  WORKLOAD_ENV=(); for _k in IO_SIZE_MB IO_ITERS IO_SLEEP_MS IO_BLOCK_KB COMPUTE_MODE COMPUTE MATRIX_SIZE; do
+        io_bench|io_bench_py)  WORKLOAD_ENV=(); for _k in IO_SIZE_MB IO_ITERS IO_SLEEP_MS IO_BLOCK_KB COMPUTE_MODE COMPUTE MATRIX_SIZE ML_FILES CHECKPOINT_EVERY; do
                        [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done  # tunable; else built-in defaults (C + Python twin share knobs)
                        # Cap library threading so the CPU_PROBE app thread is the ONLY compute
                        # thread -- otherwise a BLAS/OMP/runtime helper thread inflates cpu_self
@@ -213,9 +215,11 @@ workload_env() {
                    # wall+thread-CPU + RUSAGE_THREAD minflt/ctx-sw). Inert unless ML_PROFILE=1.
                    for _k in ML_FILES ML_ROWS ML_COLS ML_WRITE_MODE ML_PROFILE ML_BLAS_THREADS; do
                        [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;
-        mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS")  # repeat collective write+read WL_EVENTS times (overhead-study scale knob)
-                   # IO_SLEEP_MS paces the steps so the workload runs a comparable wall (else ~0.3s).
-                   [ -n "${IO_SLEEP_MS:-}" ] && WORKLOAD_ENV+=(IO_SLEEP_MS="$IO_SLEEP_MS") ;;
+        mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS")  # repeat REAL block write+read WL_EVENTS times (overhead-study fixed-work scale knob)
+                   # IO_BLOCK_KB sizes each step's genuine per-rank block I/O (default 1 MiB in the
+                   # binary). NO IO_SLEEP_MS: the mpi workload does real block I/O now, so wall is
+                   # driven by work, not idle padding (padding would deflate streaming overhead to ~0).
+                   [ -n "${IO_BLOCK_KB:-}" ] && WORKLOAD_ENV+=(IO_BLOCK_KB="$IO_BLOCK_KB") ;;
         dlio)      # TF spawns ~1 Eigen thread/CPU; on Polaris that exceeds the per-user
                    # cgroup pids.max=256 -> pthread_create EAGAIN -> SIGABRT (env.cc:84),
                    # which kills Darshan's atexit finalize -> no native log. Cap TF threads.
@@ -302,7 +306,14 @@ broker_topic_partitions() {
     if [ "$SRV_PART_TYPE" = default ] && [ -z "$PART_PATH" ]; then
         echo "ERROR: partition_type: default needs server.config partition_opts.path (and abt_io)"; return 2
     fi
-    mofkactl topic create "$SRV_TOPIC" --groupfile "$group" 2>/dev/null || true
+    # Serializer: default (parse+dump round-trip) unless the raw-json handoff is on, in which case
+    # the topic advertises the "raw" serializer in the master DB -- both the connector producer and
+    # the FlowCept consumer read this back, so the choice propagates to both ends automatically.
+    local ser_opt=()
+    if [ -n "${DARSHAN_MOFKA_RAW_JSON:-}" ] && [ "${DARSHAN_MOFKA_RAW_JSON}" != 0 ]; then
+        ser_opt=( -s raw )
+    fi
+    mofkactl topic create "$SRV_TOPIC" "${ser_opt[@]}" --groupfile "$group" 2>/dev/null || true
     local extra=(); [ "$SRV_PART_TYPE" = default ] && extra=(--abt-io "$PART_ABTIO")
     local p
     for p in $(seq 0 $(( SRV_PARTITIONS - 1 ))); do
@@ -472,6 +483,12 @@ role=follower; [ "$SHARD_ID" = 0 ] && role=lead
 for _ in $(seq 1 "${MOFKA_GROUP_WAIT_S:-180}"); do [ -s "$COORD/mofka.json" ] && break; sleep 1; done
 if [ ! -s "$COORD/mofka.json" ]; then echo "consumer shard=$SHARD_ID: no mofka.json" >&2; touch "$COORD/CONS_FAIL.$SHARD_ID"; exit 1; fi
 [ "$SHARD_ID" = 0 ] && broker_topic_partitions "$COORD/mofka.json" 1   # LEAD creates topic+partitions once
+[ "$SHARD_ID" = 0 ] && touch "$COORD/TOPIC_READY"                      # signal topic created
+# All consumers wait until the topic exists in the master DB before open_topic (race fix):
+# the lead's topic-create must commit before any consumer/producer opens it, else
+# "Topic not found in master database". Wait for the flag + a small settle sleep.
+for _ in $(seq 1 60); do [ -f "$COORD/TOPIC_READY" ] && break; sleep 1; done
+sleep 3
 targets="$(_shard_targets "$SHARD_ID" "$CONS_N" "$SRV_PARTITIONS")"
 cdir="$RES/fc/c$SHARD_ID"; mkdir -p "$cdir"
 export_on_stop=0; all_done_flag=""

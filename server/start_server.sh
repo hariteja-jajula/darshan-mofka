@@ -43,7 +43,15 @@ for i in $(seq 1 60); do [ -f "$GROUP" ] && break; sleep 1; done
 echo "broker up: $(grep -oE '[a-z0-9+;_]+://[0-9.]+:[0-9]+' "$GROUP" | head -1)"
 
 echo "=== creating topic '$TOPIC' + $PARTITIONS partition(s) ($PART_TYPE) ==="
-mofkactl topic create "$TOPIC" --groupfile "$GROUP" 2>/dev/null || echo "  (topic may already exist)"
+# Serializer: default (parse+dump round-trip) unless the raw-json handoff is enabled, in which
+# case the topic advertises the "raw" serializer in the master DB -- both the connector producer
+# and the FlowCept consumer read this back, so the choice propagates to both ends automatically.
+TOPIC_SER_OPT=()
+if [ -n "${DARSHAN_MOFKA_RAW_JSON:-}" ] && [ "${DARSHAN_MOFKA_RAW_JSON}" != 0 ]; then
+    TOPIC_SER_OPT=( -s raw )
+    echo "  (raw-json handoff: creating topic with serializer 'raw')"
+fi
+mofkactl topic create "$TOPIC" "${TOPIC_SER_OPT[@]}" --groupfile "$GROUP" 2>/dev/null || echo "  (topic may already exist)"
 for p in $(seq 0 $(( PARTITIONS - 1 ))); do
     mofkactl partition add "$TOPIC" --rank 0 --type "$PART_TYPE" --groupfile "$GROUP" 2>/dev/null \
         || echo "  WARN: partition add $p failed"
