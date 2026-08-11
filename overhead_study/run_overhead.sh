@@ -21,6 +21,14 @@ IO_ITERS="${IO_ITERS:-8}" ML_FILES="${ML_FILES:-8}" IO_SIZE_MB="${IO_SIZE_MB:-16
 COMPUTE="${COMPUTE:-72}" MATRIX_SIZE="${MATRIX_SIZE:-512}" CHECKPOINT_EVERY="${CHECKPOINT_EVERY:-4}"
 EVENTS="${EVENTS:-1000}"             # python-ml epochs (ML_EPOCHS)
 ML_ROWS="${ML_ROWS:-4096}" ML_COLS="${ML_COLS:-64}" ML_CHECKPOINTS="${ML_CHECKPOINTS:-2}"
+# The margo basic_wait + dedicated-sender-ES config is WORKLOAD-DEPENDENT:
+#   io_bench (few events, compute-bound): default margo SPINS a core -> +100%; the fix -> +2.7%.
+#   python-ml (100k+ events): the fix adds per-send handoff cost (0.77us -> 117us/event) that
+#     dominates at high event counts -> +60%. Default margo is FASTER for it (+2.85%).
+# So apply the fix ONLY for low-event workloads. Default: io_bench=1, python-ml=0. Override APPLY_MARGO_FIX.
+if [ -z "${APPLY_MARGO_FIX:-}" ]; then
+  case "$WORKLOAD" in python-ml) APPLY_MARGO_FIX=0 ;; *) APPLY_MARGO_FIX=1 ;; esac
+fi
 STUDY="${STUDY:-OVH_${WORKLOAD}_${WLNODES}wl}"
 WALLTIME="${WALLTIME:-01:00:00}"
 # ==================================================================
@@ -56,7 +64,7 @@ fi
 qsub -A "$account" -q "$QUEUE" \
      -l select="${NODES}:ncpus=${NCPUS}:mpiprocs=${NCPUS}" -l walltime="$WALLTIME" \
      "${PBS_EXTRA[@]}" -N "ovh_${WORKLOAD}_${WLNODES}wl" -j oe -o "$ROOT/results/" \
-     -v "ROOT=$ROOT,COMMON=$COMMON,STUDY=$STUDY,BASE_REPS=$BASE_REPS,RUNTIME_REPS=$RUNTIME_REPS,STREAM_REPS=$STREAM_REPS" <<'PBS'
+     -v "ROOT=$ROOT,COMMON=$COMMON,STUDY=$STUDY,BASE_REPS=$BASE_REPS,RUNTIME_REPS=$RUNTIME_REPS,STREAM_REPS=$STREAM_REPS,APPLY_MARGO_FIX=$APPLY_MARGO_FIX" <<'PBS'
 cd "$ROOT" || { echo "FATAL: cannot cd to ROOT=$ROOT"; exit 1; }
 # THE FIX (verified: +100% -> +2.6%): the streaming arm must run the connector's margo
 # engine on a BLOCKING (basic_wait) scheduler + a dedicated sender ES, else margo's DEFAULT
@@ -74,6 +82,6 @@ run_arm(){  # $1=arm $2=reps $3=enable $4=no_darshan $5=apply_fix(1/0)
 }
 run_arm baseline     "$BASE_REPS"    1 1 0
 run_arm runtimeonly  "$RUNTIME_REPS" 0 0 0
-run_arm streaming    "$STREAM_REPS"  1 0 1
+run_arm streaming    "$STREAM_REPS"  1 0 "$APPLY_MARGO_FIX"
 echo "########## OVERHEAD DONE ($STUDY) $(date '+%H:%M:%S') ##########"
 PBS
