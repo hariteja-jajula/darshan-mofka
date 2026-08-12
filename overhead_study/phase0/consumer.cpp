@@ -1,0 +1,89 @@
+#include <mofka/MofkaDriver.hpp>
+#include <diaspora/Driver.hpp>
+#include <diaspora/TopicHandle.hpp>
+#include <spdlog/spdlog.h>
+#include <fmt/format.h>
+#include <string>
+#include <iostream>
+
+int main(int argc, char** argv) {
+    if(argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <group-file>" << std::endl;
+        return -1;
+    }
+    std::string g_group_file = argv[1];
+    spdlog::set_level(spdlog::level::info);
+
+    try {
+        // -- Create MofkaDriver
+        diaspora::Metadata options;
+        options.json()["group_file"] = g_group_file;
+        options.json()["margo"] = nlohmann::json::object();
+        options.json()["margo"]["use_progress_thread"] = true;
+
+        // -- Create MofkaDriver
+        diaspora::Driver driver = diaspora::Driver::New("mofka", options);
+
+        // -- Open a topic
+        diaspora::TopicHandle topic = driver.openTopic("mytopic");
+
+        // -- Create a DataSelector for the consumer
+        // This example will only select events with an even id field and a value field lower than 70
+        // Note: a selector returns a DataDescriptor object that must be built from the DataDescriptor
+        // passed as argument. The descriptor argument can be seen as a key to access the underlying data.
+        // Returning it tells Mofka "I want all the data from this descriptor". But DataDescriptor has
+        // operations that can be used to tell Mofka we are interested in only a subset (e.g. a strided
+        // pattern over the data, or a sub-region, like here with makeSubView).
+        // diaspora::DataDescriptor::Null() is our way to say we are not interested in this event's data.
+        diaspora::DataSelector selector = [](const diaspora::Metadata& metadata,
+                                          const diaspora::DataDescriptor& descriptor) {
+            if(metadata.json()["id"].get<uint64_t>() % 2 == 0) {
+                if(metadata.json()["value"].get<uint64_t>() < 70) {
+                    return descriptor; // we want the full data
+                } else {
+                    return descriptor.makeSubView(2, 4); // we want only 4 bytes from offset 2
+                }
+            } else {
+                return diaspora::DataDescriptor(); // we don't want any data
+            }
+        };
+
+        // -- Create a DataBroker for the consumer
+        diaspora::DataAllocator allocator = [](const diaspora::Metadata& metadata,
+                                            const diaspora::DataDescriptor& descriptor) {
+            (void)metadata;
+            return diaspora::DataView{new char[descriptor.size()], descriptor.size()};
+        };
+
+        // -- Get a consumer for the topic
+        diaspora::BatchSize   batchSize   = diaspora::BatchSize::Adaptive();
+        diaspora::ThreadCount threadCount = diaspora::ThreadCount{1};
+        diaspora::Consumer consumer = topic.consumer("myconsumer", batchSize, threadCount, selector, allocator);
+
+        // -- Consume events
+        for(size_t i=0; i < 1000; ++i) {
+            auto event = consumer.pull().wait(-1).value();
+            if(event.id() == diaspora::NoMoreEvents)
+                break;
+            auto data = event.data();
+            std::string_view data_str{nullptr, 0};
+            if(data.size() != 0)
+                data_str = std::string_view{
+                    reinterpret_cast<const char*>(data.segments()[0].ptr),
+                    data.segments()[0].size
+                };
+            spdlog::info("Received event {} with metadata {} and data {}",
+                         event.id(), event.metadata().string(), data_str);
+            if(i % 10 == 0) event.acknowledge();
+            if(data.size()) delete[] reinterpret_cast<const char*>(data.segments()[0].ptr);
+        }
+
+    } catch(const diaspora::Exception& ex) {
+        spdlog::critical("{}", ex.what());
+        exit(-1);
+    }
+
+    spdlog::info("Done!");
+
+    return 0;
+}

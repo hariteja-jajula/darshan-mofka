@@ -1,0 +1,272 @@
+#!/bin/bash
+# phase0_2node.pbs -- Phase 0 of the darshan-mofka plan: measure the REAL per-push AND
+# per-delivered-event cost of Mofka's OWN producer example over ofi+cxi on Polaris compute
+# nodes, with NO Darshan involved.
+#
+# ROOT CAUSE this revision fixes (established from the Mofka source, job 7435467):
+#   The upstream example (and our first faithful copy) DROP every future -- the per-event
+#   push future AND the flush future. diaspora/Producer.hpp says flush() "is a non-blocking
+#   call returning a future that can be awaited"; MofkaProducer::~MofkaProducer() also calls
+#   flush() and DROPS its future. So the producer process can EXIT before its Adaptive batches
+#   are transmitted -> NOTHING is durably stored on the broker. A consumer then subscribes to
+#   an EMPTY partition: LegacyPartitionManager::feedConsumer returns count==0 ->
+#   partitionCompleted() -> the very first pull() yields NoMoreEvents -> consumer prints only
+#   "Done!" and receives ZERO events. That is exactly what every N showed in job 7435467, even
+#   at small N with ZERO push-path errors. The ~1us "push" was timing enqueue-into-a-batch-
+#   that-never-shipped, NOT delivery -- an invalid measurement.
+#
+# TWO fixes, both touching only scratch code (no locked binary edited):
+#   1. producer_timed.cpp: the FINAL flush is now BLOCKING (producer.flush().wait(-1)), so
+#      every batch is durably delivered before the producer exits and stops timing. It reports
+#      final_flush_us (the delivery barrier cost) and avg_delivered_us = loop_wall_us / N (the
+#      real amortized per-event cost incl. delivery) SEPARATELY from avg_push_us (enqueue) and
+#      avg_flush_us (the cheap in-loop fire-and-forget flush requests).
+#   2. Consumer gating: a brand-new named consumer's cursor initializes to 0
+#      (LegacyPartitionManager.cpp:79-82), i.e. it REPLAYS from the beginning of the topic --
+#      it is NOT a read-from-now subscription. So the correct, race-free design is to start the
+#      consumer only AFTER the producer signals PROD_DONE (events durably stored). The consumer
+#      then opens the topic, subscribes from offset 0, drains what is stored, and exits cleanly
+#      on NoMoreEvents. No empty-partition race is possible.
+#
+# The MR-exhaustion wall is real but is a SEPARATE, larger-N phenomenon (job 7435467 measured
+# the knee at N~10k-20k: fi_mr_enable ... rc:-28 "No space left on device" -> NA_NOMEM once the
+# fire-and-forget push loop outruns the single sender ES and pending bulk registrations exceed
+# the Slingshot NIC's ~15,724-entry table). That wall is what Phase 1 must remove; here we only
+# need a TRUSTWORTHY baseline number from a regime where the pipeline demonstrably delivers end
+# to end, plus ONE point that documents the knee.
+#
+# So we sweep N over NLIST (default "1000 5000 10000 20000"). For each N, PASS iff:
+#   producer exit 0  AND  zero PUSH-PATH errors (producer.err+broker.log)  AND  consumer
+#   received >=1 event  AND  a PHASE0 line is present.
+# Benign teardown noise from our own kill/pkill (na_ofi_class_free / NA_Finalize / NA_BUSY /
+# "Could not close endpoint" / SIGTERM) is counted and reported SEPARATELY -- it never fails a
+# run (job 7435467 harness bug #2 conflated it with real transport failure).
+# N>=1000 is kept: the upstream consumer loops up to 1000 pull()s; with delivery confirmed it
+# drains min(N,1000) events then breaks on NoMoreEvents. N=1000 is the faithful example point.
+#
+# Layout (2 nodes): N0 = bedrock broker + consumer (drainer); N1 = producer_timed.
+# Each N is ONE self-contained MPMD mpiexec (broker : producer : consumer) so PALS gives that run
+# ONE shared Slingshot job VNI (only proven cxi path). Proven leverage reused verbatim from
+# lib/run.sh:run_mpmd_rep -- single MPMD mpiexec + pmi_strip + cxi_collapse + exec bedrock </dev/null.
+#
+# Producer prints one line to stderr:
+#   PHASE0 pushes=N total_push_us=... avg_push_us=... flushes=... total_flush_us=... \
+#          avg_flush_us=... final_flush_us=... loop_wall_us=... avg_delivered_us=...
+#
+# Submit (2 nodes -> debug):
+#   qsub -A radix-io -q debug -l select=2:ncpus=32:mpiprocs=32 -l walltime=00:30:00 \
+#        -l filesystems=home:eagle overhead_study/phase0/phase0_2node.pbs
+# Env knobs (qsub -v): NLIST="1000 5000 ...", REP_CEIL_S (per-N wall ceiling, default 180).
+#PBS -N phase0_mofka
+#PBS -j oe
+
+set -uo pipefail
+
+ROOT="/eagle/radix-io/hjajula/darshan-mofka-flowcept/darshan-mofka-worktree-stricter-overnight"
+P0="$ROOT/overhead_study/phase0"
+PROD_BIN="$P0/build/producer_timed"
+CONS_BIN="$P0/build/consumer"
+CFG_SRC="$P0/bedrock-config.json"
+# PROTOCOL is parameterized (qsub -v PROTOCOL=ofi+tcp) so the SAME harness can run the tcp control.
+# Rationale (step O): producer->broker storage is proven over cxi (broker receiveBatch + blocking
+# flush return), but the broker->consumer bulk READ-back path thrashes over cxi (5424 requestData,
+# 0 acks, job 7436175) while the only proven end-to-end run in this tree (7408579) used ofi+tcp.
+# Running the identical harness over tcp closes the read-back loop AND confirms avg_push_us is
+# transport-independent (push enqueue never touches the wire in the timed region).
+PROTOCOL="${PROTOCOL:-ofi+cxi}"
+NLIST="${NLIST:-1000 5000 10000 20000}"
+
+cd "$ROOT"
+# shellcheck disable=SC1091
+source "$ROOT/env/_profile.sh" --polaris >/dev/null 2>&1 || true
+PROFILE="${ENV_PROFILE:-polaris}"
+
+JID="${PBS_JOBID:-manual.$$}"
+RES="$ROOT/results/PHASE0_${JID%%.*}"
+mkdir -p "$RES"
+echo "=== Phase 0 SWEEP :: jobid=$JID  NLIST=[$NLIST]  proto=$PROTOCOL"
+echo "=== results dir: $RES"
+
+for f in "$PROD_BIN" "$CONS_BIN" "$CFG_SRC"; do
+    [ -e "$f" ] || { echo "FATAL: missing $f"; exit 1; }
+done
+
+mapfile -t NODELIST < <(sort -u "${PBS_NODEFILE:-/dev/null}" 2>/dev/null)
+[ "${#NODELIST[@]}" -ge 2 ] || { echo "FATAL: need >=2 nodes, got ${#NODELIST[@]} (${NODELIST[*]:-none})"; exit 1; }
+SRV_NODE="${NODELIST[0]}"      # broker + consumer
+PROD_NODE="${NODELIST[1]}"     # producer_timed
+echo "=== broker/consumer node: $SRV_NODE   producer node: $PROD_NODE"
+
+# shellcheck disable=SC1091
+source "$ROOT/env/common.sh"
+STRIP="$(pmi_strip)"
+COLLAPSE="$(cxi_collapse)"
+
+# PUSH-PATH failure signatures -- a real transport/registration failure on the push or receive
+# path that INVALIDATES the measurement (the batch never made it to the broker). MR-exhaustion
+# ("fi_mr_enable ... No space left on device" -> NA_NOMEM) is the headline case.
+PUSH_ERR_RE='fi_mr_enable|No space left on device|na_ofi_mem_register|NA_NOMEM|Could not create bulk|HG_Bulk_create|Could not register'
+# BENIGN teardown/shutdown noise produced by OUR kill/pkill after delivery is already done.
+# Counted and reported, but never fails a run (job 7435467 harness bug #2 fix).
+TEARDOWN_RE='na_ofi_class_free|NA_Finalize|NA_BUSY|Could not close|died from signal (15|9|2)'
+
+run_one() {          # run_one <label> <N>
+    local r="$1" N="$2"
+    local RDIR="$RES/N$N" COORD="$RES/N$N/coord" SEC="$RES/N$N/sections"
+    rm -rf "$RDIR"; mkdir -p "$COORD" "$SEC"
+    cp "$CFG_SRC" "$COORD/bedrock-config.json"
+
+    # ---------------- s_broker.sh (N0) ----------------
+    {
+        printf '#!/bin/bash\n'
+        printf 'ROOT=%q COORD=%q RDIR=%q PROFILE=%q PROTOCOL=%q BROKER_V=%q\n' "$ROOT" "$COORD" "$RDIR" "$PROFILE" "$PROTOCOL" "${BROKER_V:-info}"
+        printf '%s\n' "$STRIP"
+        printf '%s\n' "$COLLAPSE"
+        cat <<'BROKER'
+source "$ROOT/env/server.sh" --"$PROFILE" >/dev/null 2>&1
+cd "$COORD"; rm -f mofka.json
+echo "s_broker host=$(hostname -s) proto=$PROTOCOL VNIS=[${SLINGSHOT_VNIS:-}] v=$BROKER_V" >&2
+exec bedrock "$PROTOCOL" -c "$COORD/bedrock-config.json" -v "$BROKER_V" > "$RDIR/broker.log" 2>&1 </dev/null
+BROKER
+    } > "$SEC/s_broker.sh"
+
+    # ---------------- s_producer.sh (N1) ----------------
+    {
+        printf '#!/bin/bash\n'
+        printf 'ROOT=%q COORD=%q RDIR=%q PROFILE=%q PROD_BIN=%q NEV=%q PRESLEEP=%q\n' \
+               "$ROOT" "$COORD" "$RDIR" "$PROFILE" "$PROD_BIN" "$N" "${PRESLEEP_S:-10}"
+        printf '%s\n' "$STRIP"
+        printf '%s\n' "$COLLAPSE"
+        cat <<'PRODUCER'
+source "$ROOT/env/server.sh" --"$PROFILE" >/dev/null 2>&1
+echo "s_producer host=$(hostname -s) N=$NEV presleep=$PRESLEEP VNIS=[${SLINGSHOT_VNIS:-}]" >&2
+for _ in $(seq 1 120); do [ -s "$COORD/mofka.json" ] && break; sleep 1; done
+if [ ! -s "$COORD/mofka.json" ]; then echo "producer: no mofka.json" >&2; touch "$COORD/PROD_FAIL"; exit 1; fi
+# CANONICAL co-launch: this example streams via wakeUp()-on-append to a LIVE consumer
+# (YokanEventStore::feed blocks on m_count_cv until each append notifies it). So the producer
+# creates the topic+partition, then WAITS (DARSHAN_P0_PRESLEEP_S) for the consumer to subscribe
+# BEFORE pushing; the consumer drains events as they are appended. The final flush().wait(-1)
+# still blocks until every batch is delivered, so PROD_DONE marks true completion.
+export DARSHAN_P0_PRESLEEP_S="$PRESLEEP"
+"$PROD_BIN" "$COORD/mofka.json" "$NEV" > "$RDIR/producer.out" 2> "$RDIR/producer.err"
+rc=$?
+echo "producer exit=$rc" >&2
+[ "$rc" -ne 0 ] && touch "$COORD/PROD_FAIL"
+touch "$COORD/PROD_DONE"
+exit "$rc"
+PRODUCER
+    } > "$SEC/s_producer.sh"
+
+    # ---------------- s_consumer.sh (N0) ----------------
+    # CANONICAL co-launch: this example streams via wakeUp()-on-append to a LIVE consumer
+    # (YokanEventStore::feed blocks on m_count_cv and is notified by each append). Job 7436032
+    # PROVED the gate-until-PROD_DONE design delivers ZERO events: a consumer that subscribes
+    # AFTER all appends computes num_available=0, the partition is never marked complete, so feed
+    # blocks forever and the consumer hangs (SIGTERM, empty output). So here the consumer attaches
+    # AS SOON AS the topic exists (producer creates it, then presleeps), and drains events live as
+    # the producer pushes. Output is line-buffered (stdbuf) so spdlog lines survive teardown.
+    # Touches no binary (consumer.cpp is byte-identical to upstream).
+    {
+        printf '#!/bin/bash\n'
+        printf 'ROOT=%q COORD=%q RDIR=%q PROFILE=%q CONS_BIN=%q\n' \
+               "$ROOT" "$COORD" "$RDIR" "$PROFILE" "$CONS_BIN"
+        printf '%s\n' "$STRIP"
+        printf '%s\n' "$COLLAPSE"
+        cat <<'CONSUMER'
+source "$ROOT/env/server.sh" --"$PROFILE" >/dev/null 2>&1
+echo "s_consumer host=$(hostname -s) VNIS=[${SLINGSHOT_VNIS:-}]" >&2
+for _ in $(seq 1 120); do [ -s "$COORD/mofka.json" ] && break; sleep 1; done
+if [ ! -s "$COORD/mofka.json" ]; then echo "consumer: no mofka.json" >&2; touch "$COORD/CONS_FAIL"; exit 1; fi
+# Attach as soon as the topic exists. openTopic throws until the producer has created "mytopic";
+# retry the BINARY (line-buffered) until it attaches. Once attached it stays live and drains as
+# events are appended, then breaks on NoMoreEvents when the producer's blocking flush completes.
+rc=1
+for attempt in $(seq 1 60); do
+    stdbuf -oL -eL "$CONS_BIN" "$COORD/mofka.json" > "$RDIR/consumer.out" 2> "$RDIR/consumer.err"
+    rc=$?
+    if [ "$rc" -eq 0 ] || grep -q 'Received event' "$RDIR/consumer.out" "$RDIR/consumer.err" 2>/dev/null; then
+        break
+    fi
+    [ -f "$COORD/PROD_FAIL" ] && break
+    sleep 1
+done
+echo "consumer exit=$rc (openTopic attempts: $attempt)" >&2
+touch "$COORD/CONS_DONE"
+exit "$rc"
+CONSUMER
+    } > "$SEC/s_consumer.sh"
+
+    chmod +x "$SEC"/s_broker.sh "$SEC"/s_producer.sh "$SEC"/s_consumer.sh
+
+    # ---------------- ONE MPMD mpiexec (shared VNI): broker : producer : consumer ----------------
+    echo "--- N=$N: mpmd launch  broker[$SRV_NODE] : producer[$PROD_NODE] : consumer[$SRV_NODE]"
+    mpiexec --hosts "$SRV_NODE"  -n 1 "$SEC/s_broker.sh" \
+          : --hosts "$PROD_NODE" -n 1 "$SEC/s_producer.sh" \
+          : --hosts "$SRV_NODE"  -n 1 "$SEC/s_consumer.sh" > "$RDIR/mpmd.log" 2>&1 &
+    local MPMD_PID=$!
+
+    # producer done -> consumer drains (it only starts after PROD_DONE) -> tear down.
+    local verdict="" deadline=$(( $(date +%s) + ${REP_CEIL_S:-180} ))
+    while :; do
+        [ -f "$COORD/PROD_DONE" ] && { verdict=prod_done; break; }
+        [ -f "$COORD/PROD_FAIL" ] && { verdict=prod_fail; break; }
+        kill -0 "$MPMD_PID" 2>/dev/null || { verdict=mpiexec_exit; break; }
+        [ "$(date +%s)" -ge "$deadline" ] && { verdict=ceiling; break; }
+        sleep 2
+    done
+    # After delivery, give the gated consumer time to subscribe (cursor 0) and drain.
+    if [ "$verdict" = prod_done ]; then
+        for _ in $(seq 1 60); do [ -f "$COORD/CONS_DONE" ] && break; sleep 1; done
+    fi
+    kill "$MPMD_PID" 2>/dev/null || true
+    pkill -f 'bedrock ' 2>/dev/null || true
+    wait "$MPMD_PID" 2>/dev/null || true
+
+    # ---------------- STRICT per-N verdict + evidence ----------------
+    local mofka_addr phase0_line push_err teardown_noise cons_recv prod_ok
+    mofka_addr="$(grep -oE 'ofi\+[a-z]+://[^"]+' "$COORD/mofka.json" 2>/dev/null | head -1)"
+    phase0_line="$(grep -h '^PHASE0 pushes=' "$RDIR/producer.err" 2>/dev/null | head -1)"
+    # PUSH-PATH failures live in producer.err (outgoing bulk) and broker.log (receive side).
+    # We deliberately EXCLUDE consumer.err teardown noise from the failure count.
+    push_err="$(cat "$RDIR/producer.err" "$RDIR/broker.log" 2>/dev/null | grep -c -iE "$PUSH_ERR_RE" || true)"
+    teardown_noise="$(cat "$RDIR/producer.err" "$RDIR/consumer.err" "$RDIR/broker.log" "$RDIR/mpmd.log" 2>/dev/null | grep -c -iE "$TEARDOWN_RE" || true)"
+    cons_recv="$(cat "$RDIR/consumer.out" "$RDIR/consumer.err" 2>/dev/null | grep -c 'Received event' || true)"
+    prod_ok=0; [ -f "$COORD/PROD_DONE" ] && [ ! -f "$COORD/PROD_FAIL" ] && prod_ok=1
+
+    local pass=0
+    [ "$prod_ok" = 1 ] && [ "$push_err" = 0 ] && [ "$cons_recv" -gt 0 ] && [ -n "$phase0_line" ] && pass=1
+
+    echo "=== N=$N  verdict=$verdict  $( [ "$pass" = 1 ] && echo PASS || echo FAIL )"
+    echo "    broker=$mofka_addr  prod_ok=$prod_ok  push_path_errs=$push_err  teardown_noise=$teardown_noise  consumer_received=$cons_recv"
+    if [ -n "$phase0_line" ]; then echo "    $phase0_line"; fi
+    if [ "$pass" != 1 ]; then
+        echo "    --- FAIL detail: producer.err tail ---"; tail -6 "$RDIR/producer.err" 2>/dev/null | sed 's/^/      /'
+        [ -s "$RDIR/consumer.err" ] && { echo "    --- consumer.err tail ---"; tail -4 "$RDIR/consumer.err" | sed 's/^/      /'; }
+    fi
+    echo "$N pass=$pass verdict=$verdict push_err=$push_err teardown=$teardown_noise recv=$cons_recv | $phase0_line" >> "$RES/SWEEP.tsv"
+    [ "$pass" = 1 ] && return 0 || return 1
+}
+
+first_fail=""
+for N in $NLIST; do
+    if ! run_one "$N" "$N"; then
+        [ -z "$first_fail" ] && first_fail="$N"
+    fi
+    sleep 2
+done
+
+echo
+echo "=== PHASE 0 SWEEP SUMMARY (per N) ==="
+[ -f "$RES/SWEEP.tsv" ] && cat "$RES/SWEEP.tsv"
+echo
+echo "=== interpretation ==="
+if [ -n "$first_fail" ]; then
+    echo "First FAIL at N=$first_fail (delivery/MR-exhaustion knee; see push_err in that row)."
+else
+    echo "No failing N in NLIST -- pipeline delivered end to end across the whole sweep."
+fi
+echo "Trustworthy per-push (enqueue) cost   = avg_push_us of PASSING rows (pass=1)."
+echo "Trustworthy per-delivered-event cost  = avg_delivered_us of PASSING rows (incl. blocking flush)."
+echo "Compare avg_delivered_us against the meeting's ~8us assertion (that number is delivered, not enqueue)."
+echo "=== done ==="
+exit 0
