@@ -3,6 +3,16 @@
 **Status:** living document. Numbers marked _(measured)_ come from real runs; _(projected)_ are
 derived from the per-op costs. Regenerate any row with `deliverables/overhead_extract.sh <RUN_dir>`.
 
+> **Architecture note (Phase 1, 2026-08).** The measured results in §3–§5 were taken with the
+> _original_ design: a custom ring buffer + background **drain thread** layered on top of Mofka's own
+> batching. **Phase 1 removed that layer** (it caused a backpressure regression). I/O events are now
+> pushed **directly from the application thread** via `diaspora_producer_push`; a dedicated Diaspora
+> sender ES (`DIASPORA_C_SENDER_THREADS=1`) keeps that push ABT-safe. The app therefore now pays the
+> push cost on-thread: most calls are a cheap batch enqueue (p50 ≈ 7 µs) but calls that trigger a
+> batch transmit pay a synchronous spike (p99 ≈ 714 µs, mean ≈ 95 µs over the run) — measured on the
+> WORKLOAD=c delivery test, 1013 events, job 7437241. The pre-Phase-1 rows below will be re-measured
+> in the Phase 2 batch sweep.
+
 ---
 
 ## 1. What we measure and why
@@ -17,12 +27,13 @@ The cost has three parts, and only one of them scales with the workload:
 | Phase | When | Cost model | Scales with |
 |-------|------|-----------|-------------|
 | **initialize** | once, at startup | fixed | — (constant) |
-| **push** (per event) | per I/O op, on the drain thread | `events x avg_push_us` | # of I/O events |
+| **push** (per event) | per I/O op, on the application thread (direct Diaspora push) | `events x avg_push_us` | # of I/O events |
 | **finalize** | once, at shutdown | fixed | — (constant) |
 
 Because init and finalize are **constant**, their relative cost shrinks to nothing as the run gets
-longer. The per-event `push` is tiny (~25-30 us) and runs **off the application critical path** (a
-background drain thread), so the app only pays a ~1-3 us enqueue (`send`).
+longer. The per-event `push` is now paid **on the application thread** (Phase 1 removed the background
+drain thread): a Diaspora `push` is a cheap batch enqueue most of the time (median ≈ 7 µs) with a
+periodic synchronous spike when a batch is transmitted (see the Phase 1 architecture note above).
 
 ---
 
