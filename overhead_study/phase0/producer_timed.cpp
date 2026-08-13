@@ -33,8 +33,10 @@
 //      The in-loop flush-every-100 stays fire-and-forget so avg_push_us / avg_flush_us
 //      still measure the cheap enqueue path; only the single final flush is awaited, and
 //      its wait time is reported separately as final_flush_us so the two costs never mix.
-//   6. an OPTIONAL pre-push warmup sleep (env DARSHAN_P0_PRESLEEP_S, default 0 = faithful
-//      to the example) so a subscriber can attach before pushing when a test wants it.
+//
+// No subscriber coordination lives here: under the sequential produce-then-drain harness
+// (phase0_2node.pbs) this producer pushes all N events, blocks on the final flush until they are
+// durably stored, touches PROD_DONE, and exits; verify_consumer only subscribes AFTER PROD_DONE.
 //
 // The Mofka API usage (Adaptive batch, ThreadCount{1}, Ordering::Strict, fire-and-forget
 // per-event push, flush every 100) is otherwise unchanged from the upstream example.
@@ -52,7 +54,6 @@
 #include <string>
 #include <vector>
 #include <iostream>
-#include <thread>
 
 int main(int argc, char** argv) {
     if(argc < 2) {
@@ -64,13 +65,6 @@ int main(int argc, char** argv) {
     if(N == 0) {
         std::cerr << "num-events must be > 0" << std::endl;
         return -1;
-    }
-    // Optional warmup: give a subscriber time to attach before we push. Default 0 keeps
-    // the run faithful to the upstream example (no artificial delay).
-    long presleep_s = 0;
-    if(const char* e = std::getenv("DARSHAN_P0_PRESLEEP_S")) {
-        presleep_s = std::strtol(e, nullptr, 10);
-        if(presleep_s < 0) presleep_s = 0;
     }
     // Quiet: the upstream per-event info log would run N times and dominate the timer.
     spdlog::set_level(spdlog::level::warn);
@@ -101,11 +95,9 @@ int main(int argc, char** argv) {
         diaspora::Ordering    ordering    = diaspora::Ordering::Strict;
         diaspora::Producer    producer    = topic.producer("myproducer", batchSize, threadCount, ordering);
 
-        // The topic + partition now exist; let a consumer attach if the test asked for it.
-        if(presleep_s > 0) {
-            std::fprintf(stderr, "PHASE0 presleep_s=%ld (waiting for subscriber)\n", presleep_s);
-            std::this_thread::sleep_for(std::chrono::seconds(presleep_s));
-        }
+        // No subscriber handshake: under the sequential produce-then-drain harness the consumer does
+        // not attach until this producer has pushed all N events and blocked on the final flush
+        // (durable in the Yokan store) and touched PROD_DONE. So we push immediately below.
 
         srand(time(nullptr));
 

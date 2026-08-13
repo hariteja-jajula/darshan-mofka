@@ -36,13 +36,20 @@
 # to end, plus ONE point that documents the knee.
 #
 # So we sweep N over NLIST (default "1000 5000 10000 20000"). For each N, PASS iff:
-#   producer exit 0  AND  zero PUSH-PATH errors (producer.err+broker.log)  AND  consumer
-#   received >=1 event  AND  a PHASE0 line is present.
+#   producer exit 0  AND  zero PUSH-PATH errors (producer.err+broker.log)  AND  a PHASE0 timing
+#   line is present  AND  the consumer VERIFIABLY DRAINED all N events -- received==N with
+#   contiguous ids (0..N-1, no gap/dup). This "pushed == drained" barrier is the phase gate: it
+#   makes the delivered-per-event number trustworthy, not an enqueue-into-a-batch-that-never-
+#   shipped artifact. (NoMoreEvents is reported but NOT required -- for a LIVE consumer on the
+#   Legacy partition the feed loop blocks when caught up and never emits it; see the per-N verdict
+#   block below for the source-level reason.)
 # Benign teardown noise from our own kill/pkill (na_ofi_class_free / NA_Finalize / NA_BUSY /
 # "Could not close endpoint" / SIGTERM) is counted and reported SEPARATELY -- it never fails a
 # run (job 7435467 harness bug #2 conflated it with real transport failure).
-# N>=1000 is kept: the upstream consumer loops up to 1000 pull()s; with delivery confirmed it
-# drains min(N,1000) events then breaks on NoMoreEvents. N=1000 is the faithful example point.
+# Drain proof comes from verify_consumer (NOT the upstream example consumer): it installs a NULL
+# data selector so requestData() short-circuits (size 0) and the per-event bulk-RDMA storm that
+# hung jobs 7436175/7436288 is bypassed -- metadata is still delivered per event, which is exactly
+# what Darshan's connector pushes and exactly the delivery we must verify.
 #
 # Layout (2 nodes): N0 = bedrock broker + consumer (drainer); N1 = producer_timed.
 # Each N is ONE self-contained MPMD mpiexec (broker : producer : consumer) so PALS gives that run
@@ -66,6 +73,11 @@ ROOT="/eagle/radix-io/hjajula/darshan-mofka-flowcept/darshan-mofka-worktree-stri
 P0="$ROOT/overhead_study/phase0"
 PROD_BIN="$P0/build/producer_timed"
 CONS_BIN="$P0/build/consumer"
+# Phase-0 delivery-verification consumer: null data selector (metadata-only drain), so it bypasses
+# the bulk-data requestData path that hung the upstream consumer (jobs 7436175/7436288). It counts
+# received events and prints one machine-parseable VERIFY line. This is the drain proof the phase
+# gate requires ("pushed == drained").
+VERIFY_BIN="$P0/build/verify_consumer"
 CFG_SRC="$P0/bedrock-config.json"
 # PROTOCOL is parameterized (qsub -v PROTOCOL=ofi+tcp) so the SAME harness can run the tcp control.
 # Rationale (step O): producer->broker storage is proven over cxi (broker receiveBatch + blocking
@@ -87,7 +99,7 @@ mkdir -p "$RES"
 echo "=== Phase 0 SWEEP :: jobid=$JID  NLIST=[$NLIST]  proto=$PROTOCOL"
 echo "=== results dir: $RES"
 
-for f in "$PROD_BIN" "$CONS_BIN" "$CFG_SRC"; do
+for f in "$PROD_BIN" "$VERIFY_BIN" "$CFG_SRC"; do
     [ -e "$f" ] || { echo "FATAL: missing $f"; exit 1; }
 done
 
@@ -110,8 +122,8 @@ PUSH_ERR_RE='fi_mr_enable|No space left on device|na_ofi_mem_register|NA_NOMEM|C
 # Counted and reported, but never fails a run (job 7435467 harness bug #2 fix).
 TEARDOWN_RE='na_ofi_class_free|NA_Finalize|NA_BUSY|Could not close|died from signal (15|9|2)'
 
-run_one() {          # run_one <label> <N>
-    local r="$1" N="$2"
+run_one() {          # run_one <N>
+    local N="$1"
     local RDIR="$RES/N$N" COORD="$RES/N$N/coord" SEC="$RES/N$N/sections"
     rm -rf "$RDIR"; mkdir -p "$COORD" "$SEC"
     cp "$CFG_SRC" "$COORD/bedrock-config.json"
@@ -133,21 +145,28 @@ BROKER
     # ---------------- s_producer.sh (N1) ----------------
     {
         printf '#!/bin/bash\n'
-        printf 'ROOT=%q COORD=%q RDIR=%q PROFILE=%q PROD_BIN=%q NEV=%q PRESLEEP=%q\n' \
-               "$ROOT" "$COORD" "$RDIR" "$PROFILE" "$PROD_BIN" "$N" "${PRESLEEP_S:-10}"
+        printf 'ROOT=%q COORD=%q RDIR=%q PROFILE=%q PROD_BIN=%q NEV=%q\n' \
+               "$ROOT" "$COORD" "$RDIR" "$PROFILE" "$PROD_BIN" "$N"
         printf '%s\n' "$STRIP"
         printf '%s\n' "$COLLAPSE"
         cat <<'PRODUCER'
 source "$ROOT/env/server.sh" --"$PROFILE" >/dev/null 2>&1
-echo "s_producer host=$(hostname -s) N=$NEV presleep=$PRESLEEP VNIS=[${SLINGSHOT_VNIS:-}]" >&2
+echo "s_producer host=$(hostname -s) N=$NEV VNIS=[${SLINGSHOT_VNIS:-}]" >&2
 for _ in $(seq 1 120); do [ -s "$COORD/mofka.json" ] && break; sleep 1; done
 if [ ! -s "$COORD/mofka.json" ]; then echo "producer: no mofka.json" >&2; touch "$COORD/PROD_FAIL"; exit 1; fi
-# CANONICAL co-launch: this example streams via wakeUp()-on-append to a LIVE consumer
-# (YokanEventStore::feed blocks on m_count_cv until each append notifies it). So the producer
-# creates the topic+partition, then WAITS (DARSHAN_P0_PRESLEEP_S) for the consumer to subscribe
-# BEFORE pushing; the consumer drains events as they are appended. The final flush().wait(-1)
-# still blocks until every batch is delivered, so PROD_DONE marks true completion.
-export DARSHAN_P0_PRESLEEP_S="$PRESLEEP"
+# SEQUENTIAL (produce-then-drain), NOT a live co-stream. Two mutually-exclusive races made a live
+# stream impossible to land cleanly:
+#   - producer-first (blind presleep, job 7436685): the consumer subscribes AFTER some appends and
+#     misses the early ids -> recv=988, first_id=12.
+#   - consumer-first (ready handshake, job 7436737): the consumer subscribes to an EMPTY partition;
+#     YokanEventStore::feed sees num_available==0 and immediately feeds NoMoreEvents
+#     (YokanEventStore.hpp:235-241) -> recv=0, nomoreevents=1 in 30us.
+# So the producer just pushes all N and BLOCKS on flush().wait(-1) until every batch is durably in
+# the Yokan store, then touches PROD_DONE. The consumer section waits for PROD_DONE, then subscribes
+# to the already-full store at cursor 0: feed sees num_available = N - 0 > 0 on its first iteration
+# and delivers 0..N-1 (NoMoreEvents, which needs num_available==0, never fires mid-drain). This also
+# cleanly separates the two measurements the phase gate wants: producer push cost (this section's
+# PHASE0 line) and pushed==drained proof (the consumer's VERIFY line).
 "$PROD_BIN" "$COORD/mofka.json" "$NEV" > "$RDIR/producer.out" 2> "$RDIR/producer.err"
 rc=$?
 echo "producer exit=$rc" >&2
@@ -158,18 +177,27 @@ PRODUCER
     } > "$SEC/s_producer.sh"
 
     # ---------------- s_consumer.sh (N0) ----------------
-    # CANONICAL co-launch: this example streams via wakeUp()-on-append to a LIVE consumer
-    # (YokanEventStore::feed blocks on m_count_cv and is notified by each append). Job 7436032
-    # PROVED the gate-until-PROD_DONE design delivers ZERO events: a consumer that subscribes
-    # AFTER all appends computes num_available=0, the partition is never marked complete, so feed
-    # blocks forever and the consumer hangs (SIGTERM, empty output). So here the consumer attaches
-    # AS SOON AS the topic exists (producer creates it, then presleeps), and drains events live as
-    # the producer pushes. Output is line-buffered (stdbuf) so spdlog lines survive teardown.
-    # Touches no binary (consumer.cpp is byte-identical to upstream).
+    # DELIVERY-VERIFICATION consumer (verify_consumer, null data selector -> metadata-only drain).
+    # This replaces the upstream example consumer, whose per-event bulk requestData path hung
+    # (jobs 7436175/7436288: 5424 requestData RPCs, 0 events surfaced, 0 acks). verify_consumer
+    # bypasses that path entirely and counts received events, so we get a TRUE drain proof.
+    #
+    # Two harness bugs from the diagnosis (PHASE0_LOG step P) are fixed here:
+    #   (1) NO re-exec-with-truncate loop. The old loop re-ran the binary up to 60x, each run
+    #       redirecting '>' (truncating) the output file; the final run was SIGTERM'd at teardown,
+    #       leaving a 0-byte file even when events flowed. Now verify_consumer runs EXACTLY ONCE and
+    #       does its own in-process openTopic retry (arg 4), so there is one consumer registration
+    #       at cursor 0, no truncation, and no risk of a probe consuming events.
+    #   (2) Short overflow-safe per-pull waits (verify_consumer's PULL_MS=1000; a larger timeout
+    #       overflows Promise.hpp:75) and a self-terminating drain (exits once received==NEV or on a
+    #       5s idle), so the consumer finishes on its own and teardown need not SIGTERM it mid-drain.
+    # Sequential model: verify_consumer starts only AFTER PROD_DONE (all N durably flushed), then
+    # subscribes at cursor 0 against the already-full store -- feed sees num_available = N - 0 > 0 on
+    # its first iteration and delivers 0..N-1. No co-launch race, no missed early ids.
     {
         printf '#!/bin/bash\n'
-        printf 'ROOT=%q COORD=%q RDIR=%q PROFILE=%q CONS_BIN=%q\n' \
-               "$ROOT" "$COORD" "$RDIR" "$PROFILE" "$CONS_BIN"
+        printf 'ROOT=%q COORD=%q RDIR=%q PROFILE=%q VERIFY_BIN=%q NEV=%q DRAIN_BUDGET_MS=%q OPEN_RETRY_S=%q\n' \
+               "$ROOT" "$COORD" "$RDIR" "$PROFILE" "$VERIFY_BIN" "$N" "${DRAIN_BUDGET_MS:-120000}" "${OPEN_RETRY_S:-90}"
         printf '%s\n' "$STRIP"
         printf '%s\n' "$COLLAPSE"
         cat <<'CONSUMER'
@@ -177,20 +205,23 @@ source "$ROOT/env/server.sh" --"$PROFILE" >/dev/null 2>&1
 echo "s_consumer host=$(hostname -s) VNIS=[${SLINGSHOT_VNIS:-}]" >&2
 for _ in $(seq 1 120); do [ -s "$COORD/mofka.json" ] && break; sleep 1; done
 if [ ! -s "$COORD/mofka.json" ]; then echo "consumer: no mofka.json" >&2; touch "$COORD/CONS_FAIL"; exit 1; fi
-# Attach as soon as the topic exists. openTopic throws until the producer has created "mytopic";
-# retry the BINARY (line-buffered) until it attaches. Once attached it stays live and drains as
-# events are appended, then breaks on NoMoreEvents when the producer's blocking flush completes.
-rc=1
-for attempt in $(seq 1 60); do
-    stdbuf -oL -eL "$CONS_BIN" "$COORD/mofka.json" > "$RDIR/consumer.out" 2> "$RDIR/consumer.err"
-    rc=$?
-    if [ "$rc" -eq 0 ] || grep -q 'Received event' "$RDIR/consumer.out" "$RDIR/consumer.err" 2>/dev/null; then
-        break
-    fi
-    [ -f "$COORD/PROD_FAIL" ] && break
-    sleep 1
-done
-echo "consumer exit=$rc (openTopic attempts: $attempt)" >&2
+# SEQUENTIAL drain: WAIT for the producer to finish pushing + blocking-flush all N events into the
+# durable Yokan store (PROD_DONE) BEFORE subscribing. Subscribing against the already-full store
+# means YokanEventStore::feed sees num_available = N - 0 > 0 on its first iteration and delivers
+# 0..N-1; NoMoreEvents (num_available==0 path) is never hit mid-drain. This avoids BOTH co-launch
+# races (missed-early-ids and empty-partition-instant-NoMoreEvents). We deliberately do NOT set
+# VC_READY_FLAG here -- there is no live handshake in the sequential model.
+echo "s_consumer waiting for PROD_DONE before subscribing..." >&2
+for _ in $(seq 1 600); do [ -f "$COORD/PROD_DONE" ] && break; [ -f "$COORD/PROD_FAIL" ] && { echo "consumer: producer failed, not draining" >&2; touch "$COORD/CONS_DONE"; exit 0; }; sleep 1; done
+if [ ! -f "$COORD/PROD_DONE" ]; then echo "consumer: PROD_DONE never appeared" >&2; touch "$COORD/CONS_DONE"; exit 0; fi
+echo "s_consumer PROD_DONE seen; subscribing + draining" >&2
+# ONE invocation: verify_consumer retries openTopic internally (OPEN_RETRY_S), subscribes at cursor
+# 0 against the full store, then drains against a TOTAL wall-clock budget with SHORT overflow-safe
+# pulls (self-terminates once received==NEV, or on 5s idle). stdbuf keeps output flushed if SIGTERM'd.
+stdbuf -oL -eL "$VERIFY_BIN" "$COORD/mofka.json" "$NEV" "$DRAIN_BUDGET_MS" "$OPEN_RETRY_S" \
+    > "$RDIR/consumer.out" 2> "$RDIR/consumer.err"
+rc=$?
+echo "consumer exit=$rc" >&2
 touch "$COORD/CONS_DONE"
 exit "$rc"
 CONSUMER
@@ -214,42 +245,72 @@ CONSUMER
         [ "$(date +%s)" -ge "$deadline" ] && { verdict=ceiling; break; }
         sleep 2
     done
-    # After delivery, give the gated consumer time to subscribe (cursor 0) and drain.
+    # After delivery, give the gated consumer time to subscribe (cursor 0) and drain the full store.
+    # In the sequential model the consumer only STARTS after PROD_DONE, so wait generously (drain of
+    # a full store is fast for small N but this headroom keeps larger-N sweeps from being SIGTERM'd
+    # mid-drain).
     if [ "$verdict" = prod_done ]; then
-        for _ in $(seq 1 60); do [ -f "$COORD/CONS_DONE" ] && break; sleep 1; done
+        for _ in $(seq 1 180); do [ -f "$COORD/CONS_DONE" ] && break; sleep 1; done
     fi
     kill "$MPMD_PID" 2>/dev/null || true
     pkill -f 'bedrock ' 2>/dev/null || true
     wait "$MPMD_PID" 2>/dev/null || true
 
     # ---------------- STRICT per-N verdict + evidence ----------------
-    local mofka_addr phase0_line push_err teardown_noise cons_recv prod_ok
+    # A PASS now requires the consumer to VERIFIABLY DRAIN all N events -- not merely that the
+    # producer enqueued them. verify_consumer prints exactly one machine-parseable line:
+    #   VERIFY received=<n> expected=<N> first_id=.. last_id=.. contiguous=<0|1> acks=.. \
+    #          nomoreevents=<0|1> drain_wall_us=..
+    # We parse received=/contiguous=/nomoreevents= from it. pushed==drained is the phase gate.
+    local mofka_addr phase0_line verify_line push_err teardown_noise prod_ok
+    local cons_recv cons_contig cons_nomore
     mofka_addr="$(grep -oE 'ofi\+[a-z]+://[^"]+' "$COORD/mofka.json" 2>/dev/null | head -1)"
     phase0_line="$(grep -h '^PHASE0 pushes=' "$RDIR/producer.err" 2>/dev/null | head -1)"
+    verify_line="$(grep -h '^VERIFY received=' "$RDIR/consumer.out" "$RDIR/consumer.err" 2>/dev/null | tail -1)"
     # PUSH-PATH failures live in producer.err (outgoing bulk) and broker.log (receive side).
     # We deliberately EXCLUDE consumer.err teardown noise from the failure count.
     push_err="$(cat "$RDIR/producer.err" "$RDIR/broker.log" 2>/dev/null | grep -c -iE "$PUSH_ERR_RE" || true)"
     teardown_noise="$(cat "$RDIR/producer.err" "$RDIR/consumer.err" "$RDIR/broker.log" "$RDIR/mpmd.log" 2>/dev/null | grep -c -iE "$TEARDOWN_RE" || true)"
-    cons_recv="$(cat "$RDIR/consumer.out" "$RDIR/consumer.err" 2>/dev/null | grep -c 'Received event' || true)"
+    # Extract the numeric fields from the VERIFY line (default 0 if the line is absent).
+    cons_recv="$(printf '%s' "$verify_line"   | sed -n 's/.*received=\([0-9]\+\).*/\1/p')";     cons_recv="${cons_recv:-0}"
+    cons_contig="$(printf '%s' "$verify_line" | sed -n 's/.*contiguous=\([0-9]\+\).*/\1/p')";   cons_contig="${cons_contig:-0}"
+    cons_nomore="$(printf '%s' "$verify_line" | sed -n 's/.*nomoreevents=\([0-9]\+\).*/\1/p')"; cons_nomore="${cons_nomore:-0}"
     prod_ok=0; [ -f "$COORD/PROD_DONE" ] && [ ! -f "$COORD/PROD_FAIL" ] && prod_ok=1
 
+    # PASS = producer stored N, no push-path errors, PHASE0 timing present, AND the consumer drained
+    # exactly N contiguous events (ids 0..N-1, gap-free). That is "pushed == drained".
+    #
+    # NoMoreEvents is deliberately REPORTED but NOT required. Verified by reading the stack: the
+    # example's addLegacyPartition path uses LegacyPartitionManager -> YokanEventStore::feed
+    # (YokanEventStore.hpp:220-242). Its inner loop BLOCKS on m_count_cv when a consumer is caught
+    # up (line 231) and only breaks via shouldStop (consumer teardown), which is caught at line 233
+    # BEFORE the NoMoreEvents feed at line 235 -- and the ctor (line 296) never even stores the
+    # marked_as_complete flag into a member, so line 235's completion path is dead code here. Thus
+    # this consumer NEVER observes NoMoreEvents even draining a full store: it delivers all N, then
+    # on the next pull is "caught up", blocks on m_count_cv, and times out. Gating on nomoreevents=1
+    # would fail every run on a technicality. received==N + contiguous is the real, sufficient proof.
     local pass=0
-    [ "$prod_ok" = 1 ] && [ "$push_err" = 0 ] && [ "$cons_recv" -gt 0 ] && [ -n "$phase0_line" ] && pass=1
+    if [ "$prod_ok" = 1 ] && [ "$push_err" = 0 ] && [ -n "$phase0_line" ] \
+       && [ "$cons_recv" = "$N" ] && [ "$cons_contig" = 1 ]; then
+        pass=1
+    fi
 
     echo "=== N=$N  verdict=$verdict  $( [ "$pass" = 1 ] && echo PASS || echo FAIL )"
-    echo "    broker=$mofka_addr  prod_ok=$prod_ok  push_path_errs=$push_err  teardown_noise=$teardown_noise  consumer_received=$cons_recv"
+    echo "    broker=$mofka_addr  prod_ok=$prod_ok  push_path_errs=$push_err  teardown_noise=$teardown_noise"
+    echo "    drain: received=$cons_recv/$N  contiguous=$cons_contig  nomoreevents=$cons_nomore"
     if [ -n "$phase0_line" ]; then echo "    $phase0_line"; fi
+    if [ -n "$verify_line" ]; then echo "    $verify_line"; fi
     if [ "$pass" != 1 ]; then
         echo "    --- FAIL detail: producer.err tail ---"; tail -6 "$RDIR/producer.err" 2>/dev/null | sed 's/^/      /'
-        [ -s "$RDIR/consumer.err" ] && { echo "    --- consumer.err tail ---"; tail -4 "$RDIR/consumer.err" | sed 's/^/      /'; }
+        [ -s "$RDIR/consumer.err" ] && { echo "    --- consumer.err tail ---"; tail -6 "$RDIR/consumer.err" | sed 's/^/      /'; }
     fi
-    echo "$N pass=$pass verdict=$verdict push_err=$push_err teardown=$teardown_noise recv=$cons_recv | $phase0_line" >> "$RES/SWEEP.tsv"
+    echo "$N pass=$pass verdict=$verdict push_err=$push_err teardown=$teardown_noise recv=$cons_recv contig=$cons_contig nomore=$cons_nomore | $phase0_line" >> "$RES/SWEEP.tsv"
     [ "$pass" = 1 ] && return 0 || return 1
 }
 
 first_fail=""
 for N in $NLIST; do
-    if ! run_one "$N" "$N"; then
+    if ! run_one "$N"; then
         [ -z "$first_fail" ] && first_fail="$N"
     fi
     sleep 2

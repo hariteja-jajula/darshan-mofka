@@ -24,3 +24,8 @@ target_link_libraries (producer_timed mofka::client)
 
 add_executable (consumer consumer.cpp)
 target_link_libraries (consumer mofka::client)
+
+# Phase-0 delivery-verification consumer (scratch; null data selector -> metadata-only drain,
+# bypassing the bulk-data path that hangs in the upstream example). Proves pushed==drained.
+add_executable (verify_consumer verify_consumer.cpp)
+target_link_libraries (verify_consumer mofka::client)
