@@ -99,3 +99,12 @@ __pycache__/
 
 # autonomous campaign run log (not for git)
 /.campaign/
+
+# HEP/SALT workload: large container + per-run artifacts (source/scripts are kept)
+*.sif
+/workloads/HEP/salt-dev.sif
+/workloads/HEP/darshan_logs/
+/workloads/HEP/logs/
+/workloads/HEP/_hostlib/
+*.darshan
+*.ckpt

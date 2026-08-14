@@ -1,0 +1,27 @@
+jets:
+  HadronConeExclTruthLabelID: &id001
+  - 1.0
+  - 2.0
+  - 2.0
+  - 2.0
+  flavour_label: *id001
+tracks:
+  ftagTruthOriginLabel:
+  - 4.2
+  - 73.7
+  - 1.0
+  - 17.5
+  - 12.3
+  - 12.5
+  - 141.7
+  - 22.3
+tracks_ghost:
+  ftagTruthOriginLabel:
+  - 4.2
+  - 73.7
+  - 1.0
+  - 17.5
+  - 12.3
+  - 12.5
+  - 141.7
+  - 22.3

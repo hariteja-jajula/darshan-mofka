@@ -1,0 +1,511 @@
+jets:
+  pt:
+    std: 1.0
+    mean: 1.0
+  eta:
+    std: 1.0
+    mean: 1.0
+  mass:
+    std: 1.0
+    mean: 1.0
+  pt_btagJes:
+    std: 1.0
+    mean: 1.0
+  eta_btagJes:
+    std: 1.0
+    mean: 1.0
+  softMuon_pt:
+    std: 1.0
+    mean: 1.0
+  softMuon_dR:
+    std: 1.0
+    mean: 1.0
+  softMuon_eta:
+    std: 1.0
+    mean: 1.0
+  softMuon_phi:
+    std: 1.0
+    mean: 1.0
+  softMuon_qOverPratio:
+    std: 1.0
+    mean: 1.0
+  softMuon_momentumBalanceSignificance:
+    std: 1.0
+    mean: 1.0
+  softMuon_scatteringNeighbourSignificance:
+    std: 1.0
+    mean: 1.0
+  softMuon_pTrel:
+    std: 1.0
+    mean: 1.0
+  softMuon_ip3dD0:
+    std: 1.0
+    mean: 1.0
+  softMuon_ip3dZ0:
+    std: 1.0
+    mean: 1.0
+  softMuon_ip3dD0Significance:
+    std: 1.0
+    mean: 1.0
+  softMuon_ip3dZ0Significance:
+    std: 1.0
+    mean: 1.0
+  softMuon_ip3dD0Uncertainty:
+    std: 1.0
+    mean: 1.0
+  softMuon_ip3dZ0Uncertainty:
+    std: 1.0
+    mean: 1.0
+  R10TruthLabel_R22v1:
+    std: 1.0
+    mean: 1.0
+  R10TruthLabel_R22v1_TruthJetMass:
+    std: 1.0
+    mean: 1.0
+  R10TruthLabel_R22v1_TruthJetPt:
+    std: 1.0
+    mean: 1.0
+  GN2Xv00_phbb:
+    std: 1.0
+    mean: 1.0
+  GN2Xv00_phcc:
+    std: 1.0
+    mean: 1.0
+  GN2Xv00_ptop:
+    std: 1.0
+    mean: 1.0
+  GN2Xv00_pqcd:
+    std: 1.0
+    mean: 1.0
+  GN2XWithMassv00_phbb:
+    std: 1.0
+    mean: 1.0
+  GN2XWithMassv00_phcc:
+    std: 1.0
+    mean: 1.0
+  GN2XWithMassv00_ptop:
+    std: 1.0
+    mean: 1.0
+  GN2XWithMassv00_pqcd:
+    std: 1.0
+    mean: 1.0
+  Xbb2020v3_Higgs:
+    std: 1.0
+    mean: 1.0
+  Xbb2020v3_Top:
+    std: 1.0
+    mean: 1.0
+  Xbb2020v3_QCD:
+    std: 1.0
+    mean: 1.0
+tracks:
+  d0:
+    std: 1.0
+    mean: 1.0
+  z0SinTheta:
+    std: 1.0
+    mean: 1.0
+  dphi:
+    std: 1.0
+    mean: 1.0
+  deta:
+    std: 1.0
+    mean: 1.0
+  qOverP:
+    std: 1.0
+    mean: 1.0
+  IP3D_signed_d0_significance:
+    std: 1.0
+    mean: 1.0
+  IP3D_signed_z0_significance:
+    std: 1.0
+    mean: 1.0
+  lifetimeSignedD0Significance:
+    std: 1.0
+    mean: 1.0
+  lifetimeSignedZ0SinThetaSignificance:
+    std: 1.0
+    mean: 1.0
+  phiUncertainty:
+    std: 1.0
+    mean: 1.0
+  thetaUncertainty:
+    std: 1.0
+    mean: 1.0
+  qOverPUncertainty:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelHits:
+    std: 1.0
+    mean: 1.0
+  numberOfSCTHits:
+    std: 1.0
+    mean: 1.0
+  numberOfInnermostPixelLayerHits:
+    std: 1.0
+    mean: 1.0
+  numberOfNextToInnermostPixelLayerHits:
+    std: 1.0
+    mean: 1.0
+  numberOfInnermostPixelLayerSharedHits:
+    std: 1.0
+    mean: 1.0
+  numberOfInnermostPixelLayerSplitHits:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelSharedHits:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelSplitHits:
+    std: 1.0
+    mean: 1.0
+  numberOfSCTSharedHits:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelHoles:
+    std: 1.0
+    mean: 1.0
+  numberOfSCTHoles:
+    std: 1.0
+    mean: 1.0
+  pt:
+    std: 1.0
+    mean: 1.0
+  eta:
+    std: 1.0
+    mean: 1.0
+  phi:
+    std: 1.0
+    mean: 1.0
+  subjetIndex:
+    std: 1.0
+    mean: 1.0
+  leptonID:
+    std: 1.0
+    mean: 1.0
+  muon_quality:
+    std: 1.0
+    mean: 1.0
+  muon_qOverPratio:
+    std: 1.0
+    mean: 1.0
+  muon_momentumBalanceSignificance:
+    std: 1.0
+    mean: 1.0
+  muon_scatteringNeighbourSignificance:
+    std: 1.0
+    mean: 1.0
+tracks_dr:
+  d0:
+    std: 1.0
+    mean: 1.0
+  z0SinTheta:
+    std: 1.0
+    mean: 1.0
+  dphi:
+    std: 1.0
+    mean: 1.0
+  deta:
+    std: 1.0
+    mean: 1.0
+  qOverP:
+    std: 1.0
+    mean: 1.0
+  IP3D_signed_d0_significance:
+    std: 1.0
+    mean: 1.0
+  IP3D_signed_z0_significance:
+    std: 1.0
+    mean: 1.0
+  lifetimeSignedD0Significance:
+    std: 1.0
+    mean: 1.0
+  lifetimeSignedZ0SinThetaSignificance:
+    std: 1.0
+    mean: 1.0
+  phiUncertainty:
+    std: 1.0
+    mean: 1.0
+  thetaUncertainty:
+    std: 1.0
+    mean: 1.0
+  qOverPUncertainty:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelHits:
+    std: 1.0
+    mean: 1.0
+  numberOfSCTHits:
+    std: 1.0
+    mean: 1.0
+  numberOfInnermostPixelLayerHits:
+    std: 1.0
+    mean: 1.0
+  numberOfNextToInnermostPixelLayerHits:
+    std: 1.0
+    mean: 1.0
+  numberOfInnermostPixelLayerSharedHits:
+    std: 1.0
+    mean: 1.0
+  numberOfInnermostPixelLayerSplitHits:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelSharedHits:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelSplitHits:
+    std: 1.0
+    mean: 1.0
+  numberOfSCTSharedHits:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelHoles:
+    std: 1.0
+    mean: 1.0
+  numberOfSCTHoles:
+    std: 1.0
+    mean: 1.0
+  pt:
+    std: 1.0
+    mean: 1.0
+  eta:
+    std: 1.0
+    mean: 1.0
+  phi:
+    std: 1.0
+    mean: 1.0
+  subjetIndex:
+    std: 1.0
+    mean: 1.0
+  leptonID:
+    std: 1.0
+    mean: 1.0
+  muon_quality:
+    std: 1.0
+    mean: 1.0
+  muon_qOverPratio:
+    std: 1.0
+    mean: 1.0
+  muon_momentumBalanceSignificance:
+    std: 1.0
+    mean: 1.0
+  muon_scatteringNeighbourSignificance:
+    std: 1.0
+    mean: 1.0
+tracks_ghost:
+  d0:
+    std: 1.0
+    mean: 1.0
+  z0SinTheta:
+    std: 1.0
+    mean: 1.0
+  dphi:
+    std: 1.0
+    mean: 1.0
+  deta:
+    std: 1.0
+    mean: 1.0
+  qOverP:
+    std: 1.0
+    mean: 1.0
+  IP3D_signed_d0_significance:
+    std: 1.0
+    mean: 1.0
+  IP3D_signed_z0_significance:
+    std: 1.0
+    mean: 1.0
+  lifetimeSignedD0Significance:
+    std: 1.0
+    mean: 1.0
+  lifetimeSignedZ0SinThetaSignificance:
+    std: 1.0
+    mean: 1.0
+  phiUncertainty:
+    std: 1.0
+    mean: 1.0
+  thetaUncertainty:
+    std: 1.0
+    mean: 1.0
+  qOverPUncertainty:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelHits:
+    std: 1.0
+    mean: 1.0
+  numberOfSCTHits:
+    std: 1.0
+    mean: 1.0
+  numberOfInnermostPixelLayerHits:
+    std: 1.0
+    mean: 1.0
+  numberOfNextToInnermostPixelLayerHits:
+    std: 1.0
+    mean: 1.0
+  numberOfInnermostPixelLayerSharedHits:
+    std: 1.0
+    mean: 1.0
+  numberOfInnermostPixelLayerSplitHits:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelSharedHits:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelSplitHits:
+    std: 1.0
+    mean: 1.0
+  numberOfSCTSharedHits:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelHoles:
+    std: 1.0
+    mean: 1.0
+  numberOfSCTHoles:
+    std: 1.0
+    mean: 1.0
+  pt:
+    std: 1.0
+    mean: 1.0
+  eta:
+    std: 1.0
+    mean: 1.0
+  phi:
+    std: 1.0
+    mean: 1.0
+  subjetIndex:
+    std: 1.0
+    mean: 1.0
+  leptonID:
+    std: 1.0
+    mean: 1.0
+  muon_quality:
+    std: 1.0
+    mean: 1.0
+  muon_qOverPratio:
+    std: 1.0
+    mean: 1.0
+  muon_momentumBalanceSignificance:
+    std: 1.0
+    mean: 1.0
+  muon_scatteringNeighbourSignificance:
+    std: 1.0
+    mean: 1.0
+electrons:
+  pt:
+    std: 1.0
+    mean: 1.0
+  ptfrac:
+    std: 1.0
+    mean: 1.0
+  ptrel:
+    std: 1.0
+    mean: 1.0
+  dr:
+    std: 1.0
+    mean: 1.0
+  abs_eta:
+    std: 1.0
+    mean: 1.0
+  eta:
+    std: 1.0
+    mean: 1.0
+  phi:
+    std: 1.0
+    mean: 1.0
+  ftag_et:
+    std: 1.0
+    mean: 1.0
+  qOverP:
+    std: 1.0
+    mean: 1.0
+  d0RelativeToBeamspot:
+    std: 1.0
+    mean: 1.0
+  d0RelativeToBeamspotSignificance:
+    std: 1.0
+    mean: 1.0
+  ftag_z0AlongBeamspotSignificance:
+    std: 1.0
+    mean: 1.0
+  ftag_ptVarCone30OverPt:
+    std: 1.0
+    mean: 1.0
+  numberOfPixelHits:
+    std: 1.0
+    mean: 1.0
+  numberOfSCTHitsInclDead:
+    std: 1.0
+    mean: 1.0
+  ftag_deltaPOverP:
+    std: 1.0
+    mean: 1.0
+  eProbabilityHT:
+    std: 1.0
+    mean: 1.0
+  deltaEta1:
+    std: 1.0
+    mean: 1.0
+  deltaPhiRescaled2:
+    std: 1.0
+    mean: 1.0
+  ftag_energyOverP:
+    std: 1.0
+    mean: 1.0
+  Rhad:
+    std: 1.0
+    mean: 1.0
+  Rhad1:
+    std: 1.0
+    mean: 1.0
+  Eratio:
+    std: 1.0
+    mean: 1.0
+  weta2:
+    std: 1.0
+    mean: 1.0
+  Rphi:
+    std: 1.0
+    mean: 1.0
+  Reta:
+    std: 1.0
+    mean: 1.0
+  wtots1:
+    std: 1.0
+    mean: 1.0
+  f1:
+    std: 1.0
+    mean: 1.0
+  f3:
+    std: 1.0
+    mean: 1.0
+flows:
+  pt:
+    std: 1.0
+    mean: 1.0
+  energy:
+    std: 1.0
+    mean: 1.0
+  deta:
+    std: 1.0
+    mean: 1.0
+  dphi:
+    std: 1.0
+    mean: 1.0
+  isCharged:
+    std: 1.0
+    mean: 1.0
+flow:
+  pt:
+    std: 1.0
+    mean: 1.0
+  energy:
+    std: 1.0
+    mean: 1.0
+  deta:
+    std: 1.0
+    mean: 1.0
+  dphi:
+    std: 1.0
+    mean: 1.0
+  isCharged:
+    std: 1.0
+    mean: 1.0
