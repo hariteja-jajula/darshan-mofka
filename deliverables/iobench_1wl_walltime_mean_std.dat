@@ -1,0 +1,4 @@
+# arm mean_s std_s runs work_s_values
+"baseline" 343.393 0.785 "RUN1-RUN3" "342.80, 344.28, 343.09"
+"darshan-only" 350.673 0.204 "RUN1-RUN3" "350.49, 350.89, 350.64"
+"streaming" 350.786 0.358 "RUN7-RUN9" "350.46, 350.72, 351.17"

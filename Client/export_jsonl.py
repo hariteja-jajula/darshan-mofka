@@ -1,28 +1,5 @@
 #!/usr/bin/env python3
-# export_jsonl.py -- dump FlowCept-ingested darshan events from MongoDB back out
-# as the SAME JSONL the reconstructor (darshan-mofka-reconstruct) consumes.
-#
-# This is the bridge for "scale mode": FlowCept's DocumentInserter lands each
-# streamed darshan event as a task doc in mongo (keeping all fields verbatim --
-# module/record_id/rank/rec_size/rec_hex/seq/ended_at/... ). This tool queries
-# those docs and writes one compact JSON object per line, so the offline
-# reconstructor stays unchanged and DB-agnostic:
-#
-#     Client/export_jsonl.py <mongo_host> <mongo_db> [--workflow-id wf-<jobid>] \
-#         > events.jsonl
-#     ./darshan/install/bin/darshan-mofka-reconstruct events.jsonl <output_dir>
-#
-# The reconstructor writes one native-style .darshan log per process (pid) found in
-# the stream, mirroring native Darshan's per-process output, into <output_dir>.
-#
-# Only darshan task docs are exported (schema in {darshan_runtime,
-# darshan_runtime_agg}); FlowCept's own workflow/bookkeeping docs are skipped.
-# Docs are emitted in ascending `seq` order so the stream reads back in the order
-# the producer pushed it (the reconstructor keeps the latest snapshot per
-# (module,record_id,rank), so order only affects ties -- but stable order makes
-# the JSONL diffable and reproducible).
-#
-# Requires pymongo (same interpreter that runs FlowCept).
+
 import argparse
 import json
 import sys

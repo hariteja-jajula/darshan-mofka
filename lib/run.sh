@@ -193,57 +193,31 @@ workload_env() {
                        WORKLOAD_ENV+=(OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
                                       NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1) ;;
         python-ml) WORKLOAD_ENV=(ML_EPOCHS="$WL_EVENTS" ML_CHECKPOINTS="$WL_CHECKPOINTS")
-                   # Cap numpy/BLAS threads for EVERY arm (baseline/runtimeonly/streaming),
-                   # exactly like io_bench above. The venv links scipy-openblas (DYNAMIC_ARCH,
-                   # NO_AFFINITY, MAX_THREADS=64): with no cap a single matmul spawns 64 OS
-                   # threads (verified), so on a packed node BLAS oversubscribes the cores and
-                   # the connector's drain/margo threads contend for CPU that BLAS already took
-                   # -- which inflates the APPARENT streaming overhead. Setting the caps here
-                   # (in the child env, before the interpreter starts) guarantees they take
-                   # effect: numpy reads them only at import, so os.environ-after-import is a
-                   # silent no-op. Measurement-neutral: identical fixed thread count across all
-                   # arms. Overridable via ML_BLAS_THREADS (default 1) for compute-heavy runs.
-                   # (OPENBLAS_/OMP_ are the two that actually govern this build; MKL_/NUMEXPR_/
-                   # VECLIB_ are set too for portability to other BLAS backends.)
+
                    _mlbt="${ML_BLAS_THREADS:-1}"
                    WORKLOAD_ENV+=(OMP_NUM_THREADS="$_mlbt" OPENBLAS_NUM_THREADS="$_mlbt" \
                                   MKL_NUM_THREADS="$_mlbt" NUMEXPR_NUM_THREADS="$_mlbt" \
                                   VECLIB_MAXIMUM_THREADS="$_mlbt")
-                   # optional dataset-size knobs (forwarded when set) so python-ml can be
-                   # scaled to a meaningful ~10min run for the overhead study.
-                   # ML_PROFILE/ML_BLAS_THREADS: heavy in-workload profiler (per-region
-                   # wall+thread-CPU + RUSAGE_THREAD minflt/ctx-sw). Inert unless ML_PROFILE=1.
+
                    for _k in ML_FILES ML_ROWS ML_COLS ML_WRITE_MODE ML_PROFILE ML_BLAS_THREADS; do
                        [ -n "${!_k:-}" ] && WORKLOAD_ENV+=("$_k=${!_k}"); done ;;
         mpi)       WORKLOAD_ENV=(STEPS="$WL_EVENTS")  # repeat REAL block write+read WL_EVENTS times (overhead-study fixed-work scale knob)
-                   # IO_BLOCK_KB sizes each step's genuine per-rank block I/O (default 1 MiB in the
-                   # binary). NO IO_SLEEP_MS: the mpi workload does real block I/O now, so wall is
-                   # driven by work, not idle padding (padding would deflate streaming overhead to ~0).
+
                    [ -n "${IO_BLOCK_KB:-}" ] && WORKLOAD_ENV+=(IO_BLOCK_KB="$IO_BLOCK_KB") ;;
-        dlio)      # TF spawns ~1 Eigen thread/CPU; on Polaris that exceeds the per-user
-                   # cgroup pids.max=256 -> pthread_create EAGAIN -> SIGABRT (env.cc:84),
-                   # which kills Darshan's atexit finalize -> no native log. Cap TF threads.
-                   # Measurement-neutral: data generation is numpy (pre-TF), and the caps are
-                   # common-mode across A/B/C arms.
+        dlio)
                    WORKLOAD_ENV=(OMP_NUM_THREADS=1 TF_NUM_INTRAOP_THREADS=1 TF_NUM_INTEROP_THREADS=1 TF_CPP_MIN_LOG_LEVEL=3)
-                   # cray-mpich ABI-skew pin (THE dlio crash fix). dlio's mpi4py binds
-                   # libmpi.so.12 -> cray-mpich 9.0.1 (only present under $MPICH_DIR/lib-abi-mpich,
-                   # prepended at env/workload.sh:30). But the Mofka spack view + darshan
-                   # install-mpi were built against cray-mpich 8.1.28 and inject their
-                   # libmpi_gnu_123.so.12 (8.1.28) onto LD_LIBRARY_PATH (spack env activate,
-                   # env/polaris.sh). Two mpich runtimes in one process -> abort
-                   # "MPI routine (internal_Reduce_c) ... after finalizing MPICH". Prepend
-                   # $MPICH_DIR/lib so libmpi_gnu_123.so.12 ALSO resolves to 9.0.1 -> one mpich,
-                   # skew gone. ($MPICH_DIR/lib has no libmpi.so.12, so mpi4py still binds 9.0.1
-                   # via lib-abi-mpich -- consistent.) Prepend (not override) preserves the
-                   # diaspora/mofka lib paths already on LD_LIBRARY_PATH. Captured here in the
-                   # main shell (post env/workload.sh source) so the full path flows to BOTH the
-                   # local (env "${pre[@]}") and remote (re-sourced) launch paths. Scoped to dlio
-                   # ONLY: the mpi workload links libmpi_gnu_123->8.1.28 and runs all-8.1.28
-                   # consistently (why it passes) -- a global pin would regress it.
+
                    if [ -n "${MPICH_DIR:-}" ] && [ -e "$MPICH_DIR/lib/libmpi_gnu_123.so.12" ]; then
                        WORKLOAD_ENV+=(LD_LIBRARY_PATH="$MPICH_DIR/lib:${LD_LIBRARY_PATH:-}")
-                   fi ;;
+                   fi
+                   ;;
+
+        hep-salt)
+                   WORKLOAD_ENV=(
+                       PYTHONNOUSERSITE=1
+                   )
+                   ;;
+
         *)         WORKLOAD_ENV=() ;;
     esac
 }
@@ -440,6 +414,7 @@ run_mpmd_rep() {
         io_bench)    CMD="./workloads/c/io_bench" ;;
         io_bench_py) CMD="$PY workloads/python-ml/io_bench.py" ;;
         python-ml)   CMD="$PY workloads/python-ml/train.py" ;;
+        hep-salt)    CMD="$ROOT/workloads/HEP/run_salt_streaming.sh" ;;
         *)           echo "run_mpmd_rep: unknown non-MPI workload '$WL_TYPE'"; return 2 ;;
     esac
     local STRIP COLLAPSE; STRIP="$(pmi_strip)"; COLLAPSE="$(cxi_collapse)"
@@ -557,14 +532,45 @@ if [ "${DM_MPSTAT:-0}" = 1 ] && [ "${PALS_LOCAL_RANKID:-0}" = 0 ] && command -v 
   mpstat -P ALL "${DM_MPSTAT_INT:-5}" > "$RES/mpstat.$RANKID.txt" 2>/dev/null &
   _mpstat_pid=$!
 fi
-[ "$RANKID" = 0 ] && echo "WORK_SH_START_NS $(date +%s%N)" >> "$RES/workload.$RANKID.out"
-if [ "${NO_DARSHAN:-0}" = 1 ]; then
-  ${PERFWRAP:-} env $ESTR DARSHAN_LOGPATH="$RES" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
-else
-  ${PERFWRAP:-} env $ESTR DARSHAN_LOGPATH="$RES" LD_PRELOAD="$DLIB" $CMD "$scratch" >> "$RES/workload.$RANKID.out" 2> "$RES/workload.$RANKID.err"
+if [ "${PALS_LOCAL_RANKID:-0}" = 0 ]; then
+  echo "WORK_SH_START_NS $(date +%s%N)" >> "$RES/workload.$RANKID.out"
 fi
+
+if [ "$WL_TYPE" = "hep-salt" ]; then
+
+  # HEP wrapper injects LD_PRELOAD inside the Apptainer container.
+  ${PERFWRAP:-} env $ESTR \
+    DARSHAN_LOGPATH="$RES" \
+    DARSHAN_LIB_SO="$DLIB" \
+    NO_DARSHAN="${NO_DARSHAN:-0}" \
+    "$CMD" \
+    >> "$RES/workload.$RANKID.out" \
+    2> "$RES/workload.$RANKID.err"
+
+elif [ "${NO_DARSHAN:-0}" = 1 ]; then
+
+  ${PERFWRAP:-} env $ESTR \
+    DARSHAN_LOGPATH="$RES" \
+    $CMD "$scratch" \
+    >> "$RES/workload.$RANKID.out" \
+    2> "$RES/workload.$RANKID.err"
+
+else
+
+  ${PERFWRAP:-} env $ESTR \
+    DARSHAN_LOGPATH="$RES" \
+    LD_PRELOAD="$DLIB" \
+    $CMD "$scratch" \
+    >> "$RES/workload.$RANKID.out" \
+    2> "$RES/workload.$RANKID.err"
+
+fi
+
 rc=$?
-[ "$RANKID" = 0 ] && echo "WORK_SH_END_NS $(date +%s%N)" >> "$RES/workload.$RANKID.out"
+
+if [ "${PALS_LOCAL_RANKID:-0}" = 0 ]; then
+  echo "WORK_SH_END_NS $(date +%s%N)" >> "$RES/workload.$RANKID.out"
+fi
 [ -n "$_mpstat_pid" ] && kill "$_mpstat_pid" 2>/dev/null || true
 rm -rf "$scratch" 2>/dev/null || true
 touch "$COORD/WL_DONE.$RANKID"
